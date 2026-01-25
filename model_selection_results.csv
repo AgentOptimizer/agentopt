@@ -1,0 +1,4 @@
+model_name,accuracy,latency_seconds,attribute,best
+anthropic/claude-3.5-sonnet,1.0,3.5331220626831055,_model,True
+openai/gpt-4o,1.0,1.093214988708496,_model,False
+google/gemini-3-flash-preview,1.0,1.666382074356079,_model,False

@@ -12,7 +12,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "agent-efficiency-optimization"
+name = "agentopt"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

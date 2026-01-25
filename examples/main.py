@@ -2,7 +2,7 @@
 Main file for model selection.
 """
 from agent import MyLangchainAgent
-from model_selection import ModelSelector
+from agentopt import ModelSelector
 from typing import Optional, Callable
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -27,7 +27,7 @@ def accuracy_fn(expected_answer: str, actual_output: str) -> bool:
 
 
 # Basic usage
-dataset_dir: Optional[str] = "datasets"  # Path to evaluation dataset directory
+dataset_dir: Optional[str] = "examples/datasets"  # Path to evaluation dataset directory
 
 # Create agent
 agent = MyLangchainAgent()
@@ -59,8 +59,8 @@ print(f"{'='*60}")
 print(results_df.to_string(index=False))
 
 # Save to CSV
-results_df.to_csv("model_selection_results.csv", index=False)
-print(f"\nResults saved to model_selection_results.csv")
+results_df.to_csv("examples/model_selection_results.csv", index=False)
+print(f"\nResults saved to examples/model_selection_results.csv")
 
 # Plot results
 plt.figure(figsize=(10, 6))
@@ -79,6 +79,6 @@ plt.title('Model Performance: Accuracy vs Latency')
 plt.grid(True)
 
 # Save plot
-plt.savefig('model_selection_results.png', dpi=300, bbox_inches='tight')
-print("Plot saved to model_selection_results.png")
+plt.savefig('examples/model_selection_results.png', dpi=300, bbox_inches='tight')
+print("Plot saved to examples/model_selection_results.png")
 plt.show()

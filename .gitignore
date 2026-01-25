@@ -39,3 +39,8 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Example outputs
+examples/*.csv
+examples/*.png
+examples/__pycache__/

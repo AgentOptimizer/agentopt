@@ -14,7 +14,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 
 # Run example
-uv run python main.py
+uv run python examples/main.py
 ```
 
 The `uv sync` command will:
@@ -82,7 +82,7 @@ Modify your agent creation to use `ModelProxy`:
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
-from model_selection import ModelProxy
+from agentopt import ModelProxy
 import os
 from dotenv import load_dotenv
 
@@ -121,7 +121,7 @@ def MyLangchainAgent(model_name: str = "openai/gpt-4o"):
 
 ```python
 from agent import MyLangchainAgent
-from model_selection import ModelSelector
+from agentopt import ModelSelector
 
 # Define accuracy function
 def accuracy_fn(expected_answer: str, actual_output: str) -> bool:
@@ -204,7 +204,7 @@ agent = create_agent(model=proxy_model, ...)
 agent._model = proxy_model  # Store reference
 
 # Later, swap models:
-from model_selection import bind_model
+from agentopt import bind_model
 bind_model(agent, "_model", new_model)  # Updates proxy._model
 ```
 
@@ -303,7 +303,7 @@ proxy._model = new_model
 
 ## Example
 
-See `main.py` for a complete working example that:
+See `examples/main.py` for a complete working example that:
 1. Creates an agent with `ModelProxy`
 2. Evaluates multiple models on a dataset
 3. Selects the best model

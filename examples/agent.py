@@ -4,7 +4,7 @@ Custom agent function for LangChain.
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
-from model_selection import ModelProxy
+from agentopt import ModelProxy
 import os
 from dotenv import load_dotenv
 

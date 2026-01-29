@@ -133,10 +133,11 @@ agent = MyLangchainAgent()
 
 # Create model selector
 selector = ModelSelector(
-    agent=agent,
+    agent=agent, ### this should be func  
     dataset_dir="datasets",  # Path to JSONL dataset
     models={
-        "._model": [  # Attribute path where proxy is stored
+        ##3 we need proxymodel_reference
+        agent._model: [  # Attribute path where proxy is stored
             "anthropic/claude-3.5-sonnet",
             "openai/gpt-4o",
             "google/gemini-3-flash-preview",
@@ -144,6 +145,8 @@ selector = ModelSelector(
     },
     accuracy_fn=accuracy_fn,
 )
+
+### for models in model_lib: proxymodel_reference._model = model; func("input") -> output
 
 # Run model selection
 results_df = selector.select_best()

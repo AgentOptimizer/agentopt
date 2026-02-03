@@ -20,7 +20,29 @@ uv run python examples/main.py
 The `uv sync` command will:
 - Create a virtual environment (`.venv`)
 - Install LangChain, langchain-openai, pandas, matplotlib
-- Install the model_selection package in editable mode
+- Install the agentopt package in editable mode
+
+## Project Structure
+
+```
+agentopt/
+├── src/
+│   └── agentopt/              # Main package source code
+│       ├── __init__.py
+│       ├── core.py            # ModelProxy, ModelSelector, bind_model
+│       ├── model_factory.py
+│       └── adapters/          # Framework-specific adapters
+│           ├── __init__.py
+│           ├── langchain.py   # OptLangchainAgent
+│           └── crewai.py      # OptCrewAgent, OptCrew
+├── examples/
+│   ├── main.py                # Example usage
+│   └── datasets/
+│       └── math_problems.jsonl
+├── tests/
+├── pyproject.toml
+└── README.md
+```
 
 **Note:** You'll need to set your OpenRouter API key. Create a `.env` file:
 ```bash

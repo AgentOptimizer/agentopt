@@ -258,11 +258,11 @@ class InvokerProtocol(Protocol):
     def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]: ...
 
 # CrewAI wrapper
-CrewInvoker(crew: Crew)
+invoker = CrewInvoker(crew)
 
 # LangChain wrappers
-LangchainInvoker(executor: AgentExecutor)
-ChainedLangchainInvoker(executors: List[AgentExecutor])  # Sequential multi-agent
+invoker = LangchainInvoker(executor)
+invoker = ChainedLangchainInvoker(executors)  # Sequential multi-agent
 ```
 
 ### ModelSelector
@@ -271,13 +271,13 @@ ChainedLangchainInvoker(executors: List[AgentExecutor])  # Sequential multi-agen
 from agentopt import ModelSelector
 
 selector = ModelSelector(
-    invoker: InvokerProtocol,           # Wrapped agent
-    models: Dict[ModelProxy, List[str]], # Proxy → candidate models
-    accuracy_fn: Callable[[str, str], bool],  # (expected, actual) → bool
-    dataset_dir: str,                    # Path to JSONL dataset
+    invoker=invoker,           # Wrapped agent
+    models={proxy: ["openai/gpt-4o-mini", "openai/gpt-4o"]}, # Proxy → candidate models
+    accuracy_fn=my_accuracy_fn,  # (expected, actual) → bool
+    dataset_dir="path/to/dataset",  # Path to JSONL dataset
 )
 
-results: SelectionResults = selector.select_best(evaluation_tasks=None)
+results = selector.select_best(evaluation_tasks=None)
 ```
 
 ## Current Limitations

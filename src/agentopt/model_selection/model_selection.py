@@ -83,8 +83,10 @@ class ModelSelector(BaseModelSelector):
         """Select best model for a single proxy."""
         results: List[ModelResult] = []
         best_model: Optional[Any] = None
-        best_score = float("inf")
+        best_accuracy = float("-inf")
+        best_latency = float("inf")
         best_model_name: Optional[str] = None
+        accuracy_tolerance = 1e-9
 
         print(f"\n{'='*60}")
         print(f"Selecting best model for: {display_name}")
@@ -111,9 +113,17 @@ class ModelSelector(BaseModelSelector):
                     )
                 )
 
-                score = 1 - accuracy
-                if score < best_score:
-                    best_score = score
+                should_update = False
+                if best_model is None:
+                    should_update = True
+                elif accuracy > best_accuracy + accuracy_tolerance:
+                    should_update = True
+                elif abs(accuracy - best_accuracy) <= accuracy_tolerance and latency < best_latency:
+                    should_update = True
+
+                if should_update:
+                    best_accuracy = accuracy
+                    best_latency = latency
                     best_model = model_obj
                     best_model_name = model_name
 
@@ -133,7 +143,7 @@ class ModelSelector(BaseModelSelector):
         if best_model_name and best_model is not None:
             set_model_fn(best_model)
             print(
-                f"\n🏆 Best model for {display_name}: {best_model_name} (accuracy: {1-best_score:.2%})"
+                f"\n🏆 Best model for {display_name}: {best_model_name} (accuracy: {best_accuracy:.2%}, latency: {best_latency:.2f}s)"
             )
 
             # Mark best model

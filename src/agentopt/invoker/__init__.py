@@ -2,7 +2,9 @@
 Framework adapters for agentopt.
 """
 
-__all__ = []
+from .base import InvokerProtocol
+
+__all__ = ["InvokerProtocol"]
 
 try:
     from .langchain import OptLangchainAgent

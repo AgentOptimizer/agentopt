@@ -2,31 +2,30 @@
 Model selection package - bind models to agents with explicit attribute names.
 """
 
-from .core import bind_model, ModelProxy
+from .model_proxy import ModelProxy
 from .load_dataset import load_dataset
 from .model_factory import create_model_from_string, normalize_models
 from .model_selection import ModelSelector
 from .types import (
-    AgentProtocol,
     Message,
     EvaluationTask,
-    ModelResult,
-    SelectionResults,
     AccuracyFn,
     ModelSpec,
     ModelsConfig,
 )
+from .invoker.base import InvokerProtocol
+from .model_selection.base import BaseModelSelector, ModelResult, SelectionResults
 
 __all__ = [
     # Core
-    "bind_model",
     "ModelProxy",
+    "BaseModelSelector",
     "ModelSelector",
     "load_dataset",  # [TODO: Temporary]
     "create_model_from_string",
     "normalize_models",
     # Types
-    "AgentProtocol",
+    "InvokerProtocol",
     "Message",
     "EvaluationTask",
     "ModelResult",
@@ -38,16 +37,17 @@ __all__ = [
 
 # Optional LangChain adapter (only available if langchain is installed)
 try:
-    from .adapters.langchain import OptLangchainAgent
+    from .invoker.langchain import LangchainInvoker, ChainedLangchainInvoker
 
-    __all__.append("OptLangchainAgent")
+    __all__.append("LangchainInvoker")
+    __all__.append("ChainedLangchainInvoker")
 except ImportError:
     pass
 
-# Optional CrewAI adapters (only available if crewai is installed)
+# Optional CrewAI adapter
 try:
-    from .adapters.crewai import OptCrewAgent, OptCrew
+    from .invoker.crewai import CrewInvoker
 
-    __all__.extend(["OptCrewAgent", "OptCrew"])
+    __all__.append("CrewInvoker")
 except ImportError:
     pass

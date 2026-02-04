@@ -31,7 +31,7 @@ class ModelProxy:
         if isinstance(model, str):
             current_model = object.__getattribute__(self, "_model")
             if current_model is None:
-                raise RuntimeError("No model set")
+                raise AttributeError("No model set")
 
             model_copy = getattr(current_model, "model_copy", None)
             if callable(model_copy):
@@ -60,7 +60,7 @@ class ModelProxy:
     def __getattr__(self, name: str) -> Any:
         model = object.__getattribute__(self, "_model")
         if model is None:
-            raise RuntimeError("No model set")
+            raise AttributeError("No model set")
         return getattr(model, name)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -69,14 +69,14 @@ class ModelProxy:
         else:
             model = object.__getattribute__(self, "_model")
             if model is None:
-                raise RuntimeError("No model set")
+                raise AttributeError("No model set")
             setattr(model, name, value)
 
     def __call__(self, *args, **kwargs):
         """Forward calls to the underlying model."""
         model = object.__getattribute__(self, "_model")
         if model is None:
-            raise RuntimeError("No model set")
+            raise AttributeError("No model set")
         return model(*args, **kwargs)
 
     def __repr__(self) -> str:

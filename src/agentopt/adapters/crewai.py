@@ -5,12 +5,15 @@ Provides OptCrewAgent (single-agent) and OptCrew (multi-agent) wrappers
 that are compatible with ModelSelector's invoke interface.
 """
 
+from typing import Any, Dict, List
+
 from crewai import Agent, Task, Crew, Process, LLM
+
 from agentopt import ModelProxy
-from typing import Any
+from agentopt.types import AgentProtocol
 
 
-class OptCrewAgent:
+class OptCrewAgent(AgentProtocol):
     """
     Single-agent wrapper compatible with ModelSelector.
 
@@ -49,7 +52,7 @@ class OptCrewAgent:
         self._expected_output = expected_output
         self._verbose = verbose
 
-    def invoke(self, input_dict: dict) -> dict:
+    def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
         """ModelSelector calls this with {"messages": [...]}."""
         messages = input_dict.get("messages", [])
         question = (
@@ -81,7 +84,7 @@ class OptCrewAgent:
         return {"messages": [{"role": "assistant", "content": str(result)}]}
 
 
-class OptCrew:
+class OptCrew(AgentProtocol):
     """
     Multi-agent crew wrapper compatible with ModelSelector.
 
@@ -106,8 +109,8 @@ class OptCrew:
 
     def __init__(
         self,
-        agent_configs: list[dict],
-        task_configs: list[dict],
+        agent_configs: List[Dict[str, Any]],
+        task_configs: List[Dict[str, Any]],
         process: Process = Process.sequential,
         verbose: bool = False,
     ):
@@ -121,7 +124,7 @@ class OptCrew:
             llm = LLM(model=config["model"])
             self._models.append(ModelProxy(f"_models.{len(self._models)}", llm))
 
-    def invoke(self, input_dict: dict) -> dict:
+    def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
         """ModelSelector calls this with {"messages": [...]}."""
         messages = input_dict.get("messages", [])
         override_question = messages[0].get("content") if messages else None

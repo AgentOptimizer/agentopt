@@ -4,17 +4,20 @@ LangChain wrapper for model selection compatibility.
 Provides OptLangchainAgent wrapper that is compatible with ModelSelector's interface.
 """
 
+from typing import Any, Dict, List, Optional
+import os
+
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from agentopt import ModelProxy
-from typing import Any, List, Optional
-import os
 from dotenv import load_dotenv
+
+from agentopt import ModelProxy
+from agentopt.types import AgentProtocol
 
 load_dotenv()
 
 
-class OptLangchainAgent:
+class OptLangchainAgent(AgentProtocol):
     """
     LangChain agent wrapper compatible with ModelSelector.
 
@@ -85,7 +88,7 @@ class OptLangchainAgent:
             system_prompt=system_prompt,
         )
 
-    def invoke(self, input_dict: dict) -> dict:
+    def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         Invoke the agent with the given input.
 

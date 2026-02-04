@@ -2,10 +2,9 @@
 Unified model selection for LangChain and CrewAI agents.
 """
 
-from agentopt import ModelSelector
-from typing import Optional
-import pandas as pd
 import matplotlib.pyplot as plt
+
+from agentopt import ModelSelector, SelectionResults
 
 
 def accuracy_fn(expected_answer: str, actual_output: str) -> bool:
@@ -54,7 +53,7 @@ else:
 # Model Selection - Same API for both agent types
 # =============================================================================
 
-dataset_dir: Optional[str] = "examples/datasets"
+dataset_dir = "examples/datasets"
 
 selector = ModelSelector(
     agent=agent,
@@ -70,22 +69,32 @@ selector = ModelSelector(
 )
 
 print("Starting model selection...\n")
-results_df = selector.select_best()
+results: SelectionResults = selector.select_best()
 
 print(f"\n{'='*60}")
-print("Model Selection Results DataFrame:")
+print("Model Selection Results:")
 print(f"{'='*60}")
-print(results_df.to_string(index=False))
+for result in results:
+    best_marker = " 🏆" if result.is_best else ""
+    print(
+        f"  {result.model_name}: accuracy={result.accuracy:.2%}, "
+        f"latency={result.latency_seconds:.2f}s{best_marker}"
+    )
 
-results_df.to_csv("examples/model_selection_results.csv", index=False)
+# Save to CSV
+results.to_csv("examples/model_selection_results.csv")
 print(f"\nResults saved to examples/model_selection_results.csv")
 
 # Plot results
 plt.figure(figsize=(10, 6))
-plt.scatter(results_df["latency_seconds"], results_df["accuracy"])
+accuracies = [r.accuracy for r in results]
+latencies = [r.latency_seconds for r in results]
+names = [r.model_name for r in results]
 
-for _, row in results_df.iterrows():
-    plt.annotate(row["model_name"], (row["latency_seconds"], row["accuracy"]))
+plt.scatter(latencies, accuracies)
+
+for name, lat, acc in zip(names, latencies, accuracies):
+    plt.annotate(name, (lat, acc))
 
 plt.xlabel("Latency (seconds)")
 plt.ylabel("Accuracy")

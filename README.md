@@ -233,7 +233,7 @@ ModelResult(model_name="gpt-4o", accuracy=0.95, latency_seconds=1.2, is_best=Tru
 # Container for all results
 SelectionResults(results=[...])
 results.get_best()           # Get best overall
-results.get_best("proxy_1")  # Get best for specific proxy
+results.get_best("llm")      # Get best for specific model/attribute
 results.to_csv("out.csv")    # Export to CSV
 ```
 

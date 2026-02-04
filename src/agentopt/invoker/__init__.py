@@ -7,17 +7,17 @@ from .base import InvokerProtocol
 __all__ = ["InvokerProtocol"]
 
 try:
-    from .langchain import OptLangchainAgent
+    from .langchain import LangchainInvoker, ChainedLangchainInvoker
 
-    __all__.append("OptLangchainAgent")
+    __all__.extend(["LangchainInvoker", "ChainedLangchainInvoker"])
 except ImportError:
     # LangChain not installed
     pass
 
 try:
-    from .crewai import OptCrewAgent, OptCrew
+    from .crewai import CrewInvoker
 
-    __all__.extend(["OptCrewAgent", "OptCrew"])
+    __all__.append("CrewInvoker")
 except ImportError:
     # CrewAI not installed
     pass

@@ -7,7 +7,7 @@ Provides LangchainInvoker (minimal wrapper) and ChainedLangchainInvoker
 
 from typing import Any, Dict, List
 
-from agentopt.types import InvokerProtocol
+from .base import InvokerProtocol
 
 
 class LangchainInvoker(InvokerProtocol):

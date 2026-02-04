@@ -7,7 +7,7 @@ and OptCrew (multi-agent) wrappers compatible with ModelSelector.
 
 from typing import Any, Dict
 
-from agentopt.types import InvokerProtocol
+from .base import InvokerProtocol
 
 
 class CrewInvoker(InvokerProtocol):

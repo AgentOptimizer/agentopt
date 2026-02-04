@@ -4,8 +4,8 @@ Type definitions for agentopt.
 All types are fully typed using Pydantic models.
 """
 
-from typing import Any, Callable, Dict, List, Optional, Protocol, Union
-from pydantic import BaseModel, Field
+from typing import Any, Callable, Dict, List, Union
+from pydantic import BaseModel
 
 
 class Message(BaseModel):

@@ -148,14 +148,14 @@ class ModelSelector:
 
     def _get_model_name(self, model_obj: Any) -> str:
         """Extract model name from model object for display purposes."""
-        if hasattr(model_obj, "model_name"):
+        if isinstance(model_obj, str):
+            return model_obj
+        elif hasattr(model_obj, "model_name"):
             return str(model_obj.model_name)
         elif hasattr(model_obj, "model"):
             return str(model_obj.model)
-        elif hasattr(model_obj, "__class__"):
-            return model_obj.__class__.__name__
         else:
-            return str(model_obj)
+            return model_obj.__class__.__name__
 
     def _evaluate_model(
         self,

@@ -33,10 +33,12 @@ class ModelSelector(BaseModelSelector):
             accuracy_fn: Function (expected, actual) -> bool
             dataset_dir: Optional path to dataset directory
         """
-        self.invoker = invoker
-        self.accuracy_fn = accuracy_fn
-        self.dataset_dir = dataset_dir
-        self._models = models
+        super().__init__(
+            invoker=invoker,
+            models=models,
+            accuracy_fn=accuracy_fn,
+            dataset_dir=dataset_dir,
+        )
 
     def select_best(
         self,

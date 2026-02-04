@@ -27,11 +27,30 @@ class ModelProxy:
         object.__setattr__(self, "_model_class", type(initial_model))
 
     def set_model(self, model: Any) -> None:
-        """Swap the underlying model. Accepts model object or string."""
+        """Swap the underlying model. Accepts a model object or, in limited cases, a string name."""
         if isinstance(model, str):
-            # Create model using the same class as the initial model
-            model_class = object.__getattribute__(self, "_model_class")
-            model = model_class(model=model)
+            current_model = object.__getattribute__(self, "_model")
+            if current_model is None:
+                raise RuntimeError("No model set")
+
+            model_copy = getattr(current_model, "model_copy", None)
+            if callable(model_copy):
+                try:
+                    new_model = model_copy(update={"model": model})
+                except TypeError:
+                    new_model = None
+                else:
+                    object.__setattr__(self, "_model", new_model)
+                    return
+
+            if hasattr(current_model, "model"):
+                setattr(current_model, "model", model)
+                return
+
+            raise TypeError(
+                "Cannot swap model using a string for this model type. Pass a fully-constructed model instance instead."
+            )
+
         object.__setattr__(self, "_model", model)
 
     def get_model(self) -> Any:

@@ -1,6 +1,8 @@
-# Agent Efficiency Optimization - Model Selection Package
+# AgentOpt - Model Selection for AI Agents
 
-A package for enabling model selection/hyperparameter tuning with LangChain agents while minimizing changes to user code.
+A framework-agnostic package for evaluating and selecting optimal LLM models for AI agents. Supports CrewAI, LangChain, and extensible to other frameworks.
+
+> **⚠️ Note: This project is in early development. Several components are subject to change—see [Current Limitations](#current-limitations) below.**
 
 ## Installation
 
@@ -10,326 +12,324 @@ Using `uv` (recommended):
 # Install uv if you haven't already
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Sync dependencies (installs LangChain and related packages)
+# Sync dependencies
 uv sync
 
-# Run example
-uv run python examples/main.py
-```
+# Run LangChain example (works with default dependencies)
+uv run python examples/langchain_example.py
 
-The `uv sync` command will:
-- Create a virtual environment (`.venv`)
-- Install LangChain, langchain-openai, pandas, matplotlib
-- Install the agentopt package in editable mode
+# For CrewAI examples, install optional dependencies
+uv sync --extra crewai
+uv run python examples/crewai_example.py
+```
 
 ## Project Structure
 
 ```
 agentopt/
-├── src/
-│   └── agentopt/              # Main package source code
-│       ├── __init__.py
-│       ├── core.py            # ModelProxy, ModelSelector, bind_model
-│       ├── model_factory.py
-│       └── adapters/          # Framework-specific adapters
-│           ├── __init__.py
-│           ├── langchain.py   # OptLangchainAgent
-│           └── crewai.py      # OptCrewAgent, OptCrew
+├── src/agentopt/
+│   ├── __init__.py              # Public API exports
+│   ├── types.py                 # Core type definitions (Message, EvaluationTask)
+│   ├── model_proxy.py           # ModelProxy for dynamic model swapping
+│   ├── model_factory.py         # Model creation utilities
+│   ├── load_dataset.py          # Dataset loading (JSONL → EvaluationTask)
+│   ├── invoker/                 # Framework adapters
+│   │   ├── base.py              # InvokerProtocol definition
+│   │   ├── langchain.py         # LangchainInvoker, ChainedLangchainInvoker
+│   │   └── crewai.py            # CrewInvoker
+│   └── model_selection/         # Model selection logic
+│       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
+│       └── model_selection.py   # ModelSelector implementation
 ├── examples/
-│   ├── main.py                # Example usage
+│   ├── crewai_example.py        # CrewAI usage examples
+│   ├── langchain_example.py     # LangChain usage examples
 │   └── datasets/
 │       └── math_problems.jsonl
-├── tests/
-├── pyproject.toml
-└── README.md
+└── pyproject.toml
 ```
 
-**Note:** You'll need to set your OpenRouter API key. Create a `.env` file:
-```bash
-cp .env.example .env
-# Then edit .env and add your OPENROUTER_API_KEY
-```
+## Environment Setup
 
-Or set it as an environment variable:
+Set your API keys as environment variables:
+
 ```bash
 export OPENROUTER_API_KEY=your_key_here
+export OPENAI_API_KEY=your_key_here        # Optional, for OpenAI direct
+export ANTHROPIC_API_KEY=your_key_here     # Optional, for Anthropic direct
+export GOOGLE_API_KEY=your_key_here        # Optional, for Google direct
 ```
 
-## How to Use Model Selector for LangChain
-
-### Original LangChain Agent Creation
-
-Here's how you would normally create a LangChain agent:
-
-```python
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
-from langchain_core.tools import tool
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-@tool
-def add(a: float, b: float) -> float:
-    """Add two numbers together."""
-    return a + b
-
-# Create agent with a specific model
-agent = create_agent(
-    model=ChatOpenAI(
-        model="openai/gpt-4o",
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-    ),
-    tools=[add],
-    system_prompt="You are a helpful math assistant.",
-)
-
-# Use the agent
-result = agent.invoke({"messages": [{"role": "user", "content": "What is 15 + 27?"}]})
+Or use a `.env` file:
+```bash
+cp .env.example .env
+# Edit .env with your keys
 ```
 
-**The problem:** Once the agent is created, you cannot change the model. The model is captured in a closure inside the compiled graph, making it impossible to swap models for evaluation or optimization.
+## Core Concepts
 
-### Solution: Use ModelProxy
+### 1. ModelProxy
 
-To enable model swapping, we need to modify the agent creation to use a `ModelProxy` instead of a direct model. Here's how:
-
-### Step 1: Create Your Agent with ModelProxy
-
-Modify your agent creation to use `ModelProxy`:
+A transparent wrapper that enables dynamic model swapping without recreating agents:
 
 ```python
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
-from langchain_core.tools import tool
 from agentopt import ModelProxy
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
+# Wrap your LLM with ModelProxy
+proxy = ModelProxy(initial_model)
 
-@tool
-def add(a: float, b: float) -> float:
-    """Add two numbers together."""
-    return a + b
+# Use proxy in your agent (it behaves exactly like the original model)
+agent = create_agent(model=proxy, ...)
 
-def MyLangchainAgent(model_name: str = "openai/gpt-4o"):
-    # Create initial model
-    initial_model = ChatOpenAI(
-        model=model_name,
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-    )
-    
-    # Create a proxy model that will forward to the current model
-    proxy_model = ModelProxy("model", initial_model)
-    
-    # Create agent with proxy model
-    agent = create_agent(
-        model=proxy_model,
-        tools=[add],
-        system_prompt="You are a helpful math assistant.",
-    )
-    
-    # Store proxy reference on agent for later access
-    agent._model = proxy_model
-    
-    return agent
+# Later, swap the underlying model
+proxy.set_model(new_model)  # Agent now uses new_model
 ```
 
-### Step 2: Use ModelSelector for Model Selection
+### 2. Invokers
+
+Framework-specific wrappers that provide a uniform interface for agent invocation:
 
 ```python
-from agent import MyLangchainAgent
+from agentopt import CrewInvoker, LangchainInvoker
+
+# For CrewAI
+invoker = CrewInvoker(crew)
+
+# For LangChain
+invoker = LangchainInvoker(agent_executor)
+
+# Uniform interface
+result = invoker.invoke({"messages": [{"role": "user", "content": "Hello"}]})
+```
+
+### 3. ModelSelector
+
+Evaluates multiple models on a dataset and selects the best performer:
+
+```python
 from agentopt import ModelSelector
 
-# Define accuracy function
-def accuracy_fn(expected_answer: str, actual_output: str) -> bool:
-    """Check if expected answer appears in actual output."""
-    return expected_answer.lower() in actual_output.lower()
-
-# Create agent
-agent = MyLangchainAgent()
-
-# Create model selector
 selector = ModelSelector(
-    agent=agent, ### this should be func  
-    dataset_dir="datasets",  # Path to JSONL dataset
-    models={
-        ##3 we need proxymodel_reference
-        agent._model: [  # Attribute path where proxy is stored
-            "anthropic/claude-3.5-sonnet",
-            "openai/gpt-4o",
-            "google/gemini-3-flash-preview",
-        ]
-    },
-    accuracy_fn=accuracy_fn,
+    invoker=invoker,
+    models={proxy: ["openai/gpt-4o", "anthropic/claude-3.5-sonnet"]},
+    accuracy_fn=lambda expected, actual: expected.lower() in actual.lower(),
+    dataset_dir="path/to/dataset",
 )
 
-### for models in model_lib: proxymodel_reference._model = model; func("input") -> output
-
-# Run model selection
-results_df = selector.select_best()
-
-# Results include accuracy, latency, and best model flag
-print(results_df)
+results = selector.select_best()
+print(results.get_best())  # Best model across all
+results.to_csv("results.csv")
 ```
 
-### Step 3: Dataset Format
+## Usage Examples
 
-Create a JSONL file in your dataset directory with format:
+### CrewAI Example
+
+```python
+from crewai import Agent, Task, Crew, LLM
+from agentopt import ModelProxy, CrewInvoker, ModelSelector
+
+# 1. Create LLM wrapped with ModelProxy
+llm = LLM(model="openai/gpt-4o", base_url="https://openrouter.ai/api/v1")
+proxy = ModelProxy(llm)
+
+# 2. Create agent using the proxy
+agent = Agent(
+    role="Researcher",
+    goal="Research and answer questions",
+    backstory="You are a helpful research assistant.",
+    llm=proxy,
+)
+
+# 3. Create task and crew
+task = Task(
+    description="Answer: {input}",
+    expected_output="A clear answer",
+    agent=agent,
+)
+crew = Crew(agents=[agent], tasks=[task])
+
+# 4. Wrap with invoker and run model selection
+invoker = CrewInvoker(crew)
+selector = ModelSelector(
+    invoker=invoker,
+    models={proxy: ["openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash"]},
+    accuracy_fn=lambda expected, actual: expected.lower() in actual.lower(),
+    dataset_dir="examples/datasets",
+)
+
+results = selector.select_best()
+```
+
+### LangChain Example
+
+```python
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain_openai import ChatOpenAI
+from agentopt import ModelProxy, LangchainInvoker, ModelSelector
+
+# 1. Create model wrapped with ModelProxy
+model = ChatOpenAI(model="gpt-4o")
+proxy = ModelProxy(model)
+
+# 2. Create agent using the proxy
+agent = create_react_agent(llm=proxy, tools=tools, prompt=prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+# 3. Wrap with invoker and run model selection
+invoker = LangchainInvoker(executor)
+selector = ModelSelector(
+    invoker=invoker,
+    models={proxy: ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]},
+    accuracy_fn=my_accuracy_fn,
+    dataset_dir="datasets",
+)
+
+results = selector.select_best()
+```
+
+### Multi-Agent / Multi-LLM Example
+
+```python
+# Different proxies for different agents
+researcher_proxy = ModelProxy(LLM(model="openai/gpt-4o"))
+coder_proxy = ModelProxy(LLM(model="anthropic/claude-3.5-sonnet"))
+
+researcher = Agent(role="Researcher", llm=researcher_proxy, ...)
+coder = Agent(role="Coder", llm=coder_proxy, ...)
+
+# Optimize each LLM independently
+selector = ModelSelector(
+    invoker=invoker,
+    models={
+        researcher_proxy: ["openai/gpt-4o", "google/gemini-2.0-flash"],
+        coder_proxy: ["anthropic/claude-3.5-sonnet", "openai/gpt-4o"],
+    },
+    ...
+)
+```
+
+## Dataset Format
+
+JSONL files with question/output pairs:
 
 ```jsonl
 {"question": "What is 15 + 27?", "output": "42"}
-{"question": "Solve: 8 × 7 - 12", "output": "44"}
+{"question": "What is the capital of France?", "output": "Paris"}
 ```
-
-Each line is a JSON object with:
-- `question`: The input question/prompt
-- `output`: The expected answer (used for accuracy checking)
-
-## Why We Need Proxy Model for LangChain
-
-### The Problem: Models Are Stored in Closures
-
-LangChain agents are built using **LangGraph**, which creates a **compiled state graph**. When you create an agent:
-
-```python
-agent = create_agent(model=ChatOpenAI(...), ...)
-```
-
-The model is **captured in a closure** of the graph node function, not stored as an attribute:
-
-```python
-# Internally, LangChain does something like:
-def create_agent(model, tools, ...):
-    def model_node(state):
-        # model is captured in this closure
-        return model.invoke(state)
-    
-    graph.add_node("model", model_node)
-    return graph.compile()
-```
-
-**The problem:** You can't change the model after creation because:
-- `agent.model` doesn't exist as an attribute
-- The model is hidden inside the closure
-- Changing `agent.model` (if it existed) wouldn't affect the closure
-
-### The Solution: Proxy Pattern
-
-We use a `ModelProxy` that forwards calls to the current model:
-
-```python
-# Create agent with proxy
-proxy_model = ModelProxy("model", initial_model)
-agent = create_agent(model=proxy_model, ...)
-agent._model = proxy_model  # Store reference
-
-# Later, swap models:
-from agentopt import bind_model
-bind_model(agent, "_model", new_model)  # Updates proxy._model
-```
-
-**How it works:**
-1. `ModelProxy` implements `__getattr__` to forward all method calls
-2. When the agent's graph node calls `proxy.invoke()`, it forwards to `proxy._model`
-3. We can update `proxy._model` externally without recreating the agent
-4. The closure still references the proxy, but the proxy forwards to the current model
-
-### Visual Explanation
-
-```
-┌─────────────────────────────────────┐
-│   CompiledStateGraph (agent)       │
-│                                     │
-│   ┌──────────┐      ┌──────────┐   │
-│   │  model   │─────▶│  tools   │   │
-│   │  node    │      │  node    │   │
-│   └──────────┘      └──────────┘   │
-│        │                            │
-│        │ Closure contains:         │
-│        │ - proxy_model (ModelProxy)│
-│        │   └─> proxy._model        │
-│        │       (can be swapped!)   │
-│        └──────────────────────────│
-└─────────────────────────────────────┘
-```
-
-### Why Not Just Replace agent.model?
-
-```python
-# This doesn't work:
-agent.model = new_model  # ❌ agent.model doesn't exist
-
-# Even if it did:
-agent.model = new_model  # ❌ Doesn't affect closure
-```
-
-The closure was created when `create_agent()` was called. Changing attributes after creation doesn't affect what's already captured in the closure.
-
-### Benefits of Proxy Pattern
-
-1. **Zero changes to LangChain internals** - We work with the existing architecture
-2. **Dynamic model swapping** - Change models without recreating agents
-3. **Minimal code changes** - Just wrap initial model with `ModelProxy`
-4. **Transparent** - Proxy forwards all calls, so it behaves like a real model
-
-## Features
-
-- **Zero changes** to user's agent code (except wrapping model with `ModelProxy`)
-- **Explicit binding** - user specifies the attribute path (e.g., "._model")
-- **Nested attributes** - support for multi-level paths like `agent.B.C`
-- **Simple API** - just `bind_model(obj, attr_path, model)`
-- **Dataset support** - JSONL format with question/output pairs
-- **Visualization** - automatic plotting of accuracy vs latency
 
 ## API Reference
 
-### `ModelSelector`
+### Types
 
 ```python
-ModelSelector(
-    agent: Any,
-    models: Dict[str, List[str]],
-    accuracy_fn: Callable[[str, str], bool],
-    dataset_dir: Optional[str] = None,
+from agentopt import Message, EvaluationTask, ModelResult, SelectionResults
+
+# Message in a conversation
+Message(role="user", content="Hello")
+
+# Task for evaluation
+EvaluationTask(messages=[Message(...)], expected_answer="42")
+
+# Result from model evaluation
+ModelResult(model_name="gpt-4o", accuracy=0.95, latency_seconds=1.2, is_best=True)
+
+# Container for all results
+SelectionResults(results=[...])
+results.get_best()           # Get best overall
+results.get_best("llm")      # Get best for specific model/attribute
+results.to_csv("out.csv")    # Export to CSV
+```
+
+### ModelProxy
+
+```python
+from agentopt import ModelProxy
+
+proxy = ModelProxy(initial_model)
+proxy.set_model(new_model)    # Swap model
+proxy.get_model()             # Get current model
+# All other attributes/methods forward to underlying model
+```
+
+### Invokers
+
+```python
+from agentopt import InvokerProtocol, CrewInvoker, LangchainInvoker, ChainedLangchainInvoker
+
+# Protocol interface
+class InvokerProtocol(Protocol):
+    def invoke(self, input_dict: Dict[str, Any]) -> Dict[str, Any]: ...
+
+# CrewAI wrapper
+invoker = CrewInvoker(crew)
+
+# LangChain wrappers
+invoker = LangchainInvoker(executor)
+invoker = ChainedLangchainInvoker(executors)  # Sequential multi-agent
+```
+
+### ModelSelector
+
+```python
+from agentopt import ModelSelector
+
+selector = ModelSelector(
+    invoker=invoker,           # Wrapped agent
+    models={proxy: ["openai/gpt-4o-mini", "openai/gpt-4o"]}, # Proxy → candidate models
+    accuracy_fn=my_accuracy_fn,  # (expected, actual) → bool
+    dataset_dir="path/to/dataset",  # Path to JSONL dataset
 )
+
+results = selector.select_best(evaluation_tasks=None)
 ```
 
-- `agent`: The agent instance to optimize
-- `models`: Dictionary mapping attribute paths to list of model names
-- `accuracy_fn`: Function that takes (expected_answer, actual_output) and returns bool
-- `dataset_dir`: Path to directory containing JSONL dataset files
+## Current Limitations
 
-Returns a pandas DataFrame with columns: `model_name`, `accuracy`, `latency_seconds`, `attribute`, `best`
+> **This project is under active development. The following components are subject to change:**
 
-### `bind_model(obj, attr_path, model)`
+### 1. InvokerProtocol Design (Under Discussion)
 
-Bind a model to an object's attribute, supporting nested paths.
+The current `InvokerProtocol` works well for frameworks with clear entrypoints:
+- **CrewAI**: `crew.kickoff()` provides a clean invocation point
+- **LangGraph**: Similarly has well-defined entry/exit
 
-**Parameters:**
-- `obj`: Object to bind model to
-- `attr_path`: Path to the attribute (e.g., "._model", "B.C")
-- `model`: The model object to bind
+However, for frameworks like **LangChain** where agent construction is more flexible, the invoker pattern may require users to significantly restructure their code. We're exploring alternatives that minimize user code changes.
 
-### `ModelProxy`
+### 2. Dataset Loading (Placeholder Implementation)
 
-A proxy object that forwards attribute access to the current model.
+The current `load_dataset` function is a minimal implementation:
+- Requires a specific `EvaluationTask` structure
+- Expects JSONL with `question`/`output` fields
+- May not suit all evaluation scenarios
 
-**Usage:**
+Future versions will support:
+- Custom dataset formats
+- More flexible evaluation task definitions
+- Integration with standard benchmarks
+
+### 3. ModelSelector API (Subject to Change)
+
+Since both the invoker and dataset interfaces are evolving, the `ModelSelector` API will also change accordingly. Current usage patterns may need adjustment in future releases.
+
+## Why ModelProxy?
+
+Many agent frameworks capture the model in closures during agent creation:
+
 ```python
-proxy = ModelProxy("model", initial_model)
-# Later update:
-proxy._model = new_model
+# Model is captured in closure - cannot be changed later
+agent = create_agent(model=ChatOpenAI(...))
 ```
 
-## Example
+`ModelProxy` solves this by providing an indirection layer:
 
-See `examples/main.py` for a complete working example that:
-1. Creates an agent with `ModelProxy`
-2. Evaluates multiple models on a dataset
-3. Selects the best model
-4. Generates a visualization
+```
+Agent → ModelProxy → Actual Model
+                  ↑
+            Can be swapped!
+```
+
+The agent holds a reference to the proxy, and we can change what the proxy points to without recreating the agent.
+
+## License
+
+MIT

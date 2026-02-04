@@ -46,4 +46,4 @@ class EvaluationTask(BaseModel):
 # Type aliases
 AccuracyFn = Callable[[str, str], bool]
 ModelSpec = Union[str, Any]  # Model name string or model object
-ModelsConfig = Dict["ModelProxy", List[ModelSpec]]  # ModelProxy to model candidates mapping
+ModelsConfig = Dict["ModelProxy", List[ModelSpec]]

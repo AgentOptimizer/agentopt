@@ -1,8 +1,8 @@
 """
-CrewAI wrappers for model selection compatibility.
+CrewAI wrapper for model selection compatibility.
 
-Provides CrewInvoker (minimal wrapper), OptCrewAgent (single-agent),
-and OptCrew (multi-agent) wrappers compatible with ModelSelector.
+Provides CrewInvoker, a minimal wrapper that makes a Crew invokable
+in a way that is compatible with ModelSelector.
 """
 
 from typing import Any, Dict

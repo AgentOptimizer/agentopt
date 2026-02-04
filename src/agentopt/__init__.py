@@ -1,5 +1,10 @@
 """
-Model selection package - bind models to agents with explicit attribute names.
+Model selection and orchestration for LLM-style models using `ModelProxy` and invokers.
+
+This package provides:
+- `ModelProxy` as a unified interface over concrete model backends
+- invoker implementations (e.g., LangChain, CrewAI) to actually call models
+- model selection utilities (`ModelSelector`, `BaseModelSelector`) to choose among models
 """
 
 from .model_proxy import ModelProxy

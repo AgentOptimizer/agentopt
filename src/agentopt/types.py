@@ -4,8 +4,11 @@ Type definitions for agentopt.
 All types are fully typed using Pydantic models.
 """
 
-from typing import Any, Callable, Dict, List, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Union
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from .model_proxy import ModelProxy
 
 
 class Message(BaseModel):
@@ -43,4 +46,4 @@ class EvaluationTask(BaseModel):
 # Type aliases
 AccuracyFn = Callable[[str, str], bool]
 ModelSpec = Union[str, Any]  # Model name string or model object
-ModelsConfig = Dict[Any, List[ModelSpec]]  # Keys can be strings or ModelProxy
+ModelsConfig = Dict["ModelProxy", List[ModelSpec]]  # ModelProxy to model candidates mapping

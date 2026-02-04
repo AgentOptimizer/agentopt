@@ -15,9 +15,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Sync dependencies
 uv sync
 
-# Run examples
-uv run python examples/crewai_example.py
+# Run LangChain example (works with default dependencies)
 uv run python examples/langchain_example.py
+
+# For CrewAI examples, install optional dependencies
+uv sync --extra crewai
+uv run python examples/crewai_example.py
 ```
 
 ## Project Structure

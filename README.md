@@ -50,19 +50,20 @@ agentopt/
 
 ## Environment Setup
 
-Set your API keys as environment variables:
+Set your API keys as environment variables. The repo uses **OpenRouter** by default (see `.env.example`):
 
 ```bash
 export OPENROUTER_API_KEY=your_key_here
-export OPENAI_API_KEY=your_key_here        # Optional, for OpenAI direct
-export ANTHROPIC_API_KEY=your_key_here     # Optional, for Anthropic direct
-export GOOGLE_API_KEY=your_key_here        # Optional, for Google direct
+export OPENROUTER_BASE_URL=https://openrouter.ai/api/v1   # optional, this is the default
 ```
+
+For direct provider access you can also set:
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` (used when `OPENROUTER_API_KEY` is not set where applicable).
 
 Or use a `.env` file:
 ```bash
 cp .env.example .env
-# Edit .env with your keys
+# Edit .env and set OPENROUTER_API_KEY=your_actual_key
 ```
 
 ## Core Concepts

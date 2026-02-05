@@ -1,4 +1,24 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from project root. Copy .env.example to .env and add your API keys.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 from langchain_openai import ChatOpenAI
+
+
+def _chat_openai(model: str, **kwargs):
+    """ChatOpenAI using OpenRouter if OPENROUTER_API_KEY is set, else OpenAI."""
+    if os.getenv("OPENROUTER_API_KEY"):
+        return ChatOpenAI(
+            model=model,
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            **kwargs,
+        )
+    return ChatOpenAI(model=model, **kwargs)
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
@@ -27,7 +47,7 @@ def calculator(expression: str) -> str:
 def single_agent_example():
     """Single agent with search and calculator tools."""
     # 1. Wrap the LLM
-    llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
+    llm = ModelProxy(_chat_openai("gpt-4o-mini"))
 
     # 2. Define tools
     search = DuckDuckGoSearchRun()
@@ -58,8 +78,8 @@ def multiagent_example():
     Uses ChainedLangchainInvoker for sequential execution.
     """
     # 1. Wrap the LLMs
-    researcher_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
-    coder_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
+    researcher_llm = ModelProxy(_chat_openai("gpt-4o-mini"))
+    coder_llm = ModelProxy(_chat_openai("gpt-4o-mini"))
 
     # 2. Define tools for each agent
     search = DuckDuckGoSearchRun()

@@ -16,7 +16,7 @@ class LangchainInvoker(InvokerProtocol):
 
     Usage:
         from langchain_openai import ChatOpenAI
-        from langchain.agents import AgentExecutor, create_tool_calling_agent
+        from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 
         llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 

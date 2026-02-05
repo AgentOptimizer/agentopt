@@ -163,7 +163,8 @@ results = selector.select_best()
 ### LangChain Example
 
 ```python
-from langchain.agents import create_react_agent, AgentExecutor
+from langchain.agents import create_react_agent
+from langchain_classic.agents import AgentExecutor
 from langchain_openai import ChatOpenAI
 from agentopt import ModelProxy, LangchainInvoker, ModelSelector
 

@@ -118,7 +118,10 @@ class ModelSelector(BaseModelSelector):
                     should_update = True
                 elif accuracy > best_accuracy + accuracy_tolerance:
                     should_update = True
-                elif abs(accuracy - best_accuracy) <= accuracy_tolerance and latency < best_latency:
+                elif (
+                    abs(accuracy - best_accuracy) <= accuracy_tolerance
+                    and latency < best_latency
+                ):
                     should_update = True
 
                 if should_update:

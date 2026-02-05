@@ -19,6 +19,8 @@ def _chat_openai(model: str, **kwargs):
             **kwargs,
         )
     return ChatOpenAI(model=model, **kwargs)
+
+
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool

@@ -8,19 +8,6 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from langchain_openai import ChatOpenAI
 
-
-def _chat_openai(model: str, **kwargs):
-    """ChatOpenAI using OpenRouter if OPENROUTER_API_KEY is set, else OpenAI."""
-    if os.getenv("OPENROUTER_API_KEY"):
-        return ChatOpenAI(
-            model=model,
-            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-            **kwargs,
-        )
-    return ChatOpenAI(model=model, **kwargs)
-
-
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
@@ -34,6 +21,18 @@ from agentopt import (
     LangchainInvoker,
     ChainedLangchainInvoker,
 )
+
+
+def _chat_openai(model: str, **kwargs):
+    """ChatOpenAI using OpenRouter if OPENROUTER_API_KEY is set, else OpenAI."""
+    if os.getenv("OPENROUTER_API_KEY"):
+        return ChatOpenAI(
+            model=model,
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            **kwargs,
+        )
+    return ChatOpenAI(model=model, **kwargs)
 
 
 # Define tools

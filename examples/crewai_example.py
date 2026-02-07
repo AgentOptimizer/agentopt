@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from crewai import Agent, Crew, Process, Task, LLM
 from crewai_tools import (
     DirectoryReadTool,
@@ -7,7 +10,60 @@ from crewai_tools import (
 )
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, ModelSelector, CrewInvoker
+from agentopt import ModelProxy, ModelSelector
+
+
+def load_dataset(dataset_dir):
+    """Load JSONL dataset and return (input_data, expected_answer) tuples for CrewAI."""
+    dataset_path = Path(dataset_dir)
+    jsonl_files = list(dataset_path.glob("*.jsonl"))
+    if not jsonl_files:
+        raise ValueError(f"No JSONL files found in: {dataset_dir}")
+
+    tasks = []
+    with open(jsonl_files[0], "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            # Format input for CrewAI's kickoff(inputs={"input": ...})
+            tasks.append(({"input": item["question"]}, item["output"]))
+    return tasks
+
+
+def eval_fn(expected, actual):
+    return expected.lower() in str(actual).lower()
+
+
+def without_opt_single_agent_example():
+    llm = LLM(model="openai/gpt-4o-mini")
+
+    researcher = Agent(
+        role="Researcher",
+        goal="Find accurate information on any topic",
+        backstory="You are an expert researcher with years of experience.",
+        llm=llm,
+        tools=[SerperDevTool(), WebsiteSearchTool()],
+        verbose=False,
+    )
+
+    task = Task(
+        description="{input}",
+        expected_output="A clear answer",
+        agent=researcher,
+    )
+
+    crew = Crew(
+        agents=[researcher],
+        tasks=[task],
+        process=Process.sequential,
+        verbose=False,
+    )
+
+    crew.kickoff(inputs={"input": "What is the capital of France?"})
+
+    return crew
 
 
 def single_agent_example():
@@ -37,10 +93,7 @@ def single_agent_example():
         verbose=False,
     )
 
-    # 3. Wrap crew with invoker
-    invoker = CrewInvoker(crew)
-
-    return llm, invoker
+    return llm, crew
 
 
 def multiagent_example():
@@ -136,73 +189,20 @@ def multiagent_multillm_example():
     return (llm_research, llm_sde), crew
 
 
-def hierarchical_example():
-    """
-    Hierarchical process: Manager agent dynamically delegates tasks to workers.
-    Tasks don't need agent= assignment - the manager decides who does what.
-    """
-    # 1. Wrap both worker LLM and manager LLM
-    worker_llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))
-    manager_llm = ModelProxy(LLM(model="openai/gpt-4o"))
+def run_model_selection(crew, llm_proxies):
+    dataset = load_dataset("examples/datasets")
 
-    # 2. Define worker agents
-    researcher = Agent(
-        role="Researcher",
-        goal="Find accurate information on any topic",
-        backstory="You are an expert researcher with years of experience.",
-        llm=worker_llm,
-        verbose=False,
-    )
-
-    sde = Agent(
-        role="SDE",
-        goal="Write efficient and correct code",
-        backstory="You are a skilled software developer.",
-        llm=worker_llm,
-        verbose=False,
-    )
-
-    # 3. Define tasks WITHOUT agent= (manager will assign dynamically)
-    research_task = Task(
-        description="{input}",
-        expected_output="Research findings and analysis",
-    )
-
-    code_task = Task(
-        description="Based on the research findings, write code or provide a technical solution",
-        expected_output="Working code or technical solution",
-    )
-
-    # 4. Create hierarchical crew with manager
-    crew = Crew(
-        agents=[researcher, sde],
-        tasks=[research_task, code_task],
-        process=Process.hierarchical,
-        manager_llm=manager_llm,  # Manager decides who does what
-        verbose=False,
-    )
-
-    invoker = CrewInvoker(crew)
-    return (worker_llm, manager_llm), invoker
-
-
-def accuracy_fn(expected: str, actual: str) -> bool:
-    return expected.lower() in actual.lower()
-
-
-def run_model_selection(invoker, llm_proxies):
-    # 4. Model selection
     selector = ModelSelector(
-        invoker=invoker,
         models={
-            llm: [
+            llm_proxy: [
                 "openai/gpt-4o-mini",
                 "openai/gpt-4.1-mini",
             ]
-            for llm in llm_proxies
+            for llm_proxy in llm_proxies
         },
-        accuracy_fn=accuracy_fn,
-        dataset_dir="examples/datasets",
+        eval_fn=eval_fn,
+        dataset=dataset,
+        agent=crew,
     )
 
     results = selector.select_best()
@@ -238,29 +238,21 @@ if __name__ == "__main__":
     print("=" * 20)
     print("Single-agent example")
     print("=" * 20)
-    llm_proxy, invoker = single_agent_example()
-    results = run_model_selection(invoker, [llm_proxy])
+    llm_proxy, crew = single_agent_example()
+    results = run_model_selection(crew, [llm_proxy])
 
-    # Multi-agent example with single LLM
-    print("=" * 20)
-    print("Multi-agent example with single LLM")
-    print("=" * 20)
-    llm_proxy, crew = multiagent_example()
-    invoker = CrewInvoker(crew)
-    results = run_model_selection(invoker, [llm_proxy])
+    # # Multi-agent example with single LLM
+    # print("=" * 20)
+    # print("Multi-agent example with single LLM")
+    # print("=" * 20)
+    # llm_proxy, crew = multiagent_example()
+    # results = run_model_selection(crew, [llm_proxy])
 
-    print("=" * 20)
-    print("Multi-agent with multiple LLMs")
-    print("=" * 20)
-    llm_proxies, crew = multiagent_multillm_example()
-    invoker = CrewInvoker(crew)
-    results = run_model_selection(invoker, llm_proxies)
-
-    print("=" * 20)
-    print("Hierarchical example")
-    print("=" * 20)
-    llm_proxies, invoker = hierarchical_example()
-    results = run_model_selection(invoker, llm_proxies)
+    # print("=" * 20)
+    # print("Multi-agent with multiple LLMs")
+    # print("=" * 20)
+    # llm_proxies, crew = multiagent_multillm_example()
+    # results = run_model_selection(crew, llm_proxies)
 
     # Plot all results
     plot_results(

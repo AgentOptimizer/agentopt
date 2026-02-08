@@ -2,7 +2,7 @@
 name = "agentopt"
 version = "0.1.0"
 description = "A package for agent efficiency optimization through model selection and evaluation for LangChain agents"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<=3.13"
 dependencies = [
     "langchain>=1.0.0",
     "langchain-classic>=0.1.0",

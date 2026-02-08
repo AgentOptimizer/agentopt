@@ -1,10 +1,6 @@
+import json
 import os
 from pathlib import Path
-
-from dotenv import load_dotenv
-
-# Load .env from project root. Copy .env.example to .env and add your API keys.
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from langchain_openai import ChatOpenAI
 
@@ -15,24 +11,30 @@ from langchain_community.tools import DuckDuckGoSearchRun, WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
 import matplotlib.pyplot as plt
 
-from agentopt import (
-    ModelProxy,
-    ModelSelector,
-    LangchainInvoker,
-    ChainedLangchainInvoker,
-)
+from agentopt import ModelProxy, ModelSelector
 
 
-def _chat_openai(model: str, **kwargs):
-    """ChatOpenAI using OpenRouter if OPENROUTER_API_KEY is set, else OpenAI."""
-    if os.getenv("OPENROUTER_API_KEY"):
-        return ChatOpenAI(
-            model=model,
-            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-            **kwargs,
-        )
-    return ChatOpenAI(model=model, **kwargs)
+def load_dataset(dataset_dir):
+    """Load JSONL dataset and return (input_data, expected_answer) tuples for LangChain."""
+    dataset_path = Path(dataset_dir)
+    jsonl_files = list(dataset_path.glob("*.jsonl"))
+    if not jsonl_files:
+        raise ValueError(f"No JSONL files found in: {dataset_dir}")
+
+    tasks = []
+    with open(jsonl_files[0], "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            # Format input for LangChain's invoke({"input": ...})
+            tasks.append(({"input": item["question"]}, item["output"]))
+    return tasks
+
+
+def eval_fn(expected, actual):
+    return expected.lower() in str(actual.get("output", "")).lower()
 
 
 # Define tools
@@ -48,7 +50,7 @@ def calculator(expression: str) -> str:
 def single_agent_example():
     """Single agent with search and calculator tools."""
     # 1. Wrap the LLM
-    llm = ModelProxy(_chat_openai("gpt-4o-mini"))
+    llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 
     # 2. Define tools
     search = DuckDuckGoSearchRun()
@@ -67,20 +69,17 @@ def single_agent_example():
     agent = create_tool_calling_agent(llm, tools, prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
 
-    # 5. Wrap with invoker
-    invoker = LangchainInvoker(agent_executor)
-
-    return llm, invoker
+    return llm, agent_executor
 
 
 def multiagent_example():
     """
     Multi-agent setup with different LLMs for different agents.
-    Uses ChainedLangchainInvoker for sequential execution.
+    Uses a custom invoke_fn for sequential execution.
     """
     # 1. Wrap the LLMs
-    researcher_llm = ModelProxy(_chat_openai("gpt-4o-mini"))
-    coder_llm = ModelProxy(_chat_openai("gpt-4o-mini"))
+    researcher_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
+    coder_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 
     # 2. Define tools for each agent
     search = DuckDuckGoSearchRun()
@@ -118,29 +117,40 @@ def multiagent_example():
     coder_agent = create_tool_calling_agent(coder_llm, [calculator], coder_prompt)
     coder_executor = AgentExecutor(agent=coder_agent, tools=[calculator], verbose=False)
 
-    # 5. Use ChainedLangchainInvoker for sequential execution
-    invoker = ChainedLangchainInvoker([researcher_executor, coder_executor])
+    # 5. Custom invoke_fn that chains agents sequentially
+    def chained_invoke(input_data):
+        question = input_data["input"]
+        research_result = researcher_executor.invoke({"input": question})
+        research_output = research_result.get("output", "")
+        coder_result = coder_executor.invoke(
+            {"input": f"Based on this context: {research_output}\n\nTask: {question}"}
+        )
+        return coder_result
 
-    return (researcher_llm, coder_llm), invoker
+    return (researcher_llm, coder_llm), chained_invoke
 
 
-def accuracy_fn(expected: str, actual: str) -> bool:
-    return expected.lower() in actual.lower()
+def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
+    dataset = load_dataset("examples/datasets")
 
-
-def run_model_selection(invoker, llm_proxies):
-    selector = ModelSelector(
-        invoker=invoker,
-        models={
+    kwargs = {
+        "models": {
             llm: [
                 "gpt-4o-mini",
                 "gpt-4o",
             ]
             for llm in llm_proxies
         },
-        accuracy_fn=accuracy_fn,
-        dataset_dir="examples/datasets",
-    )
+        "eval_fn": eval_fn,
+        "dataset": dataset,
+    }
+
+    if use_invoke_fn:
+        kwargs["invoke_fn"] = agent_or_invoke_fn
+    else:
+        kwargs["agent"] = agent_or_invoke_fn
+
+    selector = ModelSelector(**kwargs)
 
     results = selector.select_best()
     print(f"\nBest: {results.get_best()}")
@@ -172,18 +182,18 @@ def plot_results(results, title="Model Performance", save_path=None):
 
 if __name__ == "__main__":
     # Single-agent example
-    print("=" * 20)
-    print("Single-agent example")
-    print("=" * 20)
-    llm_proxy, invoker = single_agent_example()
-    results = run_model_selection(invoker, [llm_proxy])
+    # print("=" * 20)
+    # print("Single-agent example")
+    # print("=" * 20)
+    # llm_proxy, agent_executor = single_agent_example()
+    # results = run_model_selection(agent_executor, [llm_proxy])
 
     # Multi-agent example
     print("=" * 20)
     print("Multi-agent example")
     print("=" * 20)
-    llm_proxies, invoker = multiagent_example()
-    results = run_model_selection(invoker, llm_proxies)
+    llm_proxies, chained_invoke = multiagent_example()
+    results = run_model_selection(chained_invoke, llm_proxies, use_invoke_fn=True)
 
     # Plot all results
     plot_results(

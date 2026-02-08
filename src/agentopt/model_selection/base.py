@@ -4,10 +4,10 @@ Base classes and result types for model selection.
 
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..types import AccuracyFn, EvaluationTask
-from ..invoker.base import InvokerProtocol
+from ..base_models import EvalFn
 from ..model_proxy import ModelProxy
 
 
@@ -70,35 +70,100 @@ class BaseModelSelector(ABC):
 
     def __init__(
         self,
-        invoker: InvokerProtocol,
         models: Dict[ModelProxy, List[Any]],
-        accuracy_fn: AccuracyFn,
-        dataset_dir: Optional[str] = None,
+        eval_fn: EvalFn,
+        dataset: List[Tuple[Any, str]],
+        agent: Any = None,
+        invoke_fn: Optional[callable] = None,
     ) -> None:
         """
         Initialize the model selector.
 
         Args:
-            invoker: Wrapper with invoke() method for running the agent
             models: Dictionary mapping ModelProxy to list of model candidates
-            accuracy_fn: Function (expected, actual) -> bool
-            dataset_dir: Optional path to dataset directory
+            eval_fn: Function (expected, actual) -> bool | float (higher is better)
+            dataset: List of (input_data, expected_answer) tuples, pre-loaded by the user
+            agent: agent class for agent framework that we support: Langchain, Langgraph, CrewAI, etc
+            invoke_fn: callable for customized agent
         """
-        self.invoker = invoker
-        self.accuracy_fn = accuracy_fn
-        self.dataset_dir = dataset_dir
+        if agent is None and invoke_fn is None:
+            raise ValueError("Either 'agent' or 'invoke_fn' must be provided")
+        if agent is not None and invoke_fn is not None:
+            raise ValueError(
+                "Only one of 'agent' or 'invoke_fn' should be provided, not both"
+            )
+
+        self.agent = agent
+        self.eval_fn = eval_fn
+        self.dataset = dataset
         self._models = models
 
-    @abstractmethod
-    def select_best(
+        # Resolve invoke_fn from agent if not provided directly
+        if invoke_fn is not None:
+            self.invoke_fn = invoke_fn
+        elif hasattr(agent, "kickoff"):
+            # CrewAI agents use .kickoff()
+            self.invoke_fn = agent.kickoff
+        elif hasattr(agent, "invoke"):
+            # LangChain and LangGraph agents use .invoke()
+            self.invoke_fn = agent.invoke
+        else:
+            raise TypeError(
+                f"Unsupported agent type: {type(agent).__name__}. "
+                "Pass 'invoke_fn' directly instead."
+            )
+
+    def _evaluate(
         self,
-        evaluation_tasks: Optional[List[EvaluationTask]] = None,
-    ) -> SelectionResults:
+        evaluation_tasks: List[Tuple[Any, str]],
+    ) -> Tuple[float, float]:
         """
-        Select the best model for each attribute/proxy.
+        Evaluate the current state of the agent against a list of tasks.
 
         Args:
-            evaluation_tasks: Optional list of tasks to evaluate on.
+            evaluation_tasks: List of (input_data, expected_answer) tuples
+
+        Returns:
+            Tuple of (score, avg_latency_seconds)
+        """
+        total_score = 0.0
+        total = len(evaluation_tasks)
+        total_latency = 0.0
+
+        for input_data, expected_answer in evaluation_tasks:
+            try:
+                start_time = time.time()
+                actual_result = self.invoke_fn(input_data)
+                latency = time.time() - start_time
+                total_latency += latency
+
+                score = self.eval_fn(expected_answer, actual_result)
+                # bool -> 1.0/0.0, float passes through
+                total_score += float(score)
+
+            except Exception:
+                pass
+
+        avg_score = total_score / total if total > 0 else 0.0
+        avg_latency = total_latency / total if total > 0 else 0.0
+
+        return avg_score, avg_latency
+
+    def _get_model_name(self, model_obj: Any) -> str:
+        """Extract model name from model object for display purposes."""
+        if isinstance(model_obj, str):
+            return model_obj
+        elif hasattr(model_obj, "model_name"):
+            return str(model_obj.model_name)
+        elif hasattr(model_obj, "model"):
+            return str(model_obj.model)
+        else:
+            return model_obj.__class__.__name__
+
+    @abstractmethod
+    def select_best(self) -> SelectionResults:
+        """
+        Select the best model for each attribute/proxy.
 
         Returns:
             SelectionResults containing all model evaluation results

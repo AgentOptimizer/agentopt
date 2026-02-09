@@ -28,6 +28,11 @@ crewai = [
     "crewai>=0.1.0",
     "crewai-tools>=0.1.0",
 ]
+bayesian = [
+    "torch>=2.0.0",
+    "botorch>=0.10.0",
+    "gpytorch>=1.11.0",
+]
 
 [build-system]
 requires = ["hatchling"]

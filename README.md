@@ -243,10 +243,17 @@ agentopt/
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
 │   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
+│   ├── sdk_shared.py            # Shared loader/eval + wrappers for SDK examples
+│   ├── openai_sdk/              # OpenAI SDK baselines and AgentOpt-enhanced pairs
+│   ├── claude_sdk/              # Claude SDK baselines and AgentOpt-enhanced pairs
 │   └── datasets/
 │       └── math_problems.jsonl
 └── pyproject.toml
 ```
+
+## Dataset / DataLoader notes for SDK-only examples
+
+OpenAI SDK and Claude SDK do not ship Dataset or DataLoader abstractions. The SDK examples (`examples/openai_sdk/` and `examples/claude_sdk/`) follow the AgentOpt contract by loading a JSONL file into a list of `(input_dict, expected_answer)` tuples and reusing `invoke_fn` to run evaluations. This keeps the SDK baselines comparable to the AgentOpt-enhanced runs without additional framework helpers.
 
 ## Environment Setup
 

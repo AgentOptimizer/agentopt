@@ -60,22 +60,13 @@ print(agent.llm.model)  # -> best model name
 | `parallel` | `bool` | Evaluate models concurrently (default: `True`) |
 | `max_workers` | `int \| None` | Max threads for parallel mode (default: `len(models)`) |
 
-### How parallel evaluation works
-
-When `parallel=True`, `optimize()`:
-1. Creates independent agent copies via Pydantic `model_copy(deep=False)`, each with a fresh LLM variant
-2. Evaluates all copies concurrently using `ThreadPoolExecutor`
-3. Sets the original agent's LLM to the winning model
-
-This avoids the shared-state problem of `ModelProxy` — each thread gets its own agent instance with its own LLM, so there are no conflicts.
-
 ## Advanced — `ModelProxy` + `ModelSelector`
 
 For more control (multi-LLM optimization, custom invoke functions), use the `ModelProxy` workflow:
 
 1. **Wrap** your LLM with `ModelProxy`
 2. **Build** your agent as usual (the proxy is transparent)
-3. **Run** `ModelSelector` to find the best model
+3. **Run** `ModelSelector.select_best()` — with optional `parallel=True`
 
 ### CrewAI
 
@@ -104,8 +95,28 @@ selector = ModelSelector(
     dataset=dataset,
     agent=crew,  # auto-detects crew.kickoff()
 )
+
+# Sequential evaluation (swaps proxy in-place)
 results = selector.select_best()
+
+# Or parallel evaluation (clones agent per combination, uses thread pool)
+results = selector.select_best(parallel=True, max_workers=4)
+
 print(results.get_best())
+```
+
+The CrewAI example can be run from the command line:
+
+```bash
+# Sequential
+uv run python examples/crewai_example.py single
+
+# Parallel
+uv run python examples/crewai_example.py single --parallel
+
+# Multi-agent examples
+uv run python examples/crewai_example.py multi --parallel
+uv run python examples/crewai_example.py multi-llm --parallel
 ```
 
 ### LangChain
@@ -129,7 +140,7 @@ selector = ModelSelector(
     dataset=dataset,
     agent=executor,  # auto-detects executor.invoke()
 )
-results = selector.select_best()
+results = selector.select_best(parallel=True)
 ```
 
 ### LlamaIndex
@@ -166,7 +177,7 @@ selector = ModelSelector(
 results = selector.select_best()
 ```
 
-**Note:** LlamaIndex agents use Pydantic validation which prevents passing `ModelProxy` directly. The `invoke_fn` pattern works around this.
+**Note:** LlamaIndex agents use Pydantic validation which prevents passing `ModelProxy` directly. The `invoke_fn` pattern works around this. Parallel mode (`select_best(parallel=True)`) requires `agent=` instead of `invoke_fn=`.
 
 ### Custom Agent / Any Framework
 
@@ -220,7 +231,7 @@ Agent --> ModelProxy --> LLM (gpt-4o-mini)
 
 ### ModelSelector
 
-Evaluates your agent across model combinations and selects the best one based on accuracy and latency.
+Evaluates your agent across model combinations and selects the best one based on accuracy and latency. Supports both sequential and parallel evaluation.
 
 ```python
 from agentopt import ModelSelector
@@ -231,7 +242,12 @@ selector = ModelSelector(
     dataset=dataset,     # [(input_data, expected_answer), ...]
     agent=agent,         # or invoke_fn=callable
 )
+
+# Sequential: swaps model proxy in-place, evaluates one combination at a time
 results = selector.select_best()
+
+# Parallel: clones agent per combination, evaluates concurrently via thread pool
+results = selector.select_best(parallel=True, max_workers=4)
 ```
 
 **Parameters:**
@@ -241,8 +257,27 @@ results = selector.select_best()
 | `models` | `dict[ModelProxy, list]` | Maps each proxy to its candidate models (strings or objects) |
 | `eval_fn` | `(str, Any) -> bool \| float` | Compares expected answer to actual output. Returns bool or float score (higher is better) |
 | `dataset` | `list[tuple[Any, str]]` | List of `(input_data, expected_answer)` tuples. `input_data` is passed directly to the agent's invoke method |
-| `agent` | `Any` | Agent object with `.kickoff()` (CrewAI) or `.invoke()` (LangChain). Mutually exclusive with `invoke_fn` |
-| `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Mutually exclusive with `agent` |
+| `agent` | `Any` | Agent object with `.kickoff()` (CrewAI), `.invoke()` (LangChain), or `.run()` (LlamaIndex). Mutually exclusive with `invoke_fn` |
+| `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Mutually exclusive with `agent`. Not compatible with `parallel=True` |
+
+**`select_best()` parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `parallel` | `bool` | Evaluate combinations concurrently (default: `False`) |
+| `max_workers` | `int \| None` | Max threads for parallel mode (default: number of combinations) |
+
+### How parallel evaluation works
+
+When `parallel=True`, `select_best()`:
+1. Detects which agent attribute each `ModelProxy` maps to
+2. Creates independent agent copies via Pydantic `model_copy(deep=False)`, each with a fresh LLM variant
+3. Evaluates all copies concurrently using `ThreadPoolExecutor`
+4. Sets the original proxies to the winning combination
+
+Each thread gets its own agent instance with its own LLM — no shared state, no conflicts. If cloning fails, it falls back to sequential evaluation automatically.
+
+**Note:** Parallel mode requires `agent=` (not `invoke_fn=`), since the agent must be cloneable.
 
 ### Multi-Agent / Multi-LLM Optimization
 
@@ -321,16 +356,16 @@ JSONL format:
 agentopt/
 ├── src/agentopt/
 │   ├── __init__.py              # Public API exports
-│   ├── optimize.py              # optimize() and parallel_select() — parallel evaluation
+│   ├── optimize.py              # optimize() and parallel_select() — thin wrappers
 │   ├── model_proxy.py           # ModelProxy for transparent model swapping
 │   ├── model_factory.py         # create_model_from_string (LangChain model creation)
 │   ├── base_models.py           # Type aliases (EvalFn, ModelSpec, ModelsConfig)
 │   └── model_selection/
 │       ├── __init__.py          # Exports ModelSelector
-│       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
-│       └── brute_force.py       # BruteForceModelSelector (default ModelSelector)
+│       ├── base.py              # BaseModelSelector, parallel utilities, result types
+│       └── brute_force.py       # BruteForceModelSelector (sequential + parallel)
 ├── examples/
-│   ├── crewai_example.py              # CrewAI: single-agent, multi-agent
+│   ├── crewai_example.py              # CrewAI: single-agent, multi-agent (CLI)
 │   ├── langchain_example.py           # LangChain: single-agent, multi-agent
 │   ├── llamaindex_example.py          # LlamaIndex: ModelProxy + invoke_fn approach
 │   ├── llamaindex_optimize_example.py # LlamaIndex: optimize() — simplest API
@@ -366,11 +401,11 @@ cp .env.example .env
 from agentopt import (
     # Simple API (recommended)
     optimize,                # Find best model — parallel, no ModelProxy needed
-    parallel_select,         # Parallel evaluation with ModelProxy
+    parallel_select,         # Parallel evaluation with ModelProxy (convenience wrapper)
 
     # Core
     ModelProxy,              # Transparent LLM proxy
-    ModelSelector,           # Brute-force model selector (sequential)
+    ModelSelector,           # Brute-force model selector (sequential + parallel)
     BaseModelSelector,       # Abstract base for custom selectors
 
     # Results

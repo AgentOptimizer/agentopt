@@ -1,4 +1,4 @@
-"""OpenAI SDK summarization with AgentOpt model selection.
+"""OpenAI Agents SDK summarization with AgentOpt model selection.
 
 Architecture: OpenAIChat wraps the SDK client and exposes `.model` + `.invoke`.
 ModelProxy keeps the same wrapper instance stable while ModelSelector iterates

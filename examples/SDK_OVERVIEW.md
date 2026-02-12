@@ -9,7 +9,7 @@ This document summarizes how the OpenAI and Claude SDK examples are structured a
   - **Wrappers:** `OpenAIChat`, `ClaudeChat` expose a mutable `model` attribute and `.invoke` so ModelProxy can swap models.
   - **Adapter:** `AgentFactoryRunner` gives ModelSelector an `.invoke` without you writing a custom `invoke_fn`; it rebuilds the agent/config using the current model string from ModelProxy and calls your `run_fn`.
 
-## OpenAI SDK
+## OpenAI Agents SDK
 
 ### Baselines (no AgentOpt)
 - `examples/openai_sdk/math_qa_baseline.py`

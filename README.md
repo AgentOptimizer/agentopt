@@ -244,8 +244,8 @@ agentopt/
 │   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
 │   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
 │   ├── sdk_shared.py            # Shared loader/eval + wrappers for SDK examples
-│   ├── openai_sdk/              # OpenAI SDK baselines and AgentOpt-enhanced pairs
-│   ├── claude_sdk/              # Claude SDK baselines and AgentOpt-enhanced pairs
+│   ├── openai_sdk/              # OpenAI Agents SDK baselines and AgentOpt-enhanced pairs
+│   ├── claude_sdk/              # Claude Messages SDK baselines and AgentOpt-enhanced pairs
 │   └── datasets/
 │       └── math_problems.jsonl
 └── pyproject.toml
@@ -253,11 +253,11 @@ agentopt/
 
 ## Dataset / DataLoader notes for SDK-only examples
 
-OpenAI SDK and Claude SDK do not ship Dataset or DataLoader abstractions. The SDK examples (`examples/openai_sdk/` and `examples/claude_sdk/`) follow the AgentOpt contract by loading a JSONL file into a list of `(input_dict, expected_answer)` tuples and reusing `invoke_fn` to run evaluations. This keeps the SDK baselines comparable to the AgentOpt-enhanced runs without additional framework helpers.
+OpenAI Agents SDK and Claude Messages SDK do not ship Dataset or DataLoader abstractions. The SDK examples (`examples/openai_sdk/` and `examples/claude_sdk/`) follow the AgentOpt contract by loading a JSONL file into a list of `(input_dict, expected_answer)` tuples and reusing `invoke_fn`/`.invoke` to run evaluations. This keeps the SDK baselines comparable to the AgentOpt-enhanced runs without additional framework helpers.
 
-## OpenAI / Claude SDK quickstart
+## OpenAI Agents / Claude Messages quickstart
 
-- Baselines live in `examples/openai_sdk/*_baseline.py` and `examples/claude_sdk/*_baseline.py` (plain SDK calls).
+- Baselines live in `examples/openai_sdk/*_baseline.py` and `examples/claude_sdk/*_baseline.py` (plain Agents/Messages SDK calls).
 - AgentOpt versions swap only the `model` field via `ModelProxy` while reusing the same tools/prompts.
 - Runner patterns (`agents_runner_example.py`) show how to evaluate Agents SDK / Claude Messages without writing a custom `invoke_fn`, using `AgentFactoryRunner` to expose `.invoke`.
 - See `examples/SDK_OVERVIEW.md` for a concise walkthrough of folder contents and how ModelSelector is wired in.

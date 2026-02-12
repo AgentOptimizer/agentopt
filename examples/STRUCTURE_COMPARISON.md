@@ -2,7 +2,7 @@
 
 This doc shows the before/after wiring so you can see exactly what changed when adding AgentOpt.
 
-## OpenAI SDK
+## OpenAI Agents SDK
 
 ### Baseline (e.g., `examples/openai_sdk/math_qa_baseline.py`)
 - Components: `OpenAI()` client, one call to `chat.completions.create(...)` per question.

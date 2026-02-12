@@ -1,4 +1,4 @@
-"""OpenAI SDK math QA with AgentOpt model selection.
+"""OpenAI Agents SDK math QA with AgentOpt model selection.
 
 Architecture: OpenAIChat wraps the SDK client and exposes `.model` + `.invoke`.
 ModelProxy sits around that wrapper so ModelSelector can swap model names while

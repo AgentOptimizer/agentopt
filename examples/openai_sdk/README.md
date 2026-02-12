@@ -1,4 +1,4 @@
-# OpenAI SDK + AgentOpt
+# OpenAI Agents SDK + AgentOpt
 
 This folder shows how to wrap the OpenAI Agents SDK with AgentOpt while keeping the agent’s tools and logic unchanged.
 

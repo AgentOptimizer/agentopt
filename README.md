@@ -255,6 +255,13 @@ agentopt/
 
 OpenAI SDK and Claude SDK do not ship Dataset or DataLoader abstractions. The SDK examples (`examples/openai_sdk/` and `examples/claude_sdk/`) follow the AgentOpt contract by loading a JSONL file into a list of `(input_dict, expected_answer)` tuples and reusing `invoke_fn` to run evaluations. This keeps the SDK baselines comparable to the AgentOpt-enhanced runs without additional framework helpers.
 
+## OpenAI / Claude SDK quickstart
+
+- Baselines live in `examples/openai_sdk/*_baseline.py` and `examples/claude_sdk/*_baseline.py` (plain SDK calls).
+- AgentOpt versions swap only the `model` field via `ModelProxy` while reusing the same tools/prompts.
+- Runner patterns (`agents_runner_example.py`) show how to evaluate Agents SDK / Claude Messages without writing a custom `invoke_fn`, using `AgentFactoryRunner` to expose `.invoke`.
+- See `examples/SDK_OVERVIEW.md` for a concise walkthrough of folder contents and how ModelSelector is wired in.
+
 ## Environment Setup
 
 Set API keys for the providers you want to use:

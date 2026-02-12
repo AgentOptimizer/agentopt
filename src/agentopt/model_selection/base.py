@@ -5,6 +5,8 @@ Base classes and result types for model selection.
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
 import time
+import asyncio
+import inspect
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..base_models import EvalFn
@@ -101,12 +103,19 @@ class BaseModelSelector(ABC):
         # Resolve invoke_fn from agent if not provided directly
         if invoke_fn is not None:
             self.invoke_fn = invoke_fn
+            self.is_async = inspect.iscoroutinefunction(invoke_fn)
         elif hasattr(agent, "kickoff"):
             # CrewAI agents use .kickoff()
             self.invoke_fn = agent.kickoff
+            self.is_async = False
         elif hasattr(agent, "invoke"):
             # LangChain and LangGraph agents use .invoke()
             self.invoke_fn = agent.invoke
+            self.is_async = False
+        elif hasattr(agent, "run"):
+            # LlamaIndex agents use .run() (async)
+            self.invoke_fn = agent.run
+            self.is_async = inspect.iscoroutinefunction(agent.run)
         else:
             raise TypeError(
                 f"Unsupported agent type: {type(agent).__name__}. "
@@ -133,7 +142,11 @@ class BaseModelSelector(ABC):
         for input_data, expected_answer in evaluation_tasks:
             try:
                 start_time = time.time()
-                actual_result = self.invoke_fn(input_data)
+                if self.is_async:
+                    # Handle async invocation (e.g., LlamaIndex .run())
+                    actual_result = asyncio.run(self.invoke_fn(input_data))
+                else:
+                    actual_result = self.invoke_fn(input_data)
                 latency = time.time() - start_time
                 total_latency += latency
 

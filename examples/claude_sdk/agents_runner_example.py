@@ -2,8 +2,8 @@
 
 - `build_agent(model)` is your normal Claude Messages setup (tools optional).
 - `run_agent(agent_cfg, question)` sends one message via Anthropic and returns text.
-- ModelProxy holds the current model name; the invoke_fn rebuilds the agent config
-  with whatever model ModelSelector sets, so you keep the same prompt/tools logic.
+- ModelProxy holds the model name; AgentFactoryRunner exposes `.invoke`, so no custom
+  invoke_fn is needed—ModelSelector calls it directly.
 """
 
 from types import SimpleNamespace
@@ -12,7 +12,7 @@ from typing import Callable, Iterable, Sequence
 from anthropic import Anthropic
 
 from agentopt import ModelProxy, ModelSelector
-from examples.sdk_shared import eval_fn, load_jsonl_dataset
+from examples.sdk_shared import AgentFactoryRunner, eval_fn, load_jsonl_dataset
 
 
 # --- Your existing agent "factory" (Claude Messages config) ---
@@ -47,17 +47,13 @@ def select_best_claude_agent(
     dataset = load_jsonl_dataset(dataset_path)
 
     proxy = ModelProxy(SimpleNamespace(model="claude-3-5-haiku-latest"))
-
-    def invoke_fn(payload):
-        question = payload["input"]
-        agent_cfg = agent_factory(proxy.get_model())
-        return run_agent(agent_cfg, question)
+    runner = AgentFactoryRunner(proxy, agent_factory, run_agent)
 
     selector = ModelSelector(
         models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,
-        invoke_fn=invoke_fn,
+        agent=runner,
     )
 
     results = selector.select_best()

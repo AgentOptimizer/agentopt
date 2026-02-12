@@ -17,6 +17,24 @@ from typing import Any, Tuple
 from anthropic import Anthropic
 from openai import OpenAI
 
+class AgentFactoryRunner:
+    """
+    Minimal adapter so ModelSelector can call `.invoke()` without custom invoke_fn.
+
+    It rebuilds the agent/config for each evaluation using the current model name
+    stored on the provided ModelProxy.
+    """
+
+    def __init__(self, proxy, agent_factory, run_fn) -> None:
+        self.proxy = proxy
+        self.agent_factory = agent_factory
+        self.run_fn = run_fn
+
+    def invoke(self, payload: dict[str, str]) -> Any:
+        question = payload.get("input", payload)
+        agent = self.agent_factory(self.proxy.get_model())
+        return self.run_fn(agent, question)
+
 
 def load_jsonl_dataset(dataset_dir: str) -> list[Tuple[dict[str, str], str]]:
     dataset_path = Path(dataset_dir)

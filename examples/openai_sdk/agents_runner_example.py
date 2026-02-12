@@ -1,19 +1,18 @@
 """General pattern: wrap an OpenAI Agents SDK workflow with AgentOpt.
 
 - `build_agent(model)` constructs your normal Agents SDK Agent (e.g., Budget Helper).
-- `run_agent(agent, question)` uses Runner.run_sync to execute the agent once.
-- A ModelProxy holds the current model name; the invoke_fn rebuilds the agent per call
-  with whatever model ModelSelector sets, so tools/logic stay untouched.
+- `run_agent(agent, question)` uses the Runner API to execute the agent once.
+- ModelProxy holds the model name; AgentFactoryRunner exposes `.invoke`, so you don't
+  need to write a custom invoke_fn—ModelSelector calls it directly.
 """
 
 from types import SimpleNamespace
 from typing import Callable, Iterable, Sequence
 
-from openai import AssistantEventHandler  # type: ignore
 from openai import OpenAI
 
 from agentopt import ModelProxy, ModelSelector
-from examples.sdk_shared import eval_fn, load_jsonl_dataset
+from examples.sdk_shared import AgentFactoryRunner, eval_fn, load_jsonl_dataset
 
 
 # --- Your existing agent factory (vanilla Agents SDK) ---
@@ -90,18 +89,13 @@ def select_best_openai_agent(
 
     # Proxy tracks the active model string; ModelSelector will mutate it.
     proxy = ModelProxy(SimpleNamespace(model="gpt-4o-mini"))
-
-    def invoke_fn(payload):
-        question = payload["input"]
-        # Build a fresh agent with the current model
-        agent = agent_factory(proxy.get_model())
-        return run_agent(agent, question)
+    runner = AgentFactoryRunner(proxy, agent_factory, run_agent)
 
     selector = ModelSelector(
         models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,
-        invoke_fn=invoke_fn,
+        agent=runner,
     )
 
     results = selector.select_best()

@@ -1,9 +1,9 @@
-"""General pattern: wrap a plain OpenAI SDK chat workflow with AgentOpt.
+"""General pattern: wrap an OpenAI Agents SDK workflow with AgentOpt.
 
-- `build_client(model)` returns a chat client + model pair.
-- `run_chat(agent, question)` issues a chat.completions call.
+- `build_agent(model)` constructs your Agents SDK agent (tools/prompt unchanged).
+- `run_agent(agent, question)` runs it once via Runner.
 - ModelProxy holds the model name; AgentFactoryRunner exposes `.invoke`, so you don't
-  need to write a custom invoke_fn—ModelSelector calls it directly.
+  need a custom invoke_fn—ModelSelector calls it directly.
 """
 
 from types import SimpleNamespace
@@ -15,21 +15,28 @@ from agentopt import ModelProxy, ModelSelector
 from examples.sdk_shared import AgentFactoryRunner, eval_fn, load_jsonl_dataset
 
 
-# --- Your existing client/chat factory (vanilla OpenAI SDK) ---
+# --- Your existing Agents SDK factory ---
 
-def build_client(model: str = "gpt-4o-mini"):
-    """Return a SimpleNamespace with client + model; swap model via ModelProxy."""
-    return SimpleNamespace(client=OpenAI(), model=model)
-
-
-def run_chat(agent, question: str) -> str:
-    """Execute a single user message against OpenAI chat completions."""
-    response = agent.client.chat.completions.create(
-        model=agent.model,
-        messages=[{"role": "user", "content": question}],
-        max_tokens=128,
+def build_agent(model: str = "gpt-4o-mini"):
+    client = OpenAI()
+    return client.agents.create(
+        name="Budget Helper",
+        model=model,
+        instructions=(
+            "You are a budgeting assistant. "
+            "Call list_expenses to see USD amounts, then convert_to_eur for totals. "
+            "Return both USD and EUR totals and highlight the top two spend categories."
+        ),
     )
-    return response.choices[0].message.content or ""
+
+
+def run_agent(agent, question: str) -> str:
+    """Execute a single user message against an Agents SDK Agent via Runner."""
+    client = OpenAI()
+    result = client.agents.runs.create_and_poll(agent_id=agent.id, input=question)
+    if hasattr(result, "output") and result.output:
+        return result.output[0].content[0].text
+    return str(result)
 
 
 # --- AgentOpt wiring ---
@@ -39,13 +46,13 @@ def select_best_openai_agent(
     candidate_models: Sequence[str] | Iterable[str],
     dataset_path: str = "examples/datasets/math_problems.jsonl",
 ):
-    """Evaluate the same OpenAI chat setup across models using AgentOpt."""
+    """Evaluate the same Agents SDK setup across models using AgentOpt."""
 
     dataset = load_jsonl_dataset(dataset_path)
 
     # Proxy tracks the active model string; ModelSelector will mutate it.
     proxy = ModelProxy(SimpleNamespace(model="gpt-4o-mini"))
-    runner = AgentFactoryRunner(proxy, agent_factory, run_chat)
+    runner = AgentFactoryRunner(proxy, agent_factory, run_agent)
 
     selector = ModelSelector(
         models={proxy: list(candidate_models)},
@@ -63,7 +70,7 @@ def select_best_openai_agent(
         proxy.set_model(best.model_name)
         final_agent = agent_factory(proxy.get_model())
         sample = dataset[0][0]["input"]
-        final_output = run_chat(final_agent, sample)
+        final_output = run_agent(final_agent, sample)
         print(f"Sample run with best model ({best.model_name}): {final_output}")
 
     return results
@@ -71,7 +78,7 @@ def select_best_openai_agent(
 
 if __name__ == "__main__":
     select_best_openai_agent(
-        agent_factory=build_client,
+        agent_factory=build_agent,
         candidate_models=["gpt-4o-mini", "gpt-4o"],
         dataset_path="examples/datasets/math_problems.jsonl",
     )

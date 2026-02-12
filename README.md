@@ -1,6 +1,6 @@
 # AgentOpt - Optimization for AI Agents
 
-A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, and LangGraph — or any custom agent setup.
+A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, AG2, and LangGraph — or any custom agent setup.
 
 > **Note: This project is in early development. APIs are subject to change.**
 
@@ -15,6 +15,9 @@ uv sync
 
 # For CrewAI support
 uv sync --extra crewai
+
+# For AG2 (AutoGen 2) support
+uv sync --extra ag2
 ```
 
 ## Quick Start
@@ -79,6 +82,56 @@ selector = ModelSelector(
 )
 results = selector.select_best()
 ```
+
+### AG2 (AutoGen 2)
+
+AG2 validates `llm_config` and rejects `ModelProxy`, so use a mutable config wrapper. The agent receives a real `LLMConfig` backed by mutable `config_list`; `ModelProxy` wraps the wrapper and updates the model in place when `set_model()` is called:
+
+```python
+from autogen import ConversableAgent, LLMConfig
+from agentopt import BayesianOptimizationModelSelector, ModelProxy
+
+# 1. Mutable wrapper (AG2 rejects ModelProxy as llm_config)
+class AG2ConfigWrapper:
+    def __init__(self, model="gpt-4o-mini"):
+        self.config_list = [{"api_type": "openai", "model": model, "api_key": "..."}]
+    @property
+    def model(self):
+        return self.config_list[0]["model"]
+    @model.setter
+    def model(self, value):
+        self.config_list[0]["model"] = value
+
+config_wrapper = AG2ConfigWrapper("gpt-4o-mini")
+llm_config = LLMConfig(config_list=config_wrapper.config_list)
+llm_config_proxy = ModelProxy(config_wrapper)
+
+# 2. Build agent with real LLMConfig
+agent = ConversableAgent(
+    name="assistant",
+    system_message="You are a helpful assistant.",
+    llm_config=llm_config,
+    human_input_mode="NEVER",
+)
+
+# 3. Custom invoke_fn (AG2 uses run(), not invoke/kickoff)
+def invoke_fn(input_data):
+    response = agent.run(message=input_data["input"], max_turns=2, user_input=False)
+    for _ in response.events:
+        pass
+    return response.summary or (response.messages[-1].content if response.messages else "")
+
+# 4. Run optimization (proxy updates config_list[0]["model"] in place)
+selector = BayesianOptimizationModelSelector(
+    models={llm_config_proxy: ["gpt-4o-mini", "gpt-4o"]},
+    eval_fn=my_eval_fn,
+    dataset=dataset,
+    invoke_fn=invoke_fn,
+)
+results = selector.select_best()
+```
+
+See `examples/ag2_example.py` for a complete example.
 
 ### Custom Agent / Any Framework
 
@@ -153,7 +206,7 @@ results = selector.select_best()
 | `models` | `dict[ModelProxy, list]` | Maps each proxy to its candidate models (strings or objects) |
 | `eval_fn` | `(str, Any) -> bool \| float` | Compares expected answer to actual output. Returns bool or float score (higher is better) |
 | `dataset` | `list[tuple[Any, str]]` | List of `(input_data, expected_answer)` tuples. `input_data` is passed directly to the agent's invoke method |
-| `agent` | `Any` | Agent object with `.kickoff()` (CrewAI) or `.invoke()` (LangChain). Mutually exclusive with `invoke_fn` |
+| `agent` | `Any` | Agent object with `.kickoff()` (CrewAI) or `.invoke()` (LangChain). For AG2, use `invoke_fn` instead. Mutually exclusive with `invoke_fn` |
 | `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Mutually exclusive with `agent` |
 
 ### Multi-Agent / Multi-LLM Optimization
@@ -243,6 +296,7 @@ agentopt/
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
 │   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
+│   ├── ag2_example.py           # AG2: single-agent, multi-agent with invoke_fn
 │   └── datasets/
 │       └── math_problems.jsonl
 └── pyproject.toml

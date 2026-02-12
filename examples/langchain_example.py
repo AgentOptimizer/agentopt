@@ -11,7 +11,7 @@ from langchain_community.tools import DuckDuckGoSearchRun, WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, ModelSelector
+from agentopt import ModelProxy, BruteForceModelSelector
 
 
 def load_dataset(dataset_dir):
@@ -150,7 +150,7 @@ def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
     else:
         kwargs["agent"] = agent_or_invoke_fn
 
-    selector = ModelSelector(**kwargs)
+    selector = BruteForceModelSelector(**kwargs)
 
     results = selector.select_best()
     print(f"\nBest: {results.get_best()}")

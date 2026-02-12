@@ -20,7 +20,7 @@ class ModelProxy:
         # 2. Use directly in agent
         agent = Agent(role="...", llm=llm, ...)
 
-        # 3. ModelSelector can swap the underlying model
+        # 3. BayesianOptimizationModelSelector / BruteForceModelSelector can swap the underlying model
         llm.set_model(LLM(model='gpt-4o'))
     """
 

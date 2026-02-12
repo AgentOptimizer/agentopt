@@ -1,4 +1,4 @@
-"""Vanilla OpenAI Agents SDK math QA loop (no AgentOpt)."""
+"""Vanilla OpenAI SDK math QA loop (no AgentOpt)."""
 
 from openai import OpenAI
 

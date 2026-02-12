@@ -1,4 +1,4 @@
-"""Vanilla OpenAI Agents SDK summarization snippets (no AgentOpt)."""
+"""Vanilla OpenAI SDK summarization snippets (no AgentOpt)."""
 
 from openai import OpenAI
 

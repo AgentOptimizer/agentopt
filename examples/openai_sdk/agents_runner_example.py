@@ -12,7 +12,7 @@ from typing import Callable, Iterable, Sequence
 from openai import OpenAI
 
 from agentopt import ModelProxy, ModelSelector
-from examples.sdk_shared import AgentFactoryRunner, eval_fn, load_jsonl_dataset
+from .utils import AgentFactoryRunner, eval_fn, load_jsonl_dataset
 
 
 # --- Your existing Agents SDK factory ---

@@ -1,25 +1,21 @@
 """Vanilla OpenAI Agents SDK math QA loop (no AgentOpt)."""
 
-from openai import OpenAI
+from agents import Agent, Runner
 
-from examples.sdk_shared import load_jsonl_dataset
+from .utils import load_jsonl_dataset
 
 
-def build_agent(model: str = "gpt-4o-mini"):
-    client = OpenAI()
-    return client.agents.create(
+def build_agent(model: str = "gpt-4o-mini") -> Agent:
+    return Agent(
         name="Math QA Agent",
         model=model,
         instructions="Answer the user's math question concisely.",
     )
 
 
-def run_agent(agent, question: str) -> str:
-    client = OpenAI()
-    result = client.agents.runs.create_and_poll(agent_id=agent.id, input=question)
-    if hasattr(result, "output") and result.output:
-        return result.output[0].content[0].text
-    return str(result)
+def run_agent(agent: Agent, question: str) -> str:
+    result = Runner.run_sync(agent, question)
+    return result.final_output if hasattr(result, "final_output") else str(result)
 
 
 def main(dataset_dir: str = "examples/datasets") -> None:

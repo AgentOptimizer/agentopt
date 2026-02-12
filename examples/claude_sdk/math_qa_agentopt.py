@@ -1,30 +1,30 @@
-"""Claude SDK math QA with AgentOpt model selection.
+"""Claude Agent SDK math QA with AgentOpt model selection (async query API)."""
 
-Architecture at a glance:
-- ClaudeChat wraps the Anthropic client and exposes `.model` + `.invoke`.
-- ModelProxy sits around ClaudeChat so ModelSelector can hot-swap model names.
-- ModelSelector drives evaluation over a dataset via `invoke_fn`.
-"""
+from typing import Iterable, Sequence
 
+from claude_agent_sdk import ClaudeAgentOptions
 from agentopt import ModelProxy, ModelSelector
-from anthropic import Anthropic
-from examples.sdk_shared import ClaudeChat, eval_fn, load_jsonl_dataset
+from .utils import AgentFactoryRunner, eval_fn, load_jsonl_dataset, run_query_sync
 
 
-def main(dataset_dir: str = "examples/datasets") -> None:
+def main(
+    dataset_dir: str = "examples/datasets",
+    candidate_models: Sequence[str] | Iterable[str] = ("claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"),
+) -> None:
     dataset = load_jsonl_dataset(dataset_dir)
-    proxy = ModelProxy(ClaudeChat(Anthropic(), model="claude-3-5-haiku-latest"))
+
+    proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
+    runner = AgentFactoryRunner(
+        proxy,
+        agent_factory=lambda model: ClaudeAgentOptions(model=model),
+        run_fn=lambda agent_opts, question: run_query_sync(question, agent_opts.model),
+    )
 
     selector = ModelSelector(
-        models={
-            proxy: [
-                "claude-3-5-haiku-latest",
-                "claude-3-5-sonnet-latest",
-            ]
-        },
+        models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,
-        invoke_fn=lambda payload: proxy.invoke(payload),
+        agent=runner,
     )
 
     results = selector.select_best()

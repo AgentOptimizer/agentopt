@@ -243,7 +243,6 @@ agentopt/
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
 │   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
-│   ├── sdk_shared.py            # Shared loader/eval + wrappers for SDK examples
 │   ├── openai_sdk/              # OpenAI Agents SDK baselines and AgentOpt-enhanced pairs
 │   ├── claude_sdk/              # Claude Messages SDK baselines and AgentOpt-enhanced pairs
 │   └── datasets/

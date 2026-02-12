@@ -23,13 +23,13 @@ AgentOpt works in three steps:
 
 1. **Wrap** your LLM with `ModelProxy`
 2. **Build** your agent as usual (the proxy is transparent)
-3. **Run** `ModelSelector` to find the best model
+3. **Run** `BayesianOptimizationModelSelector` to find the best model
 
 ### CrewAI
 
 ```python
 from crewai import Agent, Task, Crew, LLM
-from agentopt import ModelProxy, ModelSelector
+from agentopt import BayesianOptimizationModelSelector, ModelProxy
 
 # 1. Wrap the LLM
 llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))
@@ -46,7 +46,7 @@ dataset = [
 ]
 
 # 4. Run optimization
-selector = ModelSelector(
+selector = BayesianOptimizationModelSelector(
     models={llm: ["openai/gpt-4o-mini", "openai/gpt-4o"]},
     eval_fn=lambda expected, actual: expected.lower() in str(actual).lower(),
     dataset=dataset,
@@ -61,7 +61,7 @@ print(results.get_best())
 ```python
 from langchain_openai import ChatOpenAI
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
-from agentopt import ModelProxy, ModelSelector
+from agentopt import BayesianOptimizationModelSelector, ModelProxy
 
 # 1. Wrap the LLM
 llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
@@ -71,7 +71,7 @@ agent = create_tool_calling_agent(llm, tools, prompt)
 executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
 
 # 3. Run optimization
-selector = ModelSelector(
+selector = BayesianOptimizationModelSelector(
     models={llm: ["gpt-4o-mini", "gpt-4o"]},
     eval_fn=my_eval_fn,
     dataset=dataset,
@@ -90,7 +90,7 @@ def my_invoke(input_data):
     result = my_custom_agent.run(input_data["input"])
     return result
 
-selector = ModelSelector(
+selector = BayesianOptimizationModelSelector(
     models={llm: ["gpt-4o-mini", "gpt-4o"]},
     eval_fn=my_eval_fn,
     dataset=dataset,
@@ -130,14 +130,14 @@ Agent --> ModelProxy --> LLM (gpt-4o-mini)
 
 **String-based swapping:** When you pass a string to `set_model()`, the proxy updates the model name field on the existing model object (e.g., `.model` for CrewAI, `.model_name` for LangChain). For Pydantic-based models, it uses `model_copy()` to create an immutable update.
 
-### ModelSelector
+### BayesianOptimizationModelSelector
 
 Evaluates your agent across model combinations and selects the best one based on accuracy and latency.
 
 ```python
-from agentopt import ModelSelector
+from agentopt import BayesianOptimizationModelSelector
 
-selector = ModelSelector(
+selector = BayesianOptimizationModelSelector(
     models=models,       # {ModelProxy: [candidate_models]}
     eval_fn=eval_fn,     # (expected, actual) -> bool | float
     dataset=dataset,     # [(input_data, expected_answer), ...]
@@ -158,7 +158,7 @@ results = selector.select_best()
 
 ### Multi-Agent / Multi-LLM Optimization
 
-When your pipeline uses multiple LLMs (e.g., different agents with different models), create a separate `ModelProxy` for each and pass them all to `ModelSelector`. It evaluates the **Cartesian product** of all candidate combinations.
+When your pipeline uses multiple LLMs (e.g., different agents with different models), create a separate `ModelProxy` for each and pass them all to `BayesianOptimizationModelSelector`. It evaluates the **Cartesian product** of all candidate combinations.
 
 ```python
 researcher_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
@@ -166,7 +166,7 @@ coder_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 
 # ... build agents with these proxies ...
 
-selector = ModelSelector(
+selector = BayesianOptimizationModelSelector(
     models={
         researcher_llm: ["gpt-4o-mini", "gpt-4o"],
         coder_llm: ["gpt-4o-mini", "gpt-4o"],
@@ -237,9 +237,10 @@ agentopt/
 │   ├── model_factory.py         # create_model_from_string (LangChain model creation)
 │   ├── base_models.py           # Type aliases (EvalFn, ModelSpec, ModelsConfig)
 │   └── model_selection/
-│       ├── __init__.py          # Exports ModelSelector
+│       ├── __init__.py          # Exports BayesianOptimizationModelSelector
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
-│       └── brute_force.py       # BruteForceModelSelector (default ModelSelector)
+│       ├── brute_force.py       # BruteForceModelSelector
+│       └── bayesian_optimization.py  # BayesianOptimizationModelSelector
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
 │   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
@@ -275,8 +276,9 @@ cp .env.example .env
 from agentopt import (
     # Core
     ModelProxy,              # Transparent LLM proxy
-    ModelSelector,           # Brute-force model selector (default)
-    BaseModelSelector,       # Abstract base for custom selectors
+    BayesianOptimizationModelSelector,  # Bayesian optimization (recommended)
+    BruteForceModelSelector,           # Exhaustive search over all combinations
+    BaseModelSelector,                 # Abstract base for custom selectors
 
     # Results
     ModelResult,             # Single model evaluation result

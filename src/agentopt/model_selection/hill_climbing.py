@@ -7,7 +7,7 @@ rather than blindly exploring the full Cartesian product.
 """
 
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..base_models import EvalFn
 from ..model_proxy import ModelProxy
@@ -68,6 +68,9 @@ class HillClimbingModelSelector(BaseModelSelector):
         for proxy, candidates in self._models.items():
             self._candidate_names[proxy] = [self._get_model_name(c) for c in candidates]
 
+        # Cache: combo_key -> (accuracy, latency) to avoid redundant evaluations.
+        self._eval_cache: Dict[str, Tuple[float, float]] = {}
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -87,13 +90,20 @@ class HillClimbingModelSelector(BaseModelSelector):
     def _random_combination(self, proxies: List[ModelProxy]) -> List[Any]:
         return [random.choice(self._models[p]) for p in proxies]
 
+    def _combo_key(self, combo: List[Any]) -> str:
+        """Canonical string key for a combination (for dedup / caching)."""
+        return " + ".join(self._get_model_name(m) for m in combo)
+
     # ------------------------------------------------------------------
     # Move operators
     # ------------------------------------------------------------------
 
-    def _try_improve_quality(self, proxies: List[ModelProxy], combo: List[Any]) -> bool:
+    def _try_improve_quality(
+        self, proxies: List[ModelProxy], combo: List[Any], seen: Set[str]
+    ) -> bool:
         """Swap a random proxy's model to the next-higher-quality neighbour.
 
+        Skips moves that would land on an already-seen combination.
         Tries all proxies (in shuffled order) until one can move.
         Modifies *combo* in-place.  Returns ``True`` if a move was made.
         """
@@ -106,13 +116,19 @@ class HillClimbingModelSelector(BaseModelSelector):
                 current_name, self._candidate_names[proxy]
             )
             if neighbor_name is not None:
+                old = combo[idx]
                 combo[idx] = self._find_candidate_by_name(proxy, neighbor_name)
-                return True
+                if self._combo_key(combo) not in seen:
+                    return True
+                combo[idx] = old  # revert, try next proxy
         return False
 
-    def _try_improve_speed(self, proxies: List[ModelProxy], combo: List[Any]) -> bool:
+    def _try_improve_speed(
+        self, proxies: List[ModelProxy], combo: List[Any], seen: Set[str]
+    ) -> bool:
         """Swap a random proxy's model to the next-faster neighbour.
 
+        Skips moves that would land on an already-seen combination.
         Tries all proxies (in shuffled order) until one can move.
         Modifies *combo* in-place.  Returns ``True`` if a move was made.
         """
@@ -125,8 +141,11 @@ class HillClimbingModelSelector(BaseModelSelector):
                 current_name, self._candidate_names[proxy]
             )
             if neighbor_name is not None:
+                old = combo[idx]
                 combo[idx] = self._find_candidate_by_name(proxy, neighbor_name)
-                return True
+                if self._combo_key(combo) not in seen:
+                    return True
+                combo[idx] = old  # revert, try next proxy
         return False
 
     # ------------------------------------------------------------------
@@ -134,7 +153,7 @@ class HillClimbingModelSelector(BaseModelSelector):
     # ------------------------------------------------------------------
 
     def _hill_climb_once(
-        self, proxies: List[ModelProxy]
+        self, proxies: List[ModelProxy], seen: Set[str]
     ) -> Tuple[List[Any], float, float, List[ModelResult]]:
         """Run one hill-climbing pass from a random starting point."""
         combo = self._random_combination(proxies)
@@ -147,13 +166,23 @@ class HillClimbingModelSelector(BaseModelSelector):
         accuracy_tolerance = 1e-9
 
         for iteration in range(self.max_iterations):
-            accuracy, latency = self._evaluate(self.dataset)
-            combo_name = " + ".join(self._get_model_name(m) for m in combo)
+            combo_name = self._combo_key(combo)
+            seen.add(combo_name)
 
-            print(
-                f"  Iter {iteration + 1}: [{combo_name}] "
-                f"Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s"
-            )
+            # Re-use cached result if this combination was already evaluated.
+            if combo_name in self._eval_cache:
+                accuracy, latency = self._eval_cache[combo_name]
+                print(
+                    f"  Iter {iteration + 1}: [{combo_name}] "
+                    f"Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s (cached)"
+                )
+            else:
+                accuracy, latency = self._evaluate(self.dataset)
+                self._eval_cache[combo_name] = (accuracy, latency)
+                print(
+                    f"  Iter {iteration + 1}: [{combo_name}] "
+                    f"Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s"
+                )
 
             results.append(
                 ModelResult(
@@ -190,9 +219,9 @@ class HillClimbingModelSelector(BaseModelSelector):
             # Attempt a move
             moved = False
             if accuracy < self.accuracy_target:
-                moved = self._try_improve_quality(proxies, combo)
+                moved = self._try_improve_quality(proxies, combo, seen)
             if not moved and latency > self.latency_target:
-                moved = self._try_improve_speed(proxies, combo)
+                moved = self._try_improve_speed(proxies, combo, seen)
 
             if not moved:
                 print(
@@ -229,10 +258,14 @@ class HillClimbingModelSelector(BaseModelSelector):
         )
         print(f"{'=' * 60}\n")
 
+        seen: Set[str] = set()
+
         for restart in range(self.num_restarts):
             print(f"--- Restart {restart + 1}/{self.num_restarts} ---")
 
-            best_combo, best_acc, best_lat, run_results = self._hill_climb_once(proxies)
+            best_combo, best_acc, best_lat, run_results = self._hill_climb_once(
+                proxies, seen
+            )
             all_results.extend(run_results)
 
             # Update global best

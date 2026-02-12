@@ -1,6 +1,6 @@
 # AgentOpt - Optimization for AI Agents
 
-A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, and LangGraph — or any custom agent setup.
+A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, LangGraph, and LlamaIndex — or any custom agent setup.
 
 > **Note: This project is in early development. APIs are subject to change.**
 
@@ -15,11 +15,63 @@ uv sync
 
 # For CrewAI support
 uv sync --extra crewai
+
+# For LlamaIndex support
+uv sync --extra llamaindex
 ```
 
-## Quick Start
+## Quick Start — `optimize()`
 
-AgentOpt works in three steps:
+The simplest way to use AgentOpt. No `ModelProxy`, no `invoke_fn`, no async wrappers. Just pass your agent and the models you want to test:
+
+```python
+from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.llms.openai import OpenAI
+from agentopt import optimize
+
+# 1. Build your agent normally
+agent = FunctionAgent(
+    tools=[multiply, add],
+    llm=OpenAI(model="gpt-4o-mini"),
+    system_prompt="You are a math helper.",
+)
+
+# 2. One call to optimize — evaluates models in parallel
+results = optimize(
+    agent=agent,
+    models=["gpt-4o-mini", "gpt-4o"],
+    eval_fn=lambda expected, actual: expected.lower() in str(actual).lower(),
+    dataset=[({"user_msg": "What is 2+2?"}, "4"), ...],
+)
+
+# 3. Agent LLM is automatically set to the best model
+print(results.get_best())
+print(agent.llm.model)  # -> best model name
+```
+
+`optimize()` works with any framework that has an `.llm` attribute and a `.kickoff()`, `.invoke()`, or `.run()` method.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent` | `Any` | Agent with `.llm` attribute and `.kickoff()`/`.invoke()`/`.run()` |
+| `models` | `list[str]` | Model name strings to evaluate |
+| `eval_fn` | `(str, Any) -> bool \| float` | Compares expected answer to actual output |
+| `dataset` | `list[tuple[Any, str]]` | `(input_data, expected_answer)` tuples |
+| `parallel` | `bool` | Evaluate models concurrently (default: `True`) |
+| `max_workers` | `int \| None` | Max threads for parallel mode (default: `len(models)`) |
+
+### How parallel evaluation works
+
+When `parallel=True`, `optimize()`:
+1. Creates independent agent copies via Pydantic `model_copy(deep=False)`, each with a fresh LLM variant
+2. Evaluates all copies concurrently using `ThreadPoolExecutor`
+3. Sets the original agent's LLM to the winning model
+
+This avoids the shared-state problem of `ModelProxy` — each thread gets its own agent instance with its own LLM, so there are no conflicts.
+
+## Advanced — `ModelProxy` + `ModelSelector`
+
+For more control (multi-LLM optimization, custom invoke functions), use the `ModelProxy` workflow:
 
 1. **Wrap** your LLM with `ModelProxy`
 2. **Build** your agent as usual (the proxy is transparent)
@@ -79,6 +131,42 @@ selector = ModelSelector(
 )
 results = selector.select_best()
 ```
+
+### LlamaIndex
+
+**Recommended:** Use `optimize()` (see Quick Start above). It handles LlamaIndex's async workflow and Pydantic validation automatically.
+
+If you need `ModelProxy` for multi-LLM scenarios:
+
+```python
+from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.llms.openai import OpenAI
+from agentopt import ModelProxy, ModelSelector
+
+initial_llm = OpenAI(model="gpt-4o-mini")
+llm_proxy = ModelProxy(initial_llm)
+
+agent = FunctionAgent(
+    tools=[multiply],
+    llm=initial_llm,  # actual LLM, not proxy (Pydantic validation)
+    system_prompt="You are a helpful assistant."
+)
+
+# Custom invoke function swaps the LLM before each run
+async def invoke_with_proxy(input_data):
+    agent.llm = llm_proxy.get_model()
+    return await agent.run(**input_data)
+
+selector = ModelSelector(
+    models={llm_proxy: ["gpt-4o-mini", "gpt-4o"]},
+    eval_fn=lambda expected, actual: expected in str(actual),
+    dataset=[({"user_msg": "What is 2 * 3?"}, "6"), ...],
+    invoke_fn=invoke_with_proxy,
+)
+results = selector.select_best()
+```
+
+**Note:** LlamaIndex agents use Pydantic validation which prevents passing `ModelProxy` directly. The `invoke_fn` pattern works around this.
 
 ### Custom Agent / Any Framework
 
@@ -233,6 +321,7 @@ JSONL format:
 agentopt/
 ├── src/agentopt/
 │   ├── __init__.py              # Public API exports
+│   ├── optimize.py              # optimize() and parallel_select() — parallel evaluation
 │   ├── model_proxy.py           # ModelProxy for transparent model swapping
 │   ├── model_factory.py         # create_model_from_string (LangChain model creation)
 │   ├── base_models.py           # Type aliases (EvalFn, ModelSpec, ModelsConfig)
@@ -241,8 +330,10 @@ agentopt/
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
 │       └── brute_force.py       # BruteForceModelSelector (default ModelSelector)
 ├── examples/
-│   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
-│   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
+│   ├── crewai_example.py              # CrewAI: single-agent, multi-agent
+│   ├── langchain_example.py           # LangChain: single-agent, multi-agent
+│   ├── llamaindex_example.py          # LlamaIndex: ModelProxy + invoke_fn approach
+│   ├── llamaindex_optimize_example.py # LlamaIndex: optimize() — simplest API
 │   └── datasets/
 │       └── math_problems.jsonl
 └── pyproject.toml
@@ -273,9 +364,13 @@ cp .env.example .env
 
 ```python
 from agentopt import (
+    # Simple API (recommended)
+    optimize,                # Find best model — parallel, no ModelProxy needed
+    parallel_select,         # Parallel evaluation with ModelProxy
+
     # Core
     ModelProxy,              # Transparent LLM proxy
-    ModelSelector,           # Brute-force model selector (default)
+    ModelSelector,           # Brute-force model selector (sequential)
     BaseModelSelector,       # Abstract base for custom selectors
 
     # Results

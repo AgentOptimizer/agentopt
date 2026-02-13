@@ -156,11 +156,9 @@ class BaseModelSelector(ABC):
         total_score = 0.0
         total = len(evaluation_tasks)
         total_latency = 0.0
-        prefix = f"    [{label}]" if label else "   "
 
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
             try:
-                print(f"{prefix} sample {i}/{total} ...", end="", flush=True)
                 start_time = time.time()
                 if self.is_async:
                     actual_result = asyncio.run(self.invoke_fn(input_data))
@@ -171,10 +169,9 @@ class BaseModelSelector(ABC):
 
                 score = self.eval_fn(expected_answer, actual_result)
                 total_score += float(score)
-                print(f" score={float(score):.2f}  ({latency:.1f}s)")
 
             except Exception as e:
-                print(f" error: {e}")
+                logger.debug("[%s] sample %d/%d error: %s", label, i, total, e)
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
@@ -247,6 +244,7 @@ class BaseModelSelector(ABC):
         method = getattr(agent_copy, method_name)
 
         if method_name == "run":
+
             def _invoke(input_data):
                 async def _async_run():
                     if isinstance(input_data, dict):
@@ -256,7 +254,9 @@ class BaseModelSelector(ABC):
                     if asyncio.iscoroutine(result) or asyncio.isfuture(result):
                         return await result
                     return result
+
                 return asyncio.run(_async_run())
+
             return _invoke
         else:
             return method
@@ -273,11 +273,9 @@ class BaseModelSelector(ABC):
         total_score = 0.0
         total = len(dataset)
         total_latency = 0.0
-        prefix = f"    [{label}]" if label else "   "
 
         for i, (input_data, expected_answer) in enumerate(dataset, 1):
             try:
-                print(f"{prefix} sample {i}/{total} ...", end="", flush=True)
                 start_time = time.time()
                 if is_async:
                     actual_result = asyncio.run(invoke_fn(input_data))
@@ -287,9 +285,8 @@ class BaseModelSelector(ABC):
                 total_latency += latency
                 score = eval_fn(expected_answer, actual_result)
                 total_score += float(score)
-                print(f" score={float(score):.2f}  ({latency:.1f}s)")
             except Exception as e:
-                print(f" error: {e}")
+                logger.debug("[%s] sample %d/%d error: %s", label, i, total, e)
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0

@@ -15,7 +15,6 @@ from .base_models import (
     ModelsConfig,
 )
 from .model_selection.base import BaseModelSelector, ModelResult, SelectionResults
-from .optimize import optimize, parallel_select
 
 __all__ = [
     # Core
@@ -24,8 +23,6 @@ __all__ = [
     "ModelSelector",
     "create_model_from_string",
     "normalize_models",
-    "optimize",
-    "parallel_select",
     # Types
     "ModelResult",
     "SelectionResults",

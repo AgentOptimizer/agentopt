@@ -20,49 +20,9 @@ uv sync --extra crewai
 uv sync --extra llamaindex
 ```
 
-## Quick Start — `optimize()`
+## Quick Start — `ModelProxy` + `ModelSelector`
 
-The simplest way to use AgentOpt. No `ModelProxy`, no `invoke_fn`, no async wrappers. Just pass your agent and the models you want to test:
-
-```python
-from llama_index.core.agent.workflow import FunctionAgent
-from llama_index.llms.openai import OpenAI
-from agentopt import optimize
-
-# 1. Build your agent normally
-agent = FunctionAgent(
-    tools=[multiply, add],
-    llm=OpenAI(model="gpt-4o-mini"),
-    system_prompt="You are a math helper.",
-)
-
-# 2. One call to optimize — evaluates models in parallel
-results = optimize(
-    agent=agent,
-    models=["gpt-4o-mini", "gpt-4o"],
-    eval_fn=lambda expected, actual: expected.lower() in str(actual).lower(),
-    dataset=[({"user_msg": "What is 2+2?"}, "4"), ...],
-)
-
-# 3. Agent LLM is automatically set to the best model
-print(results.get_best())
-print(agent.llm.model)  # -> best model name
-```
-
-`optimize()` works with any framework that has an `.llm` attribute and a `.kickoff()`, `.invoke()`, or `.run()` method.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `agent` | `Any` | Agent with `.llm` attribute and `.kickoff()`/`.invoke()`/`.run()` |
-| `models` | `list[str]` | Model name strings to evaluate |
-| `eval_fn` | `(str, Any) -> bool \| float` | Compares expected answer to actual output |
-| `dataset` | `list[tuple[Any, str]]` | `(input_data, expected_answer)` tuples |
-| `parallel` | `bool` | Evaluate models concurrently (default: `True`) |
-| `max_workers` | `int \| None` | Max threads for parallel mode (default: `len(models)`) |
-
-## Advanced — `ModelProxy` + `ModelSelector`
-
-For more control (multi-LLM optimization, custom invoke functions), use the `ModelProxy` workflow:
+Use the `ModelProxy` workflow:
 
 1. **Wrap** your LLM with `ModelProxy`
 2. **Build** your agent as usual (the proxy is transparent)
@@ -144,10 +104,6 @@ results = selector.select_best(parallel=True)
 ```
 
 ### LlamaIndex
-
-**Recommended:** Use `optimize()` (see Quick Start above). It handles LlamaIndex's async workflow and Pydantic validation automatically.
-
-If you need `ModelProxy` for multi-LLM scenarios:
 
 ```python
 from llama_index.core.agent.workflow import FunctionAgent
@@ -356,7 +312,6 @@ JSONL format:
 agentopt/
 ├── src/agentopt/
 │   ├── __init__.py              # Public API exports
-│   ├── optimize.py              # optimize() and parallel_select() — thin wrappers
 │   ├── model_proxy.py           # ModelProxy for transparent model swapping
 │   ├── model_factory.py         # create_model_from_string (LangChain model creation)
 │   ├── base_models.py           # Type aliases (EvalFn, ModelSpec, ModelsConfig)
@@ -368,7 +323,6 @@ agentopt/
 │   ├── crewai_example.py              # CrewAI: single-agent, multi-agent (CLI)
 │   ├── langchain_example.py           # LangChain: single-agent, multi-agent
 │   ├── llamaindex_example.py          # LlamaIndex: ModelProxy + invoke_fn approach
-│   ├── llamaindex_optimize_example.py # LlamaIndex: optimize() — simplest API
 │   └── datasets/
 │       └── math_problems.jsonl
 └── pyproject.toml
@@ -399,10 +353,6 @@ cp .env.example .env
 
 ```python
 from agentopt import (
-    # Simple API (recommended)
-    optimize,                # Find best model — parallel, no ModelProxy needed
-    parallel_select,         # Parallel evaluation with ModelProxy (convenience wrapper)
-
     # Core
     ModelProxy,              # Transparent LLM proxy
     ModelSelector,           # Brute-force model selector (sequential + parallel)

@@ -220,7 +220,9 @@ class BruteForceModelSelector(BaseModelSelector):
             raise RuntimeError("All clone attempts failed. Cannot evaluate any models.")
 
         # Phase 2: Evaluate in parallel
-        print(f"\n  Evaluating {len(tasks)} combinations across {max_workers} workers ...")
+        print(
+            f"\n  Evaluating {len(tasks)} combinations across {max_workers} workers ..."
+        )
         all_results: List[ModelResult] = []
         future_to_info: Dict[Any, Tuple[str, tuple]] = {}
 
@@ -277,8 +279,11 @@ class BruteForceModelSelector(BaseModelSelector):
             for r in all_results:
                 if r.model_name == best_name:
                     r.is_best = True
+                    print(
+                        f"\n  Best: {best_name} "
+                        f"(accuracy: {r.accuracy:.2%}, latency: {r.latency_seconds:.2f}s)"
+                    )
                     break
-            print(f"\n  Best: {best_name}")
         else:
             print("\n  No combinations succeeded")
 

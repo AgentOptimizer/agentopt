@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, ModelSelector
 
-#uv run python examples/crewai_example.py single --parallel
+# uv run python examples/crewai_example.py single --parallel
 
 
 def load_dataset(dataset_dir):
@@ -276,6 +276,4 @@ if __name__ == "__main__":
 
     results = run_model_selection(crew, llm_proxies, parallel=args.parallel)
 
-    plot_results(
-        results, f"CrewAI {label} Results", "examples/crewai_results.png"
-    )
+    plot_results(results, f"CrewAI {label} Results", "examples/crewai_results.png")

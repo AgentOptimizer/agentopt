@@ -25,12 +25,16 @@ class HillClimbingModelSelector(BaseModelSelector):
     Algorithm (per restart):
       1. Pick a random model for each proxy from its candidate list.
       2. Evaluate accuracy and latency.
-      3. If accuracy < *accuracy_target* → swap a random proxy's model to the
-         next-higher-quality neighbour (one step up in the topology).
-      4. Elif latency > *latency_target* → swap a random proxy's model to the
-         next-faster neighbour.
-      5. Repeat until both targets are met, no move is possible, or
-         *max_iterations* is reached.
+      3. If accuracy < 1.0, try swapping a random proxy's model to the
+         next-higher-quality neighbour (accuracy is the primary objective).
+      4. If accuracy is already perfect (>= 1.0) or no quality move is
+         available, try the next-faster neighbour to reduce latency.
+      5. Repeat until no improvement for *patience* consecutive iterations,
+         no move is possible, or *max_iterations* is reached.
+
+    Accuracy is treated as having an upper bound of 1.0.  Once every
+    evaluation sample is answered correctly the algorithm switches
+    entirely to latency optimisation.
 
     The best combination across all restarts is returned.
     """
@@ -42,12 +46,28 @@ class HillClimbingModelSelector(BaseModelSelector):
         dataset: List[Tuple[Any, str]],
         agent: Any = None,
         invoke_fn: Optional[callable] = None,
-        accuracy_target: float = 0.8,
-        latency_target: float = 10.0,
         max_iterations: int = 20,
         num_restarts: int = 3,
+        patience: int = 3,
         seed: Optional[int] = None,
     ) -> None:
+        """Initialize the hill-climbing model selector.
+
+        Args:
+            models: Dictionary mapping ModelProxy to list of model candidates.
+            eval_fn: Function ``(expected, actual) -> bool | float``
+                (higher is better).
+            dataset: List of ``(input_data, expected_answer)`` tuples.
+            agent: Agent instance (CrewAI, LangChain, LangGraph).
+                Mutually exclusive with *invoke_fn*.
+            invoke_fn: Callable for a custom agent.
+                Mutually exclusive with *agent*.
+            max_iterations: Maximum iterations per restart before stopping.
+            num_restarts: Number of random restarts.
+            patience: Stop a restart after this many consecutive iterations
+                with no improvement (accuracy primary, latency tiebreaker).
+            seed: Random seed for reproducibility.
+        """
         super().__init__(
             models=models,
             eval_fn=eval_fn,
@@ -55,10 +75,9 @@ class HillClimbingModelSelector(BaseModelSelector):
             invoke_fn=invoke_fn,
             dataset=dataset,
         )
-        self.accuracy_target = accuracy_target
-        self.latency_target = latency_target
         self.max_iterations = max_iterations
         self.num_restarts = num_restarts
+        self.patience = patience
 
         if seed is not None:
             random.seed(seed)
@@ -67,6 +86,15 @@ class HillClimbingModelSelector(BaseModelSelector):
         self._candidate_names: Dict[ModelProxy, List[str]] = {}
         for proxy, candidates in self._models.items():
             self._candidate_names[proxy] = [self._get_model_name(c) for c in candidates]
+
+        # Pre-compute all combinations (Cartesian product) once.
+        import itertools
+
+        proxies = list(self._models.keys())
+        candidate_lists = [self._models[p] for p in proxies]
+        self._all_combinations: List[List[Any]] = [
+            list(c) for c in itertools.product(*candidate_lists)
+        ]
 
         # Cache: combo_key -> (accuracy, latency) to avoid redundant evaluations.
         self._eval_cache: Dict[str, Tuple[float, float]] = {}
@@ -87,8 +115,12 @@ class HillClimbingModelSelector(BaseModelSelector):
         for proxy, model_obj in zip(proxies, combo):
             proxy.set_model(model_obj)
 
-    def _random_combination(self, proxies: List[ModelProxy]) -> List[Any]:
-        return [random.choice(self._models[p]) for p in proxies]
+    def _random_combination(self, seen: Set[str]) -> Optional[List[Any]]:
+        """Pick a random unseen combination, or ``None`` if all exhausted."""
+        unseen = [c for c in self._all_combinations if self._combo_key(c) not in seen]
+        if unseen:
+            return list(random.choice(unseen))
+        return None
 
     def _combo_key(self, combo: List[Any]) -> str:
         """Canonical string key for a combination (for dedup / caching)."""
@@ -154,9 +186,14 @@ class HillClimbingModelSelector(BaseModelSelector):
 
     def _hill_climb_once(
         self, proxies: List[ModelProxy], seen: Set[str]
-    ) -> Tuple[List[Any], float, float, List[ModelResult]]:
-        """Run one hill-climbing pass from a random starting point."""
-        combo = self._random_combination(proxies)
+    ) -> Optional[Tuple[List[Any], float, float, List[ModelResult]]]:
+        """Run one hill-climbing pass from a random starting point.
+
+        Returns ``None`` if all combinations have already been seen.
+        """
+        combo = self._random_combination(seen)
+        if combo is None:
+            return None
         self._apply_combination(proxies, combo)
 
         results: List[ModelResult] = []
@@ -164,6 +201,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         best_accuracy = float("-inf")
         best_latency = float("inf")
         accuracy_tolerance = 1e-9
+        no_improve_count = 0
 
         for iteration in range(self.max_iterations):
             combo_name = self._combo_key(combo)
@@ -210,17 +248,24 @@ class HillClimbingModelSelector(BaseModelSelector):
                 best_accuracy = accuracy
                 best_latency = latency
                 best_combo = list(combo)
+                no_improve_count = 0
+            else:
+                no_improve_count += 1
 
-            # Both targets met → stop early
-            if accuracy >= self.accuracy_target and latency <= self.latency_target:
-                print(f"  Targets met at iteration {iteration + 1}!")
+            # Patience-based convergence: stop if no improvement for N iterations
+            if no_improve_count >= self.patience:
+                print(
+                    f"  No improvement for {self.patience} iterations. "
+                    f"Converged at iteration {iteration + 1}."
+                )
                 break
 
-            # Attempt a move
+            # Attempt a move: improve quality unless accuracy is already
+            # perfect (>= 1.0), in which case focus on speed instead.
             moved = False
-            if accuracy < self.accuracy_target:
+            if accuracy < 1.0:
                 moved = self._try_improve_quality(proxies, combo, seen)
-            if not moved and latency > self.latency_target:
+            if not moved:
                 moved = self._try_improve_speed(proxies, combo, seen)
 
             if not moved:
@@ -239,6 +284,13 @@ class HillClimbingModelSelector(BaseModelSelector):
     # ------------------------------------------------------------------
 
     def select_best(self) -> SelectionResults:
+        """Run hill climbing with random restarts and return the best combination.
+
+        Returns:
+            SelectionResults with all evaluated combinations; the best one
+            is marked with ``is_best=True``.  The proxies are left set to
+            the best combination found.
+        """
         proxies = list(self._models.keys())
 
         all_results: List[ModelResult] = []
@@ -250,11 +302,8 @@ class HillClimbingModelSelector(BaseModelSelector):
         print(f"\n{'=' * 60}")
         print(
             f"Hill climbing: {self.num_restarts} restart(s), "
-            f"max {self.max_iterations} iterations each"
-        )
-        print(
-            f"Targets: accuracy >= {self.accuracy_target:.2%}, "
-            f"latency <= {self.latency_target:.2f}s"
+            f"max {self.max_iterations} iterations each, "
+            f"patience {self.patience}"
         )
         print(f"{'=' * 60}\n")
 
@@ -263,9 +312,11 @@ class HillClimbingModelSelector(BaseModelSelector):
         for restart in range(self.num_restarts):
             print(f"--- Restart {restart + 1}/{self.num_restarts} ---")
 
-            best_combo, best_acc, best_lat, run_results = self._hill_climb_once(
-                proxies, seen
-            )
+            result = self._hill_climb_once(proxies, seen)
+            if result is None:
+                print("  All combinations exhausted. Stopping.\n")
+                break
+            best_combo, best_acc, best_lat, run_results = result
             all_results.extend(run_results)
 
             # Update global best
@@ -284,11 +335,6 @@ class HillClimbingModelSelector(BaseModelSelector):
                 global_best_accuracy = best_acc
                 global_best_latency = best_lat
                 global_best_combo = best_combo
-
-            # Early exit across restarts
-            if best_acc >= self.accuracy_target and best_lat <= self.latency_target:
-                print(f"Targets met in restart {restart + 1}. Stopping restarts.\n")
-                break
 
         # Apply the global best and mark it in results
         if global_best_combo is not None:

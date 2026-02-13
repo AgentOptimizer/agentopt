@@ -10,7 +10,7 @@ from crewai_tools import (
 )
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, ModelSelector
+from agentopt import ModelProxy, BruteForceModelSelector
 
 
 def load_dataset(dataset_dir):
@@ -192,7 +192,7 @@ def multiagent_multillm_example():
 def run_model_selection(crew, llm_proxies):
     dataset = load_dataset("examples/datasets")
 
-    selector = ModelSelector(
+    selector = BruteForceModelSelector(
         models={
             llm_proxy: [
                 "openai/gpt-4o-mini",

@@ -8,7 +8,7 @@ This package provides:
 
 from .model_proxy import ModelProxy
 from .model_factory import create_model_from_string, normalize_models
-from .model_selection import ModelSelector
+from .model_selection import BruteForceModelSelector, HillClimbingModelSelector
 from .base_models import (
     EvalFn,
     ModelSpec,
@@ -20,7 +20,8 @@ __all__ = [
     # Core
     "ModelProxy",
     "BaseModelSelector",
-    "ModelSelector",
+    "BruteForceModelSelector",
+    "HillClimbingModelSelector",
     "create_model_from_string",
     "normalize_models",
     # Types

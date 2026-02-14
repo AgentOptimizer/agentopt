@@ -131,7 +131,7 @@ def multiagent_example():
 
 
 def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
-    dataset = load_dataset("examples/datasets")
+    dataset = load_dataset("examples")
 
     kwargs = {
         "models": {

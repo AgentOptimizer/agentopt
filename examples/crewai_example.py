@@ -190,7 +190,7 @@ def multiagent_multillm_example():
 
 
 def run_model_selection(crew, llm_proxies):
-    dataset = load_dataset("examples/datasets")
+    dataset = load_dataset("examples")
 
     selector = ModelSelector(
         models={

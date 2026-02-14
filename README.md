@@ -243,23 +243,36 @@ agentopt/
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
 │   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
-│   ├── openai_sdk/              # OpenAI Agents SDK baselines and AgentOpt-enhanced pairs
-│   ├── claude_sdk/              # Claude Messages SDK baselines and AgentOpt-enhanced pairs
-│   └── datasets/
-│       └── math_problems.jsonl
+│   ├── openai_sdk_example.py    # OpenAI Agents SDK with AgentOpt + baseline
+│   ├── claude_sdk_example.py    # Claude Agent SDK with AgentOpt + baseline
+│   └── math_problems.jsonl
 └── pyproject.toml
 ```
 
-## Dataset / DataLoader notes for SDK-only examples
+## OpenAI Agents SDK / Claude Agent SDK
 
-OpenAI Agents SDK and Claude Messages SDK do not ship Dataset or DataLoader abstractions. The SDK examples (`examples/openai_sdk/` and `examples/claude_sdk/`) follow the AgentOpt contract by loading a JSONL file into a list of `(input_dict, expected_answer)` tuples and reusing `invoke_fn`/`.invoke` to run evaluations. This keeps the SDK baselines comparable to the AgentOpt-enhanced runs without additional framework helpers.
+Both SDK examples (`openai_sdk_example.py`, `claude_sdk_example.py`) follow the same pattern: load a JSONL dataset, pass a lambda as `invoke_fn` to `ModelSelector`, and let it evaluate across candidate models. No wrapper classes needed — just a `ModelProxy` and an inline `invoke_fn`.
 
-## OpenAI Agents / Claude Messages quickstart
+```python
+# OpenAI Agents SDK
+from agents import Agent, Runner
+from agentopt import ModelProxy, ModelSelector
 
-- Baselines live in `examples/openai_sdk/*_baseline.py` and `examples/claude_sdk/*_baseline.py` (plain Agents/Messages SDK calls).
-- AgentOpt versions swap only the `model` field via `ModelProxy` while reusing the same tools/prompts.
-- Runner patterns (`agents_runner_example.py`) show how to evaluate Agents SDK / Claude Messages without writing a custom `invoke_fn`, using `AgentFactoryRunner` to expose `.invoke`.
-- See `examples/SDK_OVERVIEW.md` for a concise walkthrough of folder contents and how ModelSelector is wired in.
+proxy = ModelProxy(SimpleNamespace(model="gpt-4o-mini"))
+
+selector = ModelSelector(
+    models={proxy: ["gpt-4o-mini", "gpt-4o"]},
+    eval_fn=eval_fn,
+    dataset=dataset,
+    invoke_fn=lambda input_data: Runner.run_sync(
+        Agent(name="Math QA", model=proxy.model, instructions="..."),
+        input_data["input"],
+    ).final_output,
+)
+results = selector.select_best()
+```
+
+Each file also includes a baseline function (`math_qa_baseline`) that runs the same dataset without AgentOpt for comparison.
 
 ## Environment Setup
 

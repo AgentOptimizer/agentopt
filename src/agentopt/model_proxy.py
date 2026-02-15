@@ -37,6 +37,13 @@ class ModelProxy:
             if current_model is None:
                 raise AttributeError("No model set")
 
+            # Try framework-specific rebuild first (handles cross-provider).
+            new_model = self._rebuild_from_string(model, current_model)
+            if new_model is not None:
+                object.__setattr__(self, "_optmodel", new_model)
+                object.__setattr__(self, "_optmodel_class", type(new_model))
+                return
+
             # .model for crewai
             # .model_name for langchain and langgraph
             support_fields = ("model", "model_name", "model_id")
@@ -74,14 +81,35 @@ class ModelProxy:
                 "Cannot swap model using a string for this model type. Pass a fully-constructed model instance instead."
             )
 
-        # a universal fallback: have to pass the full model instead of simply a string
-        expected_class = object.__getattribute__(self, "_optmodel_class")
-        # make sure that the passed-in model is the same type as the initial model
-        if not isinstance(model, expected_class):
-            raise TypeError(
-                f"Expected {expected_class.__name__}, got {type(model).__name__}"
-            )
+        # Full model object passed — just swap it in.
         object.__setattr__(self, "_optmodel", model)
+        object.__setattr__(self, "_optmodel_class", type(model))
+
+    @staticmethod
+    def _rebuild_from_string(model_name: str, current_model: Any) -> Any:
+        """Try to rebuild the LLM via a framework-specific factory.
+
+        Returns a new LLM object, or ``None`` if not applicable.
+        """
+        module = getattr(type(current_model), "__module__", "") or ""
+
+        if module.startswith("crewai"):
+            try:
+                from crewai import LLM
+
+                return LLM(model=model_name)
+            except Exception:
+                return None
+
+        if module.startswith(("langchain_openai", "langchain_anthropic", "langchain_google", "langchain_aws", "langchain_community")):
+            try:
+                from .model_factory import create_model_from_string
+
+                return create_model_from_string(model_name)
+            except Exception:
+                return None
+
+        return None
 
     def get_model(self) -> Any:
         """Get the underlying model."""

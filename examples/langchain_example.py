@@ -136,8 +136,9 @@ def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
     kwargs = {
         "models": {
             llm: [
+                "gpt-3.5-turbo",
                 "gpt-4o-mini",
-                "gpt-4o",
+                "claude-3-haiku-20240307",
             ]
             for llm in llm_proxies
         },

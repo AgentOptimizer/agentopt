@@ -1,6 +1,6 @@
 """
 Model factory for creating LangChain model objects from string names.
-Handles provider detection and fallback to OpenRouter if API keys are missing.
+Handles provider detection and fallback chains (native → LiteLLM → OpenRouter).
 """
 
 from typing import Any, Union, List, Dict
@@ -10,155 +10,161 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _openrouter_fallback(model_name: str) -> Any:
+    """Create a ChatOpenAI pointed at OpenRouter."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=model_name,
+        base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        api_key=api_key,
+    )
+
+
+def _litellm_fallback(model_name: str) -> Any:
+    """Create a ChatOpenAI pointed at a LiteLLM proxy server."""
+    api_key = os.getenv("LITELLM_API_KEY")
+    base_url = os.getenv("LITELLM_API_BASE")
+    if not api_key or not base_url:
+        return None
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=model_name,
+        base_url=base_url,
+        api_key=api_key,
+    )
+
+
+def _proxy_fallback(model_name: str) -> Any:
+    """Try LiteLLM first, then OpenRouter."""
+    return _litellm_fallback(model_name) or _openrouter_fallback(model_name)
+
+
+def _no_key_error(provider: str, model_name: str) -> ValueError:
+    """Standard error when no API key or proxy is available."""
+    return ValueError(
+        f"No API key found for '{model_name}'. "
+        f"Set {provider} or LITELLM_API_KEY+LITELLM_API_BASE or OPENROUTER_API_KEY."
+    )
+
+
 def create_model_from_string(model_name: str) -> Any:
     """
     Create a LangChain model object from a string name.
 
-    Automatically detects provider based on prefix:
-    - "openai/" → OpenAI (if OPENAI_API_KEY exists, else OpenRouter)
-    - "google/" or "gemini" → Google Gemini (if GOOGLE_API_KEY exists, else OpenRouter)
-    - "anthropic/" or "claude" → Anthropic (if ANTHROPIC_API_KEY exists, else OpenRouter)
-    - Otherwise → OpenRouter
+    Automatically detects provider based on prefix/name:
+    - "openai/" or "gpt-*" / "o1-*" / "o3-*" → OpenAI
+    - "anthropic/" or "claude*" → Anthropic
+    - "google/" or "gemini*" → Google Gemini
+    - "bedrock/" → AWS Bedrock
+    - "litellm/" → LiteLLM proxy
+    - Otherwise → LiteLLM proxy → OpenRouter
+
+    Fallback chain: native API key → LiteLLM proxy → OpenRouter
 
     Args:
-        model_name: Model name string (e.g., "openai/gpt-4o", "google/gemini-3-flash-preview")
+        model_name: Model name string (e.g., "openai/gpt-4o", "bedrock/anthropic.claude-3-haiku-20240307-v1:0")
 
     Returns:
         LangChain model object
     """
-    # Check for OpenRouter fallback
-    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-    openrouter_base_url = os.getenv(
-        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
-    )
+    # ---- Explicit prefix checks (order matters: most specific first) ----
 
-    # Determine provider from model name
+    # --- AWS Bedrock ---
+    if model_name.startswith("bedrock/"):
+        clean_name = model_name.removeprefix("bedrock/")
+        aws_key = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_region = os.getenv("AWS_DEFAULT_REGION", os.getenv("AWS_REGION"))
+        if aws_key and aws_region:
+            try:
+                from langchain_aws import ChatBedrockConverse
+
+                return ChatBedrockConverse(
+                    model=clean_name,
+                    region_name=aws_region,
+                )
+            except ImportError:
+                pass
+        fallback = _proxy_fallback(model_name)
+        if fallback:
+            return fallback
+        raise _no_key_error(
+            "AWS_ACCESS_KEY_ID + AWS_DEFAULT_REGION", model_name
+        )
+
+    # --- LiteLLM explicit prefix ---
+    if model_name.startswith("litellm/"):
+        clean_name = model_name.removeprefix("litellm/")
+        fallback = _litellm_fallback(clean_name)
+        if fallback:
+            return fallback
+        raise ValueError(
+            f"LiteLLM requested for '{model_name}' but LITELLM_API_KEY and "
+            "LITELLM_API_BASE are not both set."
+        )
+
+    # --- OpenAI ---
     if model_name.startswith("openai/"):
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if openai_api_key:
-            # Use OpenAI directly
+        clean_name = model_name.removeprefix("openai/")
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(
-                model=model_name.replace("openai/", ""),
-                api_key=openai_api_key,
-            )
-        elif openrouter_api_key:
-            # Fallback to OpenRouter
-            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(model=clean_name, api_key=openai_key)
+        fallback = _proxy_fallback(model_name)
+        if fallback:
+            return fallback
+        raise _no_key_error("OPENAI_API_KEY", model_name)
 
-            return ChatOpenAI(
-                model=model_name,
-                base_url=openrouter_base_url,
-                api_key=openrouter_api_key,
-            )
-        else:
-            raise ValueError(
-                "Neither OPENAI_API_KEY nor OPENROUTER_API_KEY found. "
-                "Please set one of them in your .env file."
-            )
-
-    elif model_name.startswith("google/") or "gemini" in model_name.lower():
-        google_api_key = os.getenv("GOOGLE_API_KEY")
-        if google_api_key:
-            # Use Google directly
+    # --- Google / Gemini ---
+    if model_name.startswith("google/") or "gemini" in model_name.lower():
+        clean_name = model_name.removeprefix("google/")
+        google_key = os.getenv("GOOGLE_API_KEY")
+        if google_key:
             try:
                 from langchain_google_genai import ChatGoogleGenerativeAI
 
-                # Extract model name (remove "google/" prefix if present)
-                clean_name = model_name.replace("google/", "")
                 return ChatGoogleGenerativeAI(
-                    model=clean_name,
-                    google_api_key=google_api_key,
+                    model=clean_name, google_api_key=google_key
                 )
             except ImportError:
-                # Fallback to OpenRouter if langchain_google_genai not available
-                if openrouter_api_key:
-                    from langchain_openai import ChatOpenAI
+                pass
+        fallback = _proxy_fallback(model_name)
+        if fallback:
+            return fallback
+        raise _no_key_error("GOOGLE_API_KEY", model_name)
 
-                    return ChatOpenAI(
-                        model=model_name,
-                        base_url=openrouter_base_url,
-                        api_key=openrouter_api_key,
-                    )
-                else:
-                    raise ValueError(
-                        "langchain_google_genai not installed and OPENROUTER_API_KEY not found. "
-                        "Please install langchain-google-genai or set OPENROUTER_API_KEY."
-                    )
-        elif openrouter_api_key:
-            # Fallback to OpenRouter
-            from langchain_openai import ChatOpenAI
-
-            return ChatOpenAI(
-                model=model_name,
-                base_url=openrouter_base_url,
-                api_key=openrouter_api_key,
-            )
-        else:
-            raise ValueError(
-                "Neither GOOGLE_API_KEY nor OPENROUTER_API_KEY found. "
-                "Please set one of them in your .env file."
-            )
-
-    elif model_name.startswith("anthropic/") or "claude" in model_name.lower():
-        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        if anthropic_api_key:
-            # Use Anthropic directly
+    # --- Anthropic / Claude ---
+    if model_name.startswith("anthropic/") or "claude" in model_name.lower():
+        clean_name = model_name.removeprefix("anthropic/")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
             try:
                 from langchain_anthropic import ChatAnthropic
 
-                # Extract model name (remove "anthropic/" prefix if present)
-                clean_name = model_name.replace("anthropic/", "")
-                return ChatAnthropic(
-                    model=clean_name,
-                    api_key=anthropic_api_key,
-                )
+                return ChatAnthropic(model=clean_name, api_key=anthropic_key)
             except ImportError:
-                # Fallback to OpenRouter if langchain_anthropic not available
-                if openrouter_api_key:
-                    from langchain_openai import ChatOpenAI
+                pass
+        fallback = _proxy_fallback(model_name)
+        if fallback:
+            return fallback
+        raise _no_key_error("ANTHROPIC_API_KEY", model_name)
 
-                    return ChatOpenAI(
-                        model=model_name,
-                        base_url=openrouter_base_url,
-                        api_key=openrouter_api_key,
-                    )
-                else:
-                    raise ValueError(
-                        "langchain_anthropic not installed and OPENROUTER_API_KEY not found. "
-                        "Please install langchain-anthropic or set OPENROUTER_API_KEY."
-                    )
-        elif openrouter_api_key:
-            # Fallback to OpenRouter
-            from langchain_openai import ChatOpenAI
+    # --- Default: try native OpenAI, then proxy fallbacks ---
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(
-                model=model_name,
-                base_url=openrouter_base_url,
-                api_key=openrouter_api_key,
-            )
-        else:
-            raise ValueError(
-                "Neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY found. "
-                "Please set one of them in your .env file."
-            )
+        return ChatOpenAI(model=model_name, api_key=openai_key)
 
-    else:
-        # Default to OpenRouter for unknown formats
-        if openrouter_api_key:
-            from langchain_openai import ChatOpenAI
-
-            return ChatOpenAI(
-                model=model_name,
-                base_url=openrouter_base_url,
-                api_key=openrouter_api_key,
-            )
-        else:
-            raise ValueError(
-                f"Unknown model format '{model_name}' and OPENROUTER_API_KEY not found. "
-                "Please set OPENROUTER_API_KEY in your .env file or use a recognized format."
-            )
+    fallback = _proxy_fallback(model_name)
+    if fallback:
+        return fallback
+    raise _no_key_error("OPENAI_API_KEY", model_name)
 
 
 def normalize_models(

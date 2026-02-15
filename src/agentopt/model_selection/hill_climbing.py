@@ -114,6 +114,7 @@ class HillClimbingModelSelector(BaseModelSelector):
     def _apply_combination(self, proxies: List[ModelProxy], combo: List[Any]) -> None:
         for proxy, model_obj in zip(proxies, combo):
             proxy.set_model(model_obj)
+        self._sync_agent_models(proxies, combo)
 
     def _random_combination(self, seen: Set[str]) -> Optional[List[Any]]:
         """Pick a random unseen combination, or ``None`` if all exhausted."""

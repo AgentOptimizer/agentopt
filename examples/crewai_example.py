@@ -13,8 +13,6 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 
-# uv run python examples/crewai_example.py single --parallel
-
 
 def load_dataset(dataset_dir):
     """Load JSONL dataset and return (input_data, expected_answer) tuples for CrewAI."""
@@ -200,8 +198,10 @@ def run_model_selection(crew, llm_proxies, parallel=False):
     selector = BruteForceModelSelector(
         models={
             llm_proxy: [
-                "openai/gpt-4o-mini",
-                "openai/gpt-4.1-mini",
+                "openai/gpt-3.5-turbo",
+                "openai/gpt-4o",
+                "anthropic/claude-3-haiku-20240307",
+                "anthropic/claude-sonnet-4-20250514",
             ]
             for llm_proxy in llm_proxies
         },

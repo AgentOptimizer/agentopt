@@ -20,6 +20,70 @@ uv sync --extra crewai
 uv sync --extra llamaindex
 ```
 
+## Environment Setup
+
+Set API keys for the providers you want to use in a `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Or export them directly:
+
+```bash
+# Direct API access (set whichever you need)
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+export GOOGLE_API_KEY=AI...
+
+# AWS Bedrock
+export AWS_ACCESS_KEY_ID=AKIA...
+export AWS_SECRET_ACCESS_KEY=wJalr...
+export AWS_DEFAULT_REGION=us-east-1
+
+# Proxy fallbacks (optional)
+export LITELLM_API_KEY=sk-...
+export LITELLM_API_BASE=http://localhost:4000
+export OPENROUTER_API_KEY=sk-or-...
+```
+
+**Note:** If a variable exists in both your shell environment and `.env` file, the shell environment takes priority. The `.env` file only fills in variables that aren't already set.
+
+## Multi-Provider Support
+
+AgentOpt supports any LLM provider out of the box. You can mix and match models from different providers in a single optimization run — the framework handles cross-provider swapping automatically by rebuilding the LLM object for each provider.
+
+### Supported Providers
+
+| Provider | Model name format | How it connects |
+|----------|------------------|-----------------|
+| **OpenAI** | `gpt-4o-mini`, `openai/gpt-4o` | Direct API via `OPENAI_API_KEY` |
+| **Anthropic** | `claude-3-haiku-20240307`, `anthropic/claude-3-5-sonnet-20241022` | Direct API via `ANTHROPIC_API_KEY` |
+| **Google Gemini** | `gemini-1.5-flash`, `google/gemini-1.5-pro` | Direct API via `GOOGLE_API_KEY` |
+| **AWS Bedrock** | `bedrock/meta.llama3-3-70b-instruct-v1:0`, `bedrock/mistral.mistral-large-2407-v1:0` | AWS SDK via `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_DEFAULT_REGION` |
+| **LiteLLM** | `litellm/gpt-4o` | Proxy server via `LITELLM_API_KEY` + `LITELLM_API_BASE` |
+| **OpenRouter** | (automatic fallback) | Routes any model via `OPENROUTER_API_KEY` |
+
+### How Provider Routing Works
+
+Just use the model name — AgentOpt detects the provider automatically:
+
+```python
+selector = ModelSelector(
+    models={
+        llm: [
+            "gpt-4o-mini",                                    # → OpenAI
+            "claude-3-haiku-20240307",                        # → Anthropic
+            "gemini-1.5-flash",                               # → Google
+            "bedrock/meta.llama3-3-70b-instruct-v1:0",       # → AWS Bedrock
+        ]
+    },
+    ...
+)
+```
+
+Provider detection uses prefixes (`bedrock/`, `litellm/`, `openai/`, `google/`, `anthropic/`) and keyword matching (`claude`, `gemini`, `gpt`). If a native API key isn't available, it falls back through **LiteLLM → OpenRouter** automatically.
+
 ## Quick Start — `ModelProxy` + `ModelSelector`
 
 Use the `ModelProxy` workflow:
@@ -48,15 +112,15 @@ dataset = [
     ({"input": "Capital of France?"}, "Paris"),
 ]
 
-# 4. Run optimization
+# 4. Run optimization — mix providers freely
 selector = ModelSelector(
-    models={llm: ["openai/gpt-4o-mini", "openai/gpt-4o"]},
+    models={llm: ["openai/gpt-4o-mini", "anthropic/claude-3-haiku-20240307"]},
     eval_fn=lambda expected, actual: expected.lower() in str(actual).lower(),
     dataset=dataset,
     agent=crew,  # auto-detects crew.kickoff()
 )
 
-# Sequential evaluation (swaps proxy in-place)
+# Sequential evaluation
 results = selector.select_best()
 
 # Or parallel evaluation (clones agent per combination, uses thread pool)
@@ -93,9 +157,14 @@ llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 agent = create_tool_calling_agent(llm, tools, prompt)
 executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
 
-# 3. Run optimization
+# 3. Run optimization — cross-provider works automatically
 selector = ModelSelector(
-    models={llm: ["gpt-4o-mini", "gpt-4o"]},
+    models={llm: [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "claude-3-haiku-20240307",
+        "bedrock/meta.llama3-3-70b-instruct-v1:0",
+    ]},
     eval_fn=my_eval_fn,
     dataset=dataset,
     agent=executor,  # auto-detects executor.invoke()
@@ -171,6 +240,7 @@ proxy.temperature   # forwarded
 # Swap the underlying model (by string or full object)
 proxy.set_model("gpt-4o")           # updates the model name in-place
 proxy.set_model(new_llm_instance)   # replaces entirely
+proxy.set_model("claude-3-haiku-20240307")  # cross-provider: rebuilds the LLM automatically
 
 # Inspect
 proxy.get_model()  # returns the current underlying model
@@ -180,10 +250,10 @@ proxy.get_model()  # returns the current underlying model
 
 ```
 Agent --> ModelProxy --> LLM (gpt-4o-mini)
-                    --> LLM (gpt-4o)        # swapped, agent unchanged
+                    --> LLM (claude-3-haiku)   # swapped, agent unchanged
 ```
 
-**String-based swapping:** When you pass a string to `set_model()`, the proxy updates the model name field on the existing model object (e.g., `.model` for CrewAI, `.model_name` for LangChain). For Pydantic-based models, it uses `model_copy()` to create an immutable update.
+**Cross-provider swapping:** When you swap to a model from a different provider (e.g., OpenAI → Anthropic), the proxy fully rebuilds the LLM object using the correct provider class, API key, and defaults. No settings leak between providers.
 
 ### ModelSelector
 
@@ -223,7 +293,25 @@ results = selector.select_best(parallel=True, max_workers=4)
 | `parallel` | `bool` | Evaluate combinations concurrently (default: `False`) |
 | `max_workers` | `int \| None` | Max threads for parallel mode (default: number of combinations) |
 
-### How parallel evaluation works
+### Selection Strategies
+
+AgentOpt includes two model selection strategies:
+
+- **`BruteForceModelSelector`** (default, aliased as `ModelSelector`) — Evaluates the Cartesian product of all candidate model combinations. Thorough but scales as O(n^k) where n is models per proxy and k is the number of proxies.
+
+- **`HillClimbingModelSelector`** — Neighbor-based search using model quality/speed rankings. Starts from an initial combination and iteratively swaps one model at a time, keeping improvements. Much faster for large search spaces.
+
+```python
+from agentopt import BruteForceModelSelector, HillClimbingModelSelector
+
+# Brute force (tests all combinations)
+selector = BruteForceModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
+
+# Hill climbing (smart search)
+selector = HillClimbingModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
+```
+
+### How Parallel Evaluation Works
 
 When `parallel=True`, `select_best()`:
 1. Detects which agent attribute each `ModelProxy` maps to
@@ -313,12 +401,14 @@ agentopt/
 ├── src/agentopt/
 │   ├── __init__.py              # Public API exports
 │   ├── model_proxy.py           # ModelProxy for transparent model swapping
-│   ├── model_factory.py         # create_model_from_string (LangChain model creation)
+│   ├── model_factory.py         # Multi-provider LLM factory with fallback chain
+│   ├── model_topology.py        # Model quality/speed rankings for hill climbing
 │   ├── base_models.py           # Type aliases (EvalFn, ModelSpec, ModelsConfig)
 │   └── model_selection/
 │       ├── __init__.py          # Exports ModelSelector
 │       ├── base.py              # BaseModelSelector, parallel utilities, result types
-│       └── brute_force.py       # BruteForceModelSelector (sequential + parallel)
+│       ├── brute_force.py       # BruteForceModelSelector (sequential + parallel)
+│       └── hill_climbing.py     # HillClimbingModelSelector (neighbor-based search)
 ├── examples/
 │   ├── crewai_example.py              # CrewAI: single-agent, multi-agent (CLI)
 │   ├── langchain_example.py           # LangChain: single-agent, multi-agent
@@ -326,25 +416,6 @@ agentopt/
 │   └── datasets/
 │       └── math_problems.jsonl
 └── pyproject.toml
-```
-
-## Environment Setup
-
-Set API keys for the providers you want to use:
-
-```bash
-export OPENAI_API_KEY=your_key_here
-```
-
-The `model_factory` module (used for LangChain string-based model creation) also supports OpenRouter as a fallback:
-
-```bash
-export OPENROUTER_API_KEY=your_key_here
-```
-
-Or use a `.env` file:
-```bash
-cp .env.example .env
 ```
 
 ## API Reference
@@ -355,7 +426,9 @@ cp .env.example .env
 from agentopt import (
     # Core
     ModelProxy,              # Transparent LLM proxy
-    ModelSelector,           # Brute-force model selector (sequential + parallel)
+    ModelSelector,           # Default model selector (BruteForceModelSelector)
+    BruteForceModelSelector, # Brute-force model selector (sequential + parallel)
+    HillClimbingModelSelector, # Hill-climbing model selector
     BaseModelSelector,       # Abstract base for custom selectors
 
     # Results

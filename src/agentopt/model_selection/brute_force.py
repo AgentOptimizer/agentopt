@@ -90,6 +90,7 @@ class BruteForceModelSelector(BaseModelSelector):
             combo_name = " + ".join(self._get_model_name(m) for m in combo)
             for proxy, model_obj in zip(proxies, combo):
                 proxy.set_model(model_obj)
+            self._sync_agent_models(proxies, combo)
 
             print(f"  [{idx}/{len(all_combinations)}] Evaluating: {combo_name}")
             try:
@@ -141,6 +142,7 @@ class BruteForceModelSelector(BaseModelSelector):
             best_name = " + ".join(self._get_model_name(m) for m in best_combination)
             for proxy, model_obj in zip(proxies, best_combination):
                 proxy.set_model(model_obj)
+            self._sync_agent_models(proxies, best_combination)
             print(
                 f"\n  Best: {best_name} "
                 f"(accuracy: {best_accuracy:.2%}, latency: {best_latency:.2f}s)"
@@ -210,6 +212,28 @@ class BruteForceModelSelector(BaseModelSelector):
             except Exception as e:
                 logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
                 continue
+
+            # For CrewAI Crews, also update each sub-agent's LLM on the clone.
+            if hasattr(agent_copy, "agents"):
+                n_proxies = len(proxies)
+                n_agents = len(agent_copy.agents)
+                if n_proxies == 1:
+                    model_spec = combo[0]
+                    model_name = (
+                        model_spec
+                        if isinstance(model_spec, str)
+                        else self._get_model_name(model_spec)
+                    )
+                    for ag in agent_copy.agents:
+                        self._set_agent_model(ag, model_name)
+                elif n_proxies == n_agents:
+                    for ag, model_spec in zip(agent_copy.agents, combo):
+                        model_name = (
+                            model_spec
+                            if isinstance(model_spec, str)
+                            else self._get_model_name(model_spec)
+                        )
+                        self._set_agent_model(ag, model_name)
 
             invoke_fn = self._make_invoke_fn(
                 agent_copy, invoke_method_name, self.is_async

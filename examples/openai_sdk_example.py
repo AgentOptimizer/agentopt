@@ -48,20 +48,22 @@ def math_qa_agentopt(
     dataset_dir: str = "examples",
 ) -> None:
     dataset = load_jsonl_dataset(dataset_dir)
+    # Build the Agent once with a ModelProxy so ModelSelector can hot-swap
+    # the model via proxy.set_model(...) without rebuilding the agent.
     proxy = ModelProxy(SimpleNamespace(model="gpt-4o-mini"))
+    agent = Agent(
+        name="Math QA",
+        model=proxy,
+        instructions="Answer the user's math question concisely.",
+    )
 
     selector = ModelSelector(
         models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,
-        invoke_fn=lambda input_data: Runner.run_sync(
-            Agent(
-                name="Math QA",
-                model=proxy.model,
-                instructions="Answer the user's math question concisely.",
-            ),
-            input_data["input"],
-        ).final_output,
+        # Runner.run_sync reuses the constructed agent; ModelSelector mutates
+        # proxy between evaluations so each run uses the current candidate model.
+        invoke_fn=lambda input_data: Runner.run_sync(agent, input_data["input"]).final_output,
     )
 
     results = selector.select_best()

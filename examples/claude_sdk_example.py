@@ -38,19 +38,19 @@ def eval_fn(expected: str, actual: Any) -> bool:
     return expected.lower() in str(actual_text).lower()
 
 
-async def _run_query_async(prompt: str, model: str, **opts) -> str:
+async def _run_query_async(prompt: str, options: ClaudeAgentOptions) -> str:
     result_text = ""
     async for message in query(
         prompt=prompt,
-        options=ClaudeAgentOptions(model=model, **opts),
+        options=options,
     ):
         if hasattr(message, "result"):
             result_text = message.result
     return result_text
 
 
-def run_query_sync(prompt: str, model: str, **opts) -> str:
-    return asyncio.run(_run_query_async(prompt, model, **opts))
+def run_query_sync(prompt: str, options: ClaudeAgentOptions) -> str:
+    return asyncio.run(_run_query_async(prompt, options))
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +66,18 @@ def math_qa_agentopt(
     dataset_dir: str = "examples",
 ) -> None:
     dataset = load_jsonl_dataset(dataset_dir)
+    # Build options once with a ModelProxy so ModelSelector can hot-swap the model
+    # via proxy.set_model(...) without rebuilding anything per eval.
     proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
 
     selector = ModelSelector(
         models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,
-        invoke_fn=lambda input_data: run_query_sync(input_data["input"], proxy.model),
+        # ModelSelector mutates `proxy`; re-read the proxied options each time.
+        invoke_fn=lambda input_data: run_query_sync(
+            input_data["input"], proxy.get_model()
+        ),
     )
 
     results = selector.select_best()
@@ -88,7 +93,9 @@ def math_qa_baseline(dataset_dir: str = "examples") -> None:
     dataset = load_jsonl_dataset(dataset_dir)
 
     for input_data, expected in dataset:
-        answer = run_query_sync(input_data["input"], "claude-3-5-haiku-latest")
+        answer = run_query_sync(
+            input_data["input"], ClaudeAgentOptions(model="claude-3-5-haiku-latest")
+        )
         print(f"Q: {input_data['input']}\nA: {answer}\nExpected: {expected}\n")
 
 

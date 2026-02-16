@@ -92,9 +92,7 @@ def create_model_from_string(model_name: str) -> Any:
         fallback = _proxy_fallback(model_name)
         if fallback:
             return fallback
-        raise _no_key_error(
-            "AWS_ACCESS_KEY_ID + AWS_DEFAULT_REGION", model_name
-        )
+        raise _no_key_error("AWS_ACCESS_KEY_ID + AWS_DEFAULT_REGION", model_name)
 
     # --- LiteLLM explicit prefix ---
     if model_name.startswith("litellm/"):

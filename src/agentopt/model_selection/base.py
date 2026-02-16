@@ -364,7 +364,11 @@ class BaseModelSelector(ABC):
             )
             for ag in crew_agents:
                 self._set_agent_model(ag, model_name)
-                logger.debug("  [sync] %s → %s", ag.role if hasattr(ag, 'role') else 'agent', model_name)
+                logger.debug(
+                    "  [sync] %s → %s",
+                    ag.role if hasattr(ag, "role") else "agent",
+                    model_name,
+                )
         elif n_proxies == n_agents:
             # Positional mapping: proxy i → agent i
             for ag, model_spec in zip(crew_agents, combo):
@@ -374,7 +378,11 @@ class BaseModelSelector(ABC):
                     else self._get_model_name(model_spec)
                 )
                 self._set_agent_model(ag, model_name)
-                logger.debug("  [sync] %s → %s", ag.role if hasattr(ag, 'role') else 'agent', model_name)
+                logger.debug(
+                    "  [sync] %s → %s",
+                    ag.role if hasattr(ag, "role") else "agent",
+                    model_name,
+                )
         else:
             logger.warning(
                 "Cannot map %d proxies to %d crew agents. "
@@ -402,7 +410,15 @@ class BaseModelSelector(ABC):
             except Exception:
                 return None
 
-        if module.startswith(("langchain_openai", "langchain_anthropic", "langchain_google", "langchain_aws", "langchain_community")):
+        if module.startswith(
+            (
+                "langchain_openai",
+                "langchain_anthropic",
+                "langchain_google",
+                "langchain_aws",
+                "langchain_community",
+            )
+        ):
             try:
                 from ..model_factory import create_model_from_string
 

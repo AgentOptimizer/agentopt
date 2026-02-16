@@ -101,7 +101,15 @@ class ModelProxy:
             except Exception:
                 return None
 
-        if module.startswith(("langchain_openai", "langchain_anthropic", "langchain_google", "langchain_aws", "langchain_community")):
+        if module.startswith(
+            (
+                "langchain_openai",
+                "langchain_anthropic",
+                "langchain_google",
+                "langchain_aws",
+                "langchain_community",
+            )
+        ):
             try:
                 from .model_factory import create_model_from_string
 

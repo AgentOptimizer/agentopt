@@ -9,7 +9,7 @@ from typing import Any, Iterable, Sequence, Tuple
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
-from agentopt import ModelProxy, ModelSelector
+from agentopt import ModelProxy, BruteForceModelSelector
 
 # ---------------------------------------------------------------------------
 # Shared utilities
@@ -70,7 +70,7 @@ def math_qa_agentopt(
     # via proxy.set_model(...) without rebuilding anything per eval.
     proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
 
-    selector = ModelSelector(
+    selector = BruteForceModelSelector(
         models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,

@@ -1,16 +1,15 @@
+import argparse
 import json
 from pathlib import Path
 
 from crewai import Agent, Crew, Process, Task, LLM
-from crewai_tools import (
-    DirectoryReadTool,
-    FileReadTool,
+from crewai_tools import (  # noqa: F401 — available for tool-based examples
     SerperDevTool,
     WebsiteSearchTool,
 )
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, ModelSelector
+from agentopt import ModelProxy, BruteForceModelSelector
 
 
 def load_dataset(dataset_dir):
@@ -70,19 +69,19 @@ def single_agent_example():
     # 1. Wrap the LLM
     llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))
 
-    # 2. Standard CrewAI setup - use proxy as llm
+    # 2. Standard CrewAI setup — no tools so the agent answers directly
     researcher = Agent(
         role="Researcher",
         goal="Find accurate information on any topic",
         backstory="You are an expert researcher with years of experience.",
         llm=llm,
-        tools=[SerperDevTool(), WebsiteSearchTool()],
         verbose=False,
+        max_iter=5,
     )
 
     task = Task(
         description="{input}",
-        expected_output="A clear answer",
+        expected_output="A clear, concise answer",
         agent=researcher,
     )
 
@@ -100,14 +99,14 @@ def multiagent_example():
     # 1. Wrap the LLM
     llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))
 
-    # 2. Standard CrewAI setup - use proxy as llm
+    # 2. Standard CrewAI setup — no tools so agents answer directly
     researcher = Agent(
         role="Researcher",
         goal="Find accurate information on any topic",
         backstory="You are an expert researcher with years of experience.",
         llm=llm,
-        tools=[SerperDevTool(), WebsiteSearchTool()],
         verbose=False,
+        max_iter=5,
     )
 
     sde = Agent(
@@ -115,8 +114,8 @@ def multiagent_example():
         goal="Write efficient and correct code",
         backstory="You are a skilled software developer.",
         llm=llm,
-        tools=[DirectoryReadTool(), FileReadTool()],
         verbose=False,
+        max_iter=5,
     )
 
     # Task 1: Research
@@ -148,13 +147,14 @@ def multiagent_multillm_example():
     llm_research = ModelProxy(LLM(model="openai/gpt-4o-mini"))
     llm_sde = ModelProxy(LLM(model="openai/gpt-4o-mini"))
 
-    # 2. Standard CrewAI setup - use proxies as llms
+    # 2. Standard CrewAI setup — no tools so agents answer directly
     researcher = Agent(
         role="Researcher",
         goal="Find accurate information on any topic",
         backstory="You are an expert researcher with years of experience.",
         llm=llm_research,
         verbose=False,
+        max_iter=5,
     )
 
     sde = Agent(
@@ -163,6 +163,7 @@ def multiagent_multillm_example():
         backstory="You are a skilled software developer.",
         llm=llm_sde,
         verbose=False,
+        max_iter=5,
     )
 
     # Task 1: Research
@@ -189,14 +190,15 @@ def multiagent_multillm_example():
     return (llm_research, llm_sde), crew
 
 
-def run_model_selection(crew, llm_proxies):
+def run_model_selection(crew, llm_proxies, parallel=False):
     dataset = load_dataset("examples/datasets")
 
-    selector = ModelSelector(
+    selector = BruteForceModelSelector(
         models={
             llm_proxy: [
                 "openai/gpt-4o-mini",
-                "openai/gpt-4.1-mini",
+                "openai/gpt-4o",
+                "openai/gpt-5.1",
             ]
             for llm_proxy in llm_proxies
         },
@@ -205,7 +207,7 @@ def run_model_selection(crew, llm_proxies):
         agent=crew,
     )
 
-    results = selector.select_best()
+    results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
     return results
 
@@ -233,28 +235,42 @@ def plot_results(results, title="Model Performance", save_path=None):
     plt.show()
 
 
+EXAMPLES = {
+    "single": ("Single-agent", single_agent_example),
+    "multi": ("Multi-agent (shared LLM)", multiagent_example),
+    "multi-llm": ("Multi-agent (separate LLMs)", multiagent_multillm_example),
+}
+
+
 if __name__ == "__main__":
-    # Single-agent example
-    print("=" * 20)
-    print("Single-agent example")
-    print("=" * 20)
-    llm_proxy, crew = single_agent_example()
-    results = run_model_selection(crew, [llm_proxy])
-
-    # # Multi-agent example with single LLM
-    # print("=" * 20)
-    # print("Multi-agent example with single LLM")
-    # print("=" * 20)
-    # llm_proxy, crew = multiagent_example()
-    # results = run_model_selection(crew, [llm_proxy])
-
-    # print("=" * 20)
-    # print("Multi-agent with multiple LLMs")
-    # print("=" * 20)
-    # llm_proxies, crew = multiagent_multillm_example()
-    # results = run_model_selection(crew, llm_proxies)
-
-    # Plot all results
-    plot_results(
-        results, "CrewAI Model Selection Results", "examples/crewai_results.png"
+    parser = argparse.ArgumentParser(description="CrewAI model selection example")
+    parser.add_argument(
+        "example",
+        choices=EXAMPLES.keys(),
+        help="Which example to run",
     )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run model selection in parallel",
+    )
+    args = parser.parse_args()
+
+    label, setup_fn = EXAMPLES[args.example]
+    mode = "parallel" if args.parallel else "sequential"
+
+    print("=" * 40)
+    print(f"{label} ({mode})")
+    print("=" * 40)
+
+    result = setup_fn()
+    # multi-llm returns a tuple of proxies; the others return a single proxy
+    if isinstance(result[0], tuple):
+        llm_proxies, crew = result
+    else:
+        llm_proxy, crew = result
+        llm_proxies = [llm_proxy]
+
+    results = run_model_selection(crew, llm_proxies, parallel=args.parallel)
+
+    plot_results(results, f"CrewAI {label} Results", "examples/crewai_results.png")

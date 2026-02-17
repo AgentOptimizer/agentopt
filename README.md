@@ -244,10 +244,36 @@ agentopt/
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
 │   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
-│   └── datasets/
-│       └── math_problems.jsonl
+│   ├── openai_sdk_example.py    # OpenAI Agents SDK with AgentOpt + baseline
+│   ├── claude_sdk_example.py    # Claude Agent SDK with AgentOpt + baseline
+│   └── math_problems.jsonl
 └── pyproject.toml
 ```
+
+## OpenAI Agents SDK / Claude Agent SDK
+
+Both SDK examples (`openai_sdk_example.py`, `claude_sdk_example.py`) follow the same pattern: load a JSONL dataset, pass a lambda as `invoke_fn` to `ModelSelector`, and let it evaluate across candidate models. No wrapper classes needed — just a `ModelProxy` and an inline `invoke_fn`.
+
+```python
+# OpenAI Agents SDK
+from agents import Agent, Runner
+from agentopt import ModelProxy, ModelSelector
+
+proxy = ModelProxy(SimpleNamespace(model="gpt-4o-mini"))
+
+selector = ModelSelector(
+    models={proxy: ["gpt-4o-mini", "gpt-4o"]},
+    eval_fn=eval_fn,
+    dataset=dataset,
+    invoke_fn=lambda input_data: Runner.run_sync(
+        Agent(name="Math QA", model=proxy.model, instructions="..."),
+        input_data["input"],
+    ).final_output,
+)
+results = selector.select_best()
+```
+
+Each file also includes a baseline function (`math_qa_baseline`) that runs the same dataset without AgentOpt for comparison.
 
 ## Environment Setup
 

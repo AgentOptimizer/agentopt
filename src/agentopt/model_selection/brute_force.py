@@ -8,7 +8,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..base_models import EvalFn
+from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
@@ -27,7 +27,7 @@ class BruteForceModelSelector(BaseModelSelector):
         self,
         models: Dict[ModelProxy, List[Any]],
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
     ) -> None:

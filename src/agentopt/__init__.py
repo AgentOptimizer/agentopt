@@ -10,6 +10,7 @@ from .model_proxy import ModelProxy
 from .model_factory import create_model_from_string, normalize_models
 from .model_selection import BruteForceBruteForceModelSelector, HillClimbingModelSelector, BayesianOptimizationModelSelector
 from .base_models import (
+    Dataset,
     EvalFn,
     ModelSpec,
     ModelsConfig,
@@ -28,6 +29,7 @@ __all__ = [
     # Types
     "ModelResult",
     "SelectionResults",
+    "Dataset",
     "EvalFn",
     "ModelSpec",
     "ModelsConfig",

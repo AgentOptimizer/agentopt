@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from ..base_models import EvalFn
+from ..base_models import Dataset, EvalFn, validate_dataset
 from ..model_proxy import ModelProxy
 from .utils import extract_prompt
 from ..model_proxy.constants import (
@@ -91,7 +91,7 @@ class BaseModelSelector(ABC):
         self,
         models: Dict[ModelProxy, List[Any]],
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
     ) -> None:
@@ -101,7 +101,8 @@ class BaseModelSelector(ABC):
         Args:
             models: Dictionary mapping ModelProxy to list of model candidates
             eval_fn: Function (expected, actual) -> bool | float (higher is better)
-            dataset: List of (input_data, expected_answer) tuples, pre-loaded by the user
+            dataset: Sequence of (input_data, expected_answer) pairs, pre-loaded by the user.
+                Any object supporting len() and indexing that yields 2-element tuples works.
             agent: agent class for agent framework that we support: Langchain, Langgraph, CrewAI, etc
             invoke_fn: callable for customized agent
         """
@@ -112,6 +113,7 @@ class BaseModelSelector(ABC):
                 "Only one of 'agent' or 'invoke_fn' should be provided, not both"
             )
 
+        validate_dataset(dataset)
         self.agent = agent
         self.eval_fn = eval_fn
         self.dataset = dataset
@@ -167,14 +169,14 @@ class BaseModelSelector(ABC):
 
     def _evaluate(
         self,
-        evaluation_tasks: List[Tuple[Any, str]],
+        evaluation_tasks: Dataset,
         label: str = "",
     ) -> Tuple[float, float]:
         """
         Evaluate the current state of the agent against a list of tasks.
 
         Args:
-            evaluation_tasks: List of (input_data, expected_answer) tuples
+            evaluation_tasks: Sequence of (input_data, expected_answer) pairs
             label: Display label for progress traces.
 
         Returns:
@@ -293,7 +295,7 @@ class BaseModelSelector(ABC):
         invoke_fn: Callable,
         is_async: bool,
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         label: str = "",
     ) -> Tuple[float, float]:
         """Evaluate an agent against the dataset. Thread-safe."""

@@ -5,6 +5,7 @@ Uses ModelProxy with LLMConfig and custom invoke_fn, since AG2 agents
 use run()/process() rather than invoke()/kickoff().
 """
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -225,20 +226,33 @@ def plot_results(results, title="Model Performance", save_path=None):
 
 
 if __name__ == "__main__":
-    # Single-agent example
-    print("=" * 20)
-    print("Single-agent example")
-    print("=" * 20)
-    llm_proxy, invoke_fn = single_agent_example()
-    results = run_model_selection(invoke_fn, [llm_proxy])
-
-    # # Multi-agent example
-    # print("=" * 20)
-    # print("Multi-agent example")
-    # print("=" * 20)
-    # llm_proxies, chained_invoke = multiagent_example()
-    # results = run_model_selection(chained_invoke, llm_proxies)
-
-    plot_results(
-        results, "AG2 Model Selection Results", "examples/ag2_results.png"
+    parser = argparse.ArgumentParser(description="AG2 model selection example")
+    parser.add_argument(
+        "mode",
+        choices=["single", "multi"],
+        help="Run single-agent or multi-agent example",
     )
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Skip showing/saving the results plot",
+    )
+    args = parser.parse_args()
+
+    if args.mode == "single":
+        print("=" * 20)
+        print("Single-agent example")
+        print("=" * 20)
+        llm_proxy, invoke_fn = single_agent_example()
+        results = run_model_selection(invoke_fn, [llm_proxy])
+    else:
+        print("=" * 20)
+        print("Multi-agent example")
+        print("=" * 20)
+        llm_proxies, chained_invoke = multiagent_example()
+        results = run_model_selection(chained_invoke, llm_proxies)
+
+    if not args.no_plot:
+        plot_results(
+            results, "AG2 Model Selection Results", "examples/ag2_results.png"
+        )

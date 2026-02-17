@@ -131,7 +131,12 @@ selector = BayesianOptimizationModelSelector(
 results = selector.select_best()
 ```
 
-See `examples/ag2_example.py` for a complete example.
+See `examples/ag2_example.py` for a complete example. Run it with:
+
+```bash
+uv run python examples/ag2_example.py single   # single-agent
+uv run python examples/ag2_example.py multi    # multi-agent (researcher + coder)
+```
 
 ### Custom Agent / Any Framework
 

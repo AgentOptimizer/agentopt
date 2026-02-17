@@ -15,14 +15,16 @@ from pydantic import BaseModel, Field
 
 from ..base_models import EvalFn
 from ..model_proxy import ModelProxy
+from .utils import extract_prompt
+from ..model_proxy.constants import (
+    AGENT_LLM_ATTRS,
+    MODEL_FIELDS,
+    is_crewai_crew,
+    is_langchain_executor,
+    validate_model_candidates,
+)
 
 logger = logging.getLogger(__name__)
-
-# Model name fields to check on LLM objects, in priority order
-_MODEL_FIELDS = ("model", "model_name", "model_id")
-
-# Attribute names to check for the LLM on an agent, in priority order
-_AGENT_LLM_ATTRS = ("llm",)
 
 
 class ModelResult(BaseModel):
@@ -33,6 +35,9 @@ class ModelResult(BaseModel):
     latency_seconds: float
     attribute: str
     is_best: bool = False
+
+    def __str__(self) -> str:
+        return f"{self.model_name} (accuracy: {self.accuracy:.2%}, latency: {self.latency_seconds:.2f}s)"
 
 
 class SelectionResults(BaseModel):
@@ -112,6 +117,11 @@ class BaseModelSelector(ABC):
         self.dataset = dataset
         self._models = models
 
+        # Validate API keys for all candidate models.
+        warnings, _ = validate_model_candidates(models)
+        for warning in warnings:
+            raise ValueError(warning)
+
         # Resolve invoke_fn from agent if not provided directly
         if invoke_fn is not None:
             self.invoke_fn = invoke_fn
@@ -137,6 +147,23 @@ class BaseModelSelector(ABC):
                 f"Unsupported agent type: {type(agent).__name__}. "
                 "Pass 'invoke_fn' directly instead."
             )
+
+        # Register proxy → sub-agent sync for CrewAI Crews
+        if agent is not None and is_crewai_crew(agent):
+            crew_agents = agent.agents
+            proxy_list = list(models.keys())
+            if len(proxy_list) == 1:
+                proxy_list[0].register_crewai_agents(crew_agents)
+            elif len(proxy_list) == len(crew_agents):
+                for proxy, ag in zip(proxy_list, crew_agents):
+                    proxy.register_crewai_agents([ag])
+
+        # Register proxy → LangChain AgentExecutor chain rebuild
+        elif agent is not None and is_langchain_executor(agent):
+            proxy_list = list(models.keys())
+            prompt = extract_prompt(agent)
+            if prompt is not None and len(proxy_list) == 1:
+                proxy_list[0].register_langchain_executor(agent, agent.tools, prompt)
 
     def _evaluate(
         self,
@@ -214,14 +241,14 @@ class BaseModelSelector(ABC):
         """Create a fresh LLM with a different model name, preserving settings."""
         if isinstance(original_llm, BaseModel):
             target_field = next(
-                (f for f in _MODEL_FIELDS if f in type(original_llm).model_fields),
+                (f for f in MODEL_FIELDS if f in type(original_llm).model_fields),
                 None,
             )
             if target_field:
                 return original_llm.model_copy(update={target_field: model_name})
         else:
             target_field = next(
-                (f for f in _MODEL_FIELDS if hasattr(original_llm, f)),
+                (f for f in MODEL_FIELDS if hasattr(original_llm, f)),
                 None,
             )
             if target_field:
@@ -231,7 +258,7 @@ class BaseModelSelector(ABC):
 
         raise TypeError(
             f"Cannot create variant of {type(original_llm).__name__}: "
-            f"no supported model field found (checked: {_MODEL_FIELDS})"
+            f"no supported model field found (checked: {MODEL_FIELDS})"
         )
 
     @staticmethod
@@ -323,141 +350,13 @@ class BaseModelSelector(ABC):
         mapping: Dict[int, str] = {}
         for proxy in proxies:
             proxy_model = proxy.get_model()
-            for attr in _AGENT_LLM_ATTRS:
+            for attr in AGENT_LLM_ATTRS:
                 if hasattr(self.agent, attr):
                     val = getattr(self.agent, attr)
                     if val is proxy or val is proxy_model:
                         mapping[id(proxy)] = attr
                         break
         return mapping
-
-    def _sync_agent_models(
-        self,
-        proxies: list,
-        combo: tuple | list,
-    ) -> None:
-        """Push model changes into the agent's own LLM attributes.
-
-        Frameworks like CrewAI copy the LLM at construction time (via
-        ``create_llm``), so ``proxy.set_model()`` alone has no effect on
-        the agent.  This method directly updates the agent's internal LLM
-        objects after a proxy swap.
-
-        Supported patterns:
-        * **CrewAI Crew.agents**: 1 proxy → all agents, or N:N positional.
-        """
-        # --- CrewAI Crew pattern ---
-        if not hasattr(self.agent, "agents"):
-            return
-
-        crew_agents = self.agent.agents
-        n_proxies = len(proxies)
-        n_agents = len(crew_agents)
-
-        if n_proxies == 1:
-            # Shared-LLM: every crew agent gets the same new model
-            model_spec = combo[0]
-            model_name = (
-                model_spec
-                if isinstance(model_spec, str)
-                else self._get_model_name(model_spec)
-            )
-            for ag in crew_agents:
-                self._set_agent_model(ag, model_name)
-                logger.debug(
-                    "  [sync] %s → %s",
-                    ag.role if hasattr(ag, "role") else "agent",
-                    model_name,
-                )
-        elif n_proxies == n_agents:
-            # Positional mapping: proxy i → agent i
-            for ag, model_spec in zip(crew_agents, combo):
-                model_name = (
-                    model_spec
-                    if isinstance(model_spec, str)
-                    else self._get_model_name(model_spec)
-                )
-                self._set_agent_model(ag, model_name)
-                logger.debug(
-                    "  [sync] %s → %s",
-                    ag.role if hasattr(ag, "role") else "agent",
-                    model_name,
-                )
-        else:
-            logger.warning(
-                "Cannot map %d proxies to %d crew agents. "
-                "Model swap may not propagate to all agents.",
-                n_proxies,
-                n_agents,
-            )
-
-    @staticmethod
-    def _build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
-        """Construct a fresh LLM via the originating framework's factory.
-
-        Uses only the model name — no settings are carried over.  Each
-        provider's factory resolves its own API key from the environment
-        and applies its own defaults, avoiding parameter mismatches
-        across models (e.g. ``max_tokens`` vs ``max_completion_tokens``).
-        """
-        module = getattr(type(current_llm), "__module__", "") or ""
-
-        if module.startswith("crewai"):
-            try:
-                from crewai import LLM  # type: ignore[import-untyped]
-
-                return LLM(model=model_name)
-            except Exception:
-                return None
-
-        if module.startswith(
-            (
-                "langchain_openai",
-                "langchain_anthropic",
-                "langchain_google",
-                "langchain_aws",
-                "langchain_community",
-            )
-        ):
-            try:
-                from ..model_factory import create_model_from_string
-
-                return create_model_from_string(model_name)
-            except Exception:
-                return None
-
-        return None
-
-    @classmethod
-    def _set_agent_model(cls, agent: Any, model_name: str) -> None:
-        """Replace the agent's LLM with a freshly constructed one.
-
-        Always rebuilds via the framework's factory so that provider
-        routing, API keys, and model-specific defaults are handled
-        correctly — regardless of whether the provider changed.
-        """
-        llm = getattr(agent, "llm", None)
-        if llm is None:
-            return
-
-        new_llm = cls._build_llm(model_name, llm)
-        if new_llm is not None:
-            agent.llm = new_llm
-            return
-
-        # Fallback for non-CrewAI frameworks: in-place name swap.
-        target_field = next(
-            (f for f in _MODEL_FIELDS if hasattr(llm, f)),
-            None,
-        )
-        if target_field is None:
-            return
-
-        current = str(getattr(llm, target_field, ""))
-        if "/" not in current and "/" in model_name:
-            model_name = model_name.split("/", 1)[1]
-
-        setattr(llm, target_field, model_name)
 
     @abstractmethod
     def select_best(

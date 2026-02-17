@@ -1,10 +1,11 @@
-"""
-Core model selection functionality.
-"""
+"""Core model selection functionality."""
 
-from typing import Any
+from typing import Any, List
 
 from pydantic import BaseModel
+
+from .builders import build_llm
+from .constants import MODEL_FIELDS
 
 
 class ModelProxy:
@@ -29,6 +30,19 @@ class ModelProxy:
             self, "_optmodel", initial_model
         )  # the model class that will be wrapped
         object.__setattr__(self, "_optmodel_class", type(initial_model))
+        object.__setattr__(self, "_crewai_agents", [])
+        object.__setattr__(self, "_langchain_executors", [])
+
+    def register_crewai_agents(self, agents: List[Any]) -> None:
+        """Register CrewAI agents whose LLM will be updated automatically on set_model()."""
+        object.__setattr__(self, "_crewai_agents", list(agents))
+
+    def register_langchain_executor(
+        self, executor: Any, tools: List[Any], prompt: Any
+    ) -> None:
+        """Register a LangChain AgentExecutor for automatic chain rebuild on set_model()."""
+        executors = object.__getattribute__(self, "_langchain_executors")
+        executors.append((executor, tools, prompt))
 
     def set_model(self, model: Any) -> None:
         """Swap the underlying model. Accepts a model object or, in limited cases, a string name."""
@@ -38,24 +52,17 @@ class ModelProxy:
                 raise AttributeError("No model set")
 
             # Try framework-specific rebuild first (handles cross-provider).
-            new_model = self._rebuild_from_string(model, current_model)
+            new_model = build_llm(model, current_model)
             if new_model is not None:
                 object.__setattr__(self, "_optmodel", new_model)
                 object.__setattr__(self, "_optmodel_class", type(new_model))
+                self._sync_registered_frameworks()
                 return
-
-            # .model for crewai
-            # .model_name for langchain and langgraph
-            support_fields = ("model", "model_name", "model_id")
 
             if isinstance(current_model, BaseModel):
                 ## Pydantic path: use model_copy to create an immutable update
                 target_field = next(
-                    (
-                        f
-                        for f in support_fields
-                        if f in type(current_model).model_fields
-                    ),
+                    (f for f in MODEL_FIELDS if f in type(current_model).model_fields),
                     None,
                 )
                 if target_field:
@@ -67,57 +74,52 @@ class ModelProxy:
                         pass
                     else:
                         object.__setattr__(self, "_optmodel", new_model)
+                        self._sync_registered_frameworks()
                         return
             else:
                 ## Non-pydantic fallback: directly set the attribute
                 target_field = next(
-                    (a for a in support_fields if hasattr(current_model, a)), None
+                    (a for a in MODEL_FIELDS if hasattr(current_model, a)), None
                 )
                 if target_field:
                     setattr(current_model, target_field, model)
+                    self._sync_registered_frameworks()
                     return
 
             raise TypeError(
-                "Cannot swap model using a string for this model type. Pass a fully-constructed model instance instead."
+                "Cannot swap model using a string for this model type. "
+                "Pass a fully-constructed model instance instead."
             )
 
         # Full model object passed — just swap it in.
         object.__setattr__(self, "_optmodel", model)
         object.__setattr__(self, "_optmodel_class", type(model))
+        self._sync_registered_frameworks()
 
-    @staticmethod
-    def _rebuild_from_string(model_name: str, current_model: Any) -> Any:
-        """Try to rebuild the LLM via a framework-specific factory.
+    def _sync_registered_frameworks(self) -> None:
+        """Sync the current model to registered CrewAI agents and LangChain executors."""
+        model = object.__getattribute__(self, "_optmodel")
 
-        Returns a new LLM object, or ``None`` if not applicable.
-        """
-        module = getattr(type(current_model), "__module__", "") or ""
+        # CrewAI agent sync
+        agents = object.__getattribute__(self, "_crewai_agents")
+        if agents:
+            from .crewai import build_crewai_llm
 
-        if module.startswith("crewai"):
-            try:
-                from crewai import LLM
-
-                return LLM(model=model_name)
-            except Exception:
-                return None
-
-        if module.startswith(
-            (
-                "langchain_openai",
-                "langchain_anthropic",
-                "langchain_google",
-                "langchain_aws",
-                "langchain_community",
+            model_name = next(
+                (str(getattr(model, f)) for f in MODEL_FIELDS if hasattr(model, f)),
+                None,
             )
-        ):
-            try:
-                from .model_factory import create_model_from_string
+            if model_name is not None:
+                for ag in agents:
+                    ag.llm = build_crewai_llm(model_name)
 
-                return create_model_from_string(model_name)
-            except Exception:
-                return None
+        # LangChain executor chain rebuild
+        executors = object.__getattribute__(self, "_langchain_executors")
+        if executors:
+            from .langchain import sync_langchain_executor
 
-        return None
+            for executor, tools, prompt in executors:
+                sync_langchain_executor(executor, model, tools, prompt)
 
     def get_model(self) -> Any:
         """Get the underlying model."""
@@ -130,7 +132,7 @@ class ModelProxy:
         return getattr(model, name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name == "_optmodel":
+        if name in ("_optmodel", "_crewai_agents", "_langchain_executors"):
             object.__setattr__(self, name, value)
         else:
             model = object.__getattribute__(self, "_optmodel")

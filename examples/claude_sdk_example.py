@@ -38,21 +38,6 @@ def eval_fn(expected: str, actual: Any) -> bool:
     return expected.lower() in str(actual_text).lower()
 
 
-async def _run_query_async(prompt: str, options: ClaudeAgentOptions) -> str:
-    result_text = ""
-    async for message in query(
-        prompt=prompt,
-        options=options,
-    ):
-        if hasattr(message, "result"):
-            result_text = message.result
-    return result_text
-
-
-def run_query_sync(prompt: str, options: ClaudeAgentOptions) -> str:
-    return asyncio.run(_run_query_async(prompt, options))
-
-
 # ---------------------------------------------------------------------------
 # Math QA with AgentOpt
 # ---------------------------------------------------------------------------
@@ -67,17 +52,24 @@ def math_qa_agentopt(
 ) -> None:
     dataset = load_jsonl_dataset(dataset_dir)
     # Build options once with a ModelProxy so ModelSelector can hot-swap the model
-    # via proxy.set_model(...) without rebuilding anything per eval.
     proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
+
+    async def _ask_async(prompt: str) -> str:
+        result_text = ""
+        async for message in query(prompt=prompt, options=proxy.get_model()):
+            if hasattr(message, "result"):
+                result_text = message.result
+        return result_text
+
+    def ask(prompt: str) -> str:
+        return asyncio.run(_ask_async(prompt))
 
     selector = BruteForceModelSelector(
         models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,
-        # ModelSelector mutates `proxy`; re-read the proxied options each time.
-        invoke_fn=lambda input_data: run_query_sync(
-            input_data["input"], proxy.get_model()
-        ),
+        # Selector mutates proxy via set_model; ask() reuses the proxied options.
+        invoke_fn=lambda input_data: ask(input_data["input"]),
     )
 
     results = selector.select_best()
@@ -92,10 +84,21 @@ def math_qa_agentopt(
 def math_qa_baseline(dataset_dir: str = "examples") -> None:
     dataset = load_jsonl_dataset(dataset_dir)
 
+    async def _ask_async(prompt: str) -> str:
+        result_text = ""
+        async for message in query(
+            prompt=prompt,
+            options=ClaudeAgentOptions(model="claude-3-5-haiku-latest"),
+        ):
+            if hasattr(message, "result"):
+                result_text = message.result
+        return result_text
+
+    def ask(prompt: str) -> str:
+        return asyncio.run(_ask_async(prompt))
+
     for input_data, expected in dataset:
-        answer = run_query_sync(
-            input_data["input"], ClaudeAgentOptions(model="claude-3-5-haiku-latest")
-        )
+        answer = ask(input_data["input"])
         print(f"Q: {input_data['input']}\nA: {answer}\nExpected: {expected}\n")
 
 

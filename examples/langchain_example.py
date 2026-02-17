@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -11,7 +10,7 @@ from langchain_community.tools import DuckDuckGoSearchRun, WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, ModelSelector
+from agentopt import ModelProxy, BruteForceModelSelector
 
 
 def load_dataset(dataset_dir):
@@ -117,7 +116,13 @@ def multiagent_example():
     coder_agent = create_tool_calling_agent(coder_llm, [calculator], coder_prompt)
     coder_executor = AgentExecutor(agent=coder_agent, tools=[calculator], verbose=False)
 
-    # 5. Custom invoke_fn that chains agents sequentially
+    # 5. Register executors for automatic chain rebuild on model swap
+    researcher_llm.register_langchain_executor(
+        researcher_executor, [search, wikipedia], researcher_prompt
+    )
+    coder_llm.register_langchain_executor(coder_executor, [calculator], coder_prompt)
+
+    # 6. Custom invoke_fn that chains agents sequentially
     def chained_invoke(input_data):
         question = input_data["input"]
         research_result = researcher_executor.invoke({"input": question})
@@ -136,8 +141,9 @@ def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
     kwargs = {
         "models": {
             llm: [
-                "gpt-4o-mini",
-                "gpt-4o",
+                "openai/gpt-4o-mini",
+                "openai/gpt-4o",
+                "openai/gpt-5.1",
             ]
             for llm in llm_proxies
         },
@@ -150,7 +156,7 @@ def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
     else:
         kwargs["agent"] = agent_or_invoke_fn
 
-    selector = ModelSelector(**kwargs)
+    selector = BruteForceModelSelector(**kwargs)
 
     results = selector.select_best()
     print(f"\nBest: {results.get_best()}")
@@ -182,11 +188,11 @@ def plot_results(results, title="Model Performance", save_path=None):
 
 if __name__ == "__main__":
     # Single-agent example
-    # print("=" * 20)
-    # print("Single-agent example")
-    # print("=" * 20)
-    # llm_proxy, agent_executor = single_agent_example()
-    # results = run_model_selection(agent_executor, [llm_proxy])
+    print("=" * 20)
+    print("Single-agent example")
+    print("=" * 20)
+    llm_proxy, agent_executor = single_agent_example()
+    results = run_model_selection(agent_executor, [llm_proxy])
 
     # Multi-agent example
     print("=" * 20)

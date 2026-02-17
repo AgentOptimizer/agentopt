@@ -12,15 +12,21 @@ import matplotlib.pyplot as plt
 from agentopt import ModelProxy, BruteForceModelSelector
 
 
-def load_dataset(dataset_dir):
+def load_dataset(dataset_dir, filename=None):
     """Load JSONL dataset and return (input_data, expected_answer) tuples for CrewAI."""
     dataset_path = Path(dataset_dir)
-    jsonl_files = list(dataset_path.glob("*.jsonl"))
-    if not jsonl_files:
-        raise ValueError(f"No JSONL files found in: {dataset_dir}")
+    if filename:
+        jsonl_file = dataset_path / filename
+        if not jsonl_file.exists():
+            raise ValueError(f"Dataset file not found: {jsonl_file}")
+    else:
+        jsonl_files = list(dataset_path.glob("*.jsonl"))
+        if not jsonl_files:
+            raise ValueError(f"No JSONL files found in: {dataset_dir}")
+        jsonl_file = jsonl_files[0]
 
     tasks = []
-    with open(jsonl_files[0], "r", encoding="utf-8") as f:
+    with open(jsonl_file, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -190,8 +196,8 @@ def multiagent_multillm_example():
     return (llm_research, llm_sde), crew
 
 
-def run_model_selection(crew, llm_proxies, parallel=False):
-    dataset = load_dataset("examples/datasets")
+def run_model_selection(crew, llm_proxies, parallel=False, dataset_file=None):
+    dataset = load_dataset("examples/datasets", filename=dataset_file)
 
     selector = BruteForceModelSelector(
         models={
@@ -254,6 +260,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Run model selection in parallel",
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -271,6 +283,10 @@ if __name__ == "__main__":
         llm_proxy, crew = result
         llm_proxies = [llm_proxy]
 
-    results = run_model_selection(crew, llm_proxies, parallel=args.parallel)
+    results = run_model_selection(
+        crew, llm_proxies,
+        parallel=args.parallel,
+        dataset_file=args.dataset,
+    )
 
     plot_results(results, f"CrewAI {label} Results", "examples/crewai_results.png")

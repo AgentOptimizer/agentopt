@@ -4,8 +4,6 @@ from pathlib import Path
 
 from crewai import Agent, Crew, Process, Task, LLM
 from crewai_tools import (  # noqa: F401 — available for tool-based examples
-    DirectoryReadTool,
-    FileReadTool,
     SerperDevTool,
     WebsiteSearchTool,
 )
@@ -198,10 +196,9 @@ def run_model_selection(crew, llm_proxies, parallel=False):
     selector = BruteForceModelSelector(
         models={
             llm_proxy: [
-                "openai/gpt-3.5-turbo",
+                "openai/gpt-4o-mini",
                 "openai/gpt-4o",
-                "anthropic/claude-3-haiku-20240307",
-                "anthropic/claude-sonnet-4-20250514",
+                "openai/gpt-5.1",
             ]
             for llm_proxy in llm_proxies
         },

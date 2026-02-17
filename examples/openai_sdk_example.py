@@ -9,7 +9,7 @@ from typing import Any, Iterable, Sequence, Tuple
 
 from agents import Agent, Runner
 
-from agentopt import ModelProxy, ModelSelector
+from agentopt import ModelProxy, BruteForceModelSelector
 
 # ---------------------------------------------------------------------------
 # Shared utilities
@@ -57,7 +57,7 @@ def math_qa_agentopt(
         instructions="Answer the user's math question concisely.",
     )
 
-    selector = ModelSelector(
+    selector = BruteForceModelSelector(
         models={proxy: list(candidate_models)},
         eval_fn=eval_fn,
         dataset=dataset,

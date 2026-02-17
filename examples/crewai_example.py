@@ -4,16 +4,12 @@ from pathlib import Path
 
 from crewai import Agent, Crew, Process, Task, LLM
 from crewai_tools import (  # noqa: F401 — available for tool-based examples
-    DirectoryReadTool,
-    FileReadTool,
     SerperDevTool,
     WebsiteSearchTool,
 )
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
-
-# uv run python examples/crewai_example.py single --parallel
 
 
 def load_dataset(dataset_dir):
@@ -201,7 +197,8 @@ def run_model_selection(crew, llm_proxies, parallel=False):
         models={
             llm_proxy: [
                 "openai/gpt-4o-mini",
-                "openai/gpt-4.1-mini",
+                "openai/gpt-4o",
+                "openai/gpt-5.1",
             ]
             for llm_proxy in llm_proxies
         },

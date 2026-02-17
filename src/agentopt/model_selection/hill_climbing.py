@@ -210,27 +210,22 @@ class HillClimbingModelSelector(BaseModelSelector):
             # Re-use cached result if this combination was already evaluated.
             if combo_name in self._eval_cache:
                 accuracy, latency = self._eval_cache[combo_name]
-                print(
-                    f"  Iter {iteration + 1}: [{combo_name}] "
-                    f"Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s (cached)"
-                )
+                cached = True
             else:
                 accuracy, latency = self._evaluate(self.dataset)
                 self._eval_cache[combo_name] = (accuracy, latency)
-                print(
-                    f"  Iter {iteration + 1}: [{combo_name}] "
-                    f"Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s"
-                )
+                cached = False
 
-            results.append(
-                ModelResult(
-                    model_name=combo_name,
-                    accuracy=accuracy,
-                    latency_seconds=latency,
-                    attribute="combination",
-                    is_best=False,
-                )
+            result = ModelResult(
+                model_name=combo_name,
+                accuracy=accuracy,
+                latency_seconds=latency,
+                attribute="combination",
+                is_best=False,
             )
+            suffix = " (cached)" if cached else ""
+            print(f"  Iter {iteration + 1}: {result}{suffix}")
+            results.append(result)
 
             # Track best within this restart
             should_update = False
@@ -340,11 +335,6 @@ class HillClimbingModelSelector(BaseModelSelector):
         if global_best_combo is not None:
             best_name = " + ".join(self._get_model_name(m) for m in global_best_combo)
             self._apply_combination(proxies, global_best_combo)
-            print(
-                f"Best combination: {best_name} "
-                f"(accuracy: {global_best_accuracy:.2%}, "
-                f"latency: {global_best_latency:.2f}s)\n"
-            )
 
             for result in all_results:
                 if (
@@ -352,6 +342,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                     and abs(result.accuracy - global_best_accuracy) < accuracy_tolerance
                 ):
                     result.is_best = True
+                    print(f"Best combination: {result}\n")
                     break
         else:
             print("\nNo combinations succeeded\n")

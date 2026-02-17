@@ -95,19 +95,15 @@ class BruteForceModelSelector(BaseModelSelector):
             try:
                 accuracy, latency = self._evaluate(self.dataset, label=combo_name)
 
-                print(
-                    f"  [{combo_name}] Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s"
+                result = ModelResult(
+                    model_name=combo_name,
+                    accuracy=accuracy,
+                    latency_seconds=latency,
+                    attribute="combination",
+                    is_best=False,
                 )
-
-                all_results.append(
-                    ModelResult(
-                        model_name=combo_name,
-                        accuracy=accuracy,
-                        latency_seconds=latency,
-                        attribute="combination",
-                        is_best=False,
-                    )
-                )
+                print(f"  {result}")
+                all_results.append(result)
 
                 should_update = False
                 if best_combination is None:
@@ -141,13 +137,10 @@ class BruteForceModelSelector(BaseModelSelector):
             best_name = " + ".join(self._get_model_name(m) for m in best_combination)
             for proxy, model_obj in zip(proxies, best_combination):
                 proxy.set_model(model_obj)
-            print(
-                f"\n  Best: {best_name} "
-                f"(accuracy: {best_accuracy:.2%}, latency: {best_latency:.2f}s)"
-            )
             for result in all_results:
                 if result.model_name == best_name:
                     result.is_best = True
+                    print(f"\n  Best: {result}")
                     break
         else:
             print("\n  No combinations succeeded")
@@ -211,6 +204,15 @@ class BruteForceModelSelector(BaseModelSelector):
                 logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
                 continue
 
+            # For CrewAI Crews, also update each sub-agent's LLM on the clone.
+            # (Cloned agents don't share proxies, so we sync explicitly.)
+            from ..model_proxy.constants import is_crewai_crew
+
+            if is_crewai_crew(agent_copy):
+                from ..model_proxy.crewai import sync_crew_agents
+
+                sync_crew_agents(agent_copy, proxies, combo, self._get_model_name)
+
             invoke_fn = self._make_invoke_fn(
                 agent_copy, invoke_method_name, self.is_async
             )
@@ -242,19 +244,15 @@ class BruteForceModelSelector(BaseModelSelector):
                 combo_name, combo = future_to_info[future]
                 try:
                     accuracy, latency = future.result()
-                    print(
-                        f"  [{combo_name}] Accuracy: {accuracy:.2%}, "
-                        f"Latency: {latency:.2f}s"
+                    result = ModelResult(
+                        model_name=combo_name,
+                        accuracy=accuracy,
+                        latency_seconds=latency,
+                        attribute="combination",
+                        is_best=False,
                     )
-                    all_results.append(
-                        ModelResult(
-                            model_name=combo_name,
-                            accuracy=accuracy,
-                            latency_seconds=latency,
-                            attribute="combination",
-                            is_best=False,
-                        )
-                    )
+                    print(f"  {result}")
+                    all_results.append(result)
                 except Exception as e:
                     print(f"  [{combo_name}] failed: {e}")
                     all_results.append(
@@ -279,10 +277,7 @@ class BruteForceModelSelector(BaseModelSelector):
             for r in all_results:
                 if r.model_name == best_name:
                     r.is_best = True
-                    print(
-                        f"\n  Best: {best_name} "
-                        f"(accuracy: {r.accuracy:.2%}, latency: {r.latency_seconds:.2f}s)"
-                    )
+                    print(f"\n  Best: {r}")
                     break
         else:
             print("\n  No combinations succeeded")

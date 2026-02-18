@@ -56,7 +56,8 @@ def math_qa_agentopt(
 
     async def _ask_async(prompt: str) -> str:
         result_text = ""
-        async for message in query(prompt=prompt, options=proxy.get_model()):
+        # Pass the proxy directly; ModelSelector will mutate it via set_model().
+        async for message in query(prompt=prompt, options=proxy):
             if hasattr(message, "result"):
                 result_text = message.result
         return result_text

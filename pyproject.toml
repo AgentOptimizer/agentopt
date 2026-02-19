@@ -30,6 +30,10 @@ crewai = [
     "crewai>=0.1.0",
     "crewai-tools>=0.1.0",
 ]
+llamaindex = [
+    "llama-index-core>=0.12.0",
+    "llama-index-llms-openai>=0.3.0",
+]
 bayesian = [
     "torch>=2.0.0",
     "botorch>=0.10.0",

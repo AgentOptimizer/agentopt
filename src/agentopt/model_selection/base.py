@@ -21,6 +21,7 @@ from ..model_proxy.constants import (
     MODEL_FIELDS,
     is_crewai_crew,
     is_langchain_executor,
+    is_llamaindex_agent,
     validate_model_candidates,
 )
 
@@ -140,9 +141,11 @@ class BaseModelSelector(ABC):
             self.is_async = False
             self._invoke_method_name = "invoke"
         elif hasattr(agent, "run"):
-            # LlamaIndex agents use .run() (async)
-            self.invoke_fn = agent.run
-            self.is_async = inspect.iscoroutinefunction(agent.run)
+            # LlamaIndex agents use .run() — returns a coroutine/WorkflowHandler
+            # that must be awaited, but iscoroutinefunction returns False due to
+            # instrumentation decorators. Wrap it so _evaluate handles it correctly.
+            self.invoke_fn = self._make_invoke_fn(agent, "run", is_async=False)
+            self.is_async = False
             self._invoke_method_name = "run"
         else:
             raise TypeError(
@@ -166,6 +169,12 @@ class BaseModelSelector(ABC):
             prompt = extract_prompt(agent)
             if prompt is not None and len(proxy_list) == 1:
                 proxy_list[0].register_langchain_executor(agent, agent.tools, prompt)
+
+        # Register proxy → LlamaIndex agent LLM sync
+        elif agent is not None and is_llamaindex_agent(agent):
+            proxy_list = list(models.keys())
+            if len(proxy_list) == 1:
+                proxy_list[0].register_llamaindex_agents([agent])
 
     def _evaluate(
         self,
@@ -200,7 +209,7 @@ class BaseModelSelector(ABC):
                 total_score += float(score)
 
             except Exception as e:
-                logger.debug("[%s] sample %d/%d error: %s", label, i, total, e)
+                logger.warning("[%s] sample %d/%d error: %s", label, i, total, e)
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
@@ -280,7 +289,7 @@ class BaseModelSelector(ABC):
                         result = method(**input_data)
                     else:
                         result = method(input_data)
-                    if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                    if inspect.isawaitable(result):
                         return await result
                     return result
 

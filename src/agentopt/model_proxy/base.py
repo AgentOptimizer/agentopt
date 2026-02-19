@@ -32,6 +32,7 @@ class ModelProxy:
         object.__setattr__(self, "_optmodel_class", type(initial_model))
         object.__setattr__(self, "_crewai_agents", [])
         object.__setattr__(self, "_langchain_executors", [])
+        object.__setattr__(self, "_llamaindex_agents", [])
 
     def register_crewai_agents(self, agents: List[Any]) -> None:
         """Register CrewAI agents whose LLM will be updated automatically on set_model()."""
@@ -43,6 +44,10 @@ class ModelProxy:
         """Register a LangChain AgentExecutor for automatic chain rebuild on set_model()."""
         executors = object.__getattribute__(self, "_langchain_executors")
         executors.append((executor, tools, prompt))
+
+    def register_llamaindex_agents(self, agents: List[Any]) -> None:
+        """Register LlamaIndex agents whose LLM will be updated automatically on set_model()."""
+        object.__setattr__(self, "_llamaindex_agents", list(agents))
 
     def set_model(self, model: Any) -> None:
         """Swap the underlying model. Accepts a model object or, in limited cases, a string name."""
@@ -121,6 +126,13 @@ class ModelProxy:
             for executor, tools, prompt in executors:
                 sync_langchain_executor(executor, model, tools, prompt)
 
+        # LlamaIndex agent sync
+        llamaindex_agents = object.__getattribute__(self, "_llamaindex_agents")
+        if llamaindex_agents:
+            from .llamaindex import sync_llamaindex_agents
+
+            sync_llamaindex_agents(llamaindex_agents, model)
+
     def get_model(self) -> Any:
         """Get the underlying model."""
         return object.__getattribute__(self, "_optmodel")
@@ -132,7 +144,12 @@ class ModelProxy:
         return getattr(model, name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("_optmodel", "_crewai_agents", "_langchain_executors"):
+        if name in (
+            "_optmodel",
+            "_crewai_agents",
+            "_langchain_executors",
+            "_llamaindex_agents",
+        ):
             object.__setattr__(self, name, value)
         else:
             model = object.__getattribute__(self, "_optmodel")

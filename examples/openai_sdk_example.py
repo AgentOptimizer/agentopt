@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterable, Sequence, Tuple
+from typing import Any, Iterable, Sequence
 
 from agents import Agent, Runner
 
@@ -16,14 +16,13 @@ from agentopt import ModelProxy, BruteForceModelSelector
 # ---------------------------------------------------------------------------
 
 
-def load_jsonl_dataset(dataset_dir: str) -> list[Tuple[dict[str, str], str]]:
+def load_dataset(dataset_dir, filename):
+    """Load JSONL dataset and return (input_data, expected_answer) tuples for OpenAI Agents SDK."""
     dataset_path = Path(dataset_dir)
-    jsonl_files = list(dataset_path.glob("*.jsonl"))
-    if not jsonl_files:
-        raise ValueError(f"No JSONL files found in: {dataset_dir}")
+    jsonl_file = dataset_path / filename
 
-    tasks: list[Tuple[dict[str, str], str]] = []
-    with open(jsonl_files[0], "r", encoding="utf-8") as f:
+    tasks = []
+    with open(jsonl_file, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -45,9 +44,10 @@ def eval_fn(expected: str, actual: Any) -> bool:
 
 def math_qa_agentopt(
     candidate_models: Sequence[str] | Iterable[str] = ("gpt-4o-mini", "gpt-4o"),
-    dataset_dir: str = "examples",
+    dataset_dir: str = "examples/datasets",
+    dataset_file: str = "math_problems.jsonl",
 ) -> None:
-    dataset = load_jsonl_dataset(dataset_dir)
+    dataset = load_dataset(dataset_dir, filename=dataset_file)
     # Build the Agent once with a ModelProxy so ModelSelector can hot-swap
     # the model via proxy.set_model(...) without rebuilding the agent.
     proxy = ModelProxy(SimpleNamespace(model="gpt-4o-mini"))
@@ -63,7 +63,9 @@ def math_qa_agentopt(
         dataset=dataset,
         # Runner.run_sync reuses the constructed agent; ModelSelector mutates
         # proxy between evaluations so each run uses the current candidate model.
-        invoke_fn=lambda input_data: Runner.run_sync(agent, input_data["input"]).final_output,
+        invoke_fn=lambda input_data: Runner.run_sync(
+            agent, input_data["input"]
+        ).final_output,
     )
 
     results = selector.select_best()
@@ -75,8 +77,10 @@ def math_qa_agentopt(
 # ---------------------------------------------------------------------------
 
 
-def math_qa_baseline(dataset_dir: str = "examples") -> None:
-    dataset = load_jsonl_dataset(dataset_dir)
+def math_qa_baseline(
+    dataset_dir: str = "examples/datasets", dataset_file: str = "math_problems.jsonl"
+) -> None:
+    dataset = load_dataset(dataset_dir, filename=dataset_file)
 
     for input_data, expected in dataset:
         result = Runner.run_sync(

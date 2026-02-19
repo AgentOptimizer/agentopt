@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from ..base_models import EvalFn
+from ..base_models import Dataset, EvalFn, validate_dataset
 from ..model_proxy import ModelProxy
 from .utils import extract_prompt
 from ..model_proxy.constants import (
@@ -21,6 +21,7 @@ from ..model_proxy.constants import (
     MODEL_FIELDS,
     is_crewai_crew,
     is_langchain_executor,
+    is_llamaindex_agent,
     validate_model_candidates,
 )
 
@@ -91,7 +92,7 @@ class BaseModelSelector(ABC):
         self,
         models: Dict[ModelProxy, List[Any]],
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
     ) -> None:
@@ -101,7 +102,8 @@ class BaseModelSelector(ABC):
         Args:
             models: Dictionary mapping ModelProxy to list of model candidates
             eval_fn: Function (expected, actual) -> bool | float (higher is better)
-            dataset: List of (input_data, expected_answer) tuples, pre-loaded by the user
+            dataset: Sequence of (input_data, expected_answer) pairs, pre-loaded by the user.
+                Any object supporting len() and indexing that yields 2-element tuples works.
             agent: agent class for agent framework that we support: Langchain, Langgraph, CrewAI, etc
             invoke_fn: callable for customized agent
         """
@@ -112,6 +114,7 @@ class BaseModelSelector(ABC):
                 "Only one of 'agent' or 'invoke_fn' should be provided, not both"
             )
 
+        validate_dataset(dataset)
         self.agent = agent
         self.eval_fn = eval_fn
         self.dataset = dataset
@@ -138,9 +141,11 @@ class BaseModelSelector(ABC):
             self.is_async = False
             self._invoke_method_name = "invoke"
         elif hasattr(agent, "run"):
-            # LlamaIndex agents use .run() (async)
-            self.invoke_fn = agent.run
-            self.is_async = inspect.iscoroutinefunction(agent.run)
+            # LlamaIndex agents use .run() — returns a coroutine/WorkflowHandler
+            # that must be awaited, but iscoroutinefunction returns False due to
+            # instrumentation decorators. Wrap it so _evaluate handles it correctly.
+            self.invoke_fn = self._make_invoke_fn(agent, "run", is_async=False)
+            self.is_async = False
             self._invoke_method_name = "run"
         else:
             raise TypeError(
@@ -165,16 +170,22 @@ class BaseModelSelector(ABC):
             if prompt is not None and len(proxy_list) == 1:
                 proxy_list[0].register_langchain_executor(agent, agent.tools, prompt)
 
+        # Register proxy → LlamaIndex agent LLM sync
+        elif agent is not None and is_llamaindex_agent(agent):
+            proxy_list = list(models.keys())
+            if len(proxy_list) == 1:
+                proxy_list[0].register_llamaindex_agents([agent])
+
     def _evaluate(
         self,
-        evaluation_tasks: List[Tuple[Any, str]],
+        evaluation_tasks: Dataset,
         label: str = "",
     ) -> Tuple[float, float]:
         """
         Evaluate the current state of the agent against a list of tasks.
 
         Args:
-            evaluation_tasks: List of (input_data, expected_answer) tuples
+            evaluation_tasks: Sequence of (input_data, expected_answer) pairs
             label: Display label for progress traces.
 
         Returns:
@@ -198,7 +209,7 @@ class BaseModelSelector(ABC):
                 total_score += float(score)
 
             except Exception as e:
-                logger.debug("[%s] sample %d/%d error: %s", label, i, total, e)
+                logger.warning("[%s] sample %d/%d error: %s", label, i, total, e)
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
@@ -278,7 +289,7 @@ class BaseModelSelector(ABC):
                         result = method(**input_data)
                     else:
                         result = method(input_data)
-                    if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+                    if inspect.isawaitable(result):
                         return await result
                     return result
 
@@ -293,7 +304,7 @@ class BaseModelSelector(ABC):
         invoke_fn: Callable,
         is_async: bool,
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         label: str = "",
     ) -> Tuple[float, float]:
         """Evaluate an agent against the dataset. Thread-safe."""

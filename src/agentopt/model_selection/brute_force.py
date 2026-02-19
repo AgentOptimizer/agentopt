@@ -8,7 +8,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..base_models import EvalFn
+from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
@@ -27,7 +27,7 @@ class BruteForceModelSelector(BaseModelSelector):
         self,
         models: Dict[ModelProxy, List[Any]],
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
     ) -> None:
@@ -204,14 +204,21 @@ class BruteForceModelSelector(BaseModelSelector):
                 logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
                 continue
 
-            # For CrewAI Crews, also update each sub-agent's LLM on the clone.
-            # (Cloned agents don't share proxies, so we sync explicitly.)
-            from ..model_proxy.constants import is_crewai_crew
+            # For multi-agent frameworks, clone sub-agents independently
+            # so parallel clones don't share sub-agent objects.
+            from ..model_proxy.constants import is_crewai_crew, is_llamaindex_agent
 
             if is_crewai_crew(agent_copy):
-                from ..model_proxy.crewai import sync_crew_agents
+                from ..model_proxy.crewai import clone_crew_agents
 
-                sync_crew_agents(agent_copy, proxies, combo, self._get_model_name)
+                clone_crew_agents(agent_copy, proxies, combo, self._get_model_name)
+
+            elif is_llamaindex_agent(agent_copy) and hasattr(agent_copy, "agents"):
+                from ..model_proxy.llamaindex import sync_llamaindex_workflow_agents
+
+                sync_llamaindex_workflow_agents(
+                    agent_copy, proxies, combo, self._get_model_name
+                )
 
             invoke_fn = self._make_invoke_fn(
                 agent_copy, invoke_method_name, self.is_async

@@ -9,7 +9,7 @@ rather than blindly exploring the full Cartesian product.
 import random
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ..base_models import EvalFn
+from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
 from ..model_topology import (
     normalize_model_name,
@@ -43,7 +43,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         self,
         models: Dict[ModelProxy, List[Any]],
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[callable] = None,
         max_iterations: int = 20,
@@ -57,7 +57,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             models: Dictionary mapping ModelProxy to list of model candidates.
             eval_fn: Function ``(expected, actual) -> bool | float``
                 (higher is better).
-            dataset: List of ``(input_data, expected_answer)`` tuples.
+            dataset: Sequence of ``(input_data, expected_answer)`` pairs.
             agent: Agent instance (CrewAI, LangChain, LangGraph).
                 Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent.

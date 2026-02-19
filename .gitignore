@@ -44,3 +44,4 @@ Thumbs.db
 examples/*.csv
 examples/*.png
 examples/__pycache__/
+CLAUDE.md

@@ -1,3 +1,4 @@
+import argparse
 import json
 from pathlib import Path
 
@@ -13,15 +14,13 @@ import matplotlib.pyplot as plt
 from agentopt import ModelProxy, BruteForceModelSelector
 
 
-def load_dataset(dataset_dir):
+def load_dataset(dataset_dir, filename):
     """Load JSONL dataset and return (input_data, expected_answer) tuples for LangChain."""
     dataset_path = Path(dataset_dir)
-    jsonl_files = list(dataset_path.glob("*.jsonl"))
-    if not jsonl_files:
-        raise ValueError(f"No JSONL files found in: {dataset_dir}")
+    jsonl_file = dataset_path / filename
 
     tasks = []
-    with open(jsonl_files[0], "r", encoding="utf-8") as f:
+    with open(jsonl_file, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -135,8 +134,11 @@ def multiagent_example():
     return (researcher_llm, coder_llm), chained_invoke
 
 
-def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
-    dataset = load_dataset("examples/datasets")
+def run_model_selection(
+    agent_or_invoke_fn, llm_proxies, use_invoke_fn=False,
+    parallel=False, dataset_file=None,
+):
+    dataset = load_dataset("examples/datasets", filename=dataset_file)
 
     kwargs = {
         "models": {
@@ -158,7 +160,7 @@ def run_model_selection(agent_or_invoke_fn, llm_proxies, use_invoke_fn=False):
 
     selector = BruteForceModelSelector(**kwargs)
 
-    results = selector.select_best()
+    results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
     return results
 
@@ -186,22 +188,58 @@ def plot_results(results, title="Model Performance", save_path=None):
     plt.show()
 
 
+EXAMPLES = {
+    "single": ("Single-agent", single_agent_example),
+    "multi": ("Multi-agent (chained)", multiagent_example),
+}
+
+
 if __name__ == "__main__":
-    # Single-agent example
-    print("=" * 20)
-    print("Single-agent example")
-    print("=" * 20)
-    llm_proxy, agent_executor = single_agent_example()
-    results = run_model_selection(agent_executor, [llm_proxy])
-
-    # Multi-agent example
-    print("=" * 20)
-    print("Multi-agent example")
-    print("=" * 20)
-    llm_proxies, chained_invoke = multiagent_example()
-    results = run_model_selection(chained_invoke, llm_proxies, use_invoke_fn=True)
-
-    # Plot all results
-    plot_results(
-        results, "LangChain Model Selection Results", "examples/langchain_results.png"
+    parser = argparse.ArgumentParser(description="LangChain model selection example")
+    parser.add_argument(
+        "example",
+        choices=EXAMPLES.keys(),
+        help="Which example to run",
     )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run model selection in parallel (single-agent only)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default='math_problems.jsonl',
+        help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
+    )
+    args = parser.parse_args()
+
+    label, setup_fn = EXAMPLES[args.example]
+    mode = "parallel" if args.parallel else "sequential"
+
+    print("=" * 40)
+    print(f"{label} ({mode})")
+    print("=" * 40)
+
+    result = setup_fn()
+
+    if args.example == "single":
+        llm_proxy, agent_executor = result
+        results = run_model_selection(
+            agent_executor, [llm_proxy],
+            parallel=args.parallel,
+            dataset_file=args.dataset,
+        )
+    else:
+        # Multi-agent returns (proxies_tuple, invoke_fn)
+        llm_proxies, chained_invoke = result
+        if args.parallel:
+            print("Warning: parallel mode not supported for multi-agent "
+                  "(uses invoke_fn). Running sequentially.")
+        results = run_model_selection(
+            chained_invoke, list(llm_proxies),
+            use_invoke_fn=True,
+            dataset_file=args.dataset,
+        )
+
+    plot_results(results, f"LangChain {label} Results", "examples/langchain_results.png")

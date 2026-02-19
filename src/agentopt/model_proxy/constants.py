@@ -31,7 +31,11 @@ def is_crewai_crew(agent: Any) -> bool:
 def is_langchain_executor(agent: Any) -> bool:
     """Check if an agent is a LangChain AgentExecutor."""
     module = getattr(type(agent), "__module__", "") or ""
-    return module.startswith("langchain") and hasattr(agent, "agent") and hasattr(agent, "tools")
+    return (
+        module.startswith("langchain")
+        and hasattr(agent, "agent")
+        and hasattr(agent, "tools")
+    )
 
 
 def is_llamaindex_agent(agent: Any) -> bool:

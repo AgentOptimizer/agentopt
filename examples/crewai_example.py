@@ -15,7 +15,7 @@ from agentopt import ModelProxy, BruteForceModelSelector
 def load_dataset(dataset_dir, filename=None):
     """Load JSONL dataset and return (input_data, expected_answer) tuples for CrewAI."""
     dataset_path = Path(dataset_dir)
-    jsonl_file = dataset_path / (filename or "math_problems.jsonl")
+    jsonl_file = dataset_path / filename
 
     tasks = []
     with open(jsonl_file, "r", encoding="utf-8") as f:
@@ -254,7 +254,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default=None,
+        default='math_problems.jsonl',
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
     args = parser.parse_args()

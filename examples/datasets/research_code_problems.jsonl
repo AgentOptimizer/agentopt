@@ -1,0 +1,8 @@
+{"question": "What sorting algorithm has O(n log n) average time complexity and is not stable? Write a Python implementation.", "output": "heapsort"}
+{"question": "What Python library is most commonly used for making HTTP requests? Write a function that fetches JSON from a URL.", "output": "requests"}
+{"question": "What data structure uses LIFO ordering? Write a Python class that implements one with push, pop, and peek methods.", "output": "stack"}
+{"question": "What is the time complexity of binary search? Write a Python function that performs binary search on a sorted list.", "output": "o(log n)"}
+{"question": "What design pattern ensures a class has only one instance? Write a Python implementation of it.", "output": "singleton"}
+{"question": "What Python built-in module is used for regular expressions? Write a function that validates an email address format.", "output": "re"}
+{"question": "What algorithm finds the shortest path in a weighted graph with non-negative edges? Write a Python implementation.", "output": "dijkstra"}
+{"question": "What is the name of the technique where a function calls itself to solve smaller subproblems? Write a Python function that computes the nth Fibonacci number using it.", "output": "recursion"}

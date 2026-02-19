@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Iterable, Sequence, Tuple
+from typing import Any, Iterable, Sequence
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
@@ -16,14 +16,13 @@ from agentopt import ModelProxy, BruteForceModelSelector
 # ---------------------------------------------------------------------------
 
 
-def load_jsonl_dataset(dataset_dir: str) -> list[Tuple[dict[str, str], str]]:
+def load_dataset(dataset_dir, filename):
+    """Load JSONL dataset and return (input_data, expected_answer) tuples for Claude Agent SDK."""
     dataset_path = Path(dataset_dir)
-    jsonl_files = list(dataset_path.glob("*.jsonl"))
-    if not jsonl_files:
-        raise ValueError(f"No JSONL files found in: {dataset_dir}")
+    jsonl_file = dataset_path / filename
 
-    tasks: list[Tuple[dict[str, str], str]] = []
-    with open(jsonl_files[0], "r", encoding="utf-8") as f:
+    tasks = []
+    with open(jsonl_file, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -48,9 +47,10 @@ def math_qa_agentopt(
         "claude-3-5-haiku-latest",
         "claude-3-5-sonnet-latest",
     ),
-    dataset_dir: str = "examples",
+    dataset_dir: str = "examples/datasets",
+    dataset_file: str = "math_problems.jsonl",
 ) -> None:
-    dataset = load_jsonl_dataset(dataset_dir)
+    dataset = load_dataset(dataset_dir, filename=dataset_file)
     # Build options once with a ModelProxy so ModelSelector can hot-swap the model
     proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
 
@@ -82,8 +82,11 @@ def math_qa_agentopt(
 # ---------------------------------------------------------------------------
 
 
-def math_qa_baseline(dataset_dir: str = "examples") -> None:
-    dataset = load_jsonl_dataset(dataset_dir)
+def math_qa_baseline(
+    dataset_dir: str = "examples/datasets",
+    dataset_file: str = "math_problems.jsonl",
+) -> None:
+    dataset = load_dataset(dataset_dir, filename=dataset_file)
 
     async def _ask_async(prompt: str) -> str:
         result_text = ""

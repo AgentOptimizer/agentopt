@@ -40,10 +40,28 @@ def extract_prompt(agent_executor: Any) -> Any:
     Previously lived in ``model_selection/utils.py``; moved here to avoid a
     circular import (``model_selection`` imports from ``model_proxy``, not the
     other way around).
+
+    AgentExecutor wraps the raw RunnableSequence in a RunnableAgent adapter.
+    We unwrap one level via ``.runnable`` if present, then check ``.steps``
+    (the canonical list on RunnableSequence) as well as the legacy
+    ``.first`` / ``.middle`` / ``.last`` attributes.
     """
     chain = getattr(agent_executor, "agent", None)
     if chain is None:
         return None
+
+    # Unwrap RunnableAgent / RunnableMultiActionAgent → inner RunnableSequence.
+    if hasattr(chain, "runnable"):
+        chain = chain.runnable
+
+    # Prefer .steps (canonical RunnableSequence attribute) then fall back to
+    # the .first/.middle/.last split for older LangChain versions.
+    steps = getattr(chain, "steps", None)
+    if steps is not None:
+        for item in steps:
+            if type(item).__name__ == "ChatPromptTemplate":
+                return item
+
     for attr in ("first", "middle", "last"):
         obj = getattr(chain, attr, None)
         if obj is None:
@@ -54,6 +72,7 @@ def extract_prompt(agent_executor: Any) -> Any:
                     return item
         elif type(obj).__name__ == "ChatPromptTemplate":
             return obj
+
     return None
 
 

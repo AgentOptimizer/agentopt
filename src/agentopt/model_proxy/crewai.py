@@ -109,7 +109,9 @@ def clone_crew_agents(
     """
     from .constants import is_crewai_crew
 
-    assert is_crewai_crew(crew), f"clone_crew_agents called on non-Crew: {type(crew).__name__}"
+    assert is_crewai_crew(
+        crew
+    ), f"clone_crew_agents called on non-Crew: {type(crew).__name__}"
 
     crew_agents = crew.agents
     n_proxies = len(proxies)
@@ -118,9 +120,7 @@ def clone_crew_agents(
 
     if n_proxies == 1:
         # Shared-LLM: every sub-agent gets the same new model
-        model_name = (
-            combo[0] if isinstance(combo[0], str) else get_model_name(combo[0])
-        )
+        model_name = combo[0] if isinstance(combo[0], str) else get_model_name(combo[0])
         fresh_llm = build_crewai_llm(model_name)
         for ag in crew_agents:
             cloned_ag = ag.model_copy(update={"llm": fresh_llm}, deep=False)
@@ -134,7 +134,9 @@ def clone_crew_agents(
         # Positional mapping: proxy i → agent i
         for ag, model_spec in zip(crew_agents, combo):
             model_name = (
-                model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
+                model_spec
+                if isinstance(model_spec, str)
+                else get_model_name(model_spec)
             )
             fresh_llm = build_crewai_llm(model_name)
             cloned_ag = ag.model_copy(update={"llm": fresh_llm}, deep=False)

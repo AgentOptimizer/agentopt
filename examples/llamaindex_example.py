@@ -5,6 +5,7 @@ from pathlib import Path
 from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
 from llama_index.llms.openai import OpenAI
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -177,7 +178,10 @@ def multi_agent_multi_llm_example():
 
 
 def run_model_selection(
-    agent, llm_proxies, parallel=False, dataset_file=None,
+    agent,
+    llm_proxies,
+    parallel=False,
+    dataset_file=None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
 
@@ -244,7 +248,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default='math_problems.jsonl',
+        default="math_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
     args = parser.parse_args()
@@ -266,7 +270,8 @@ if __name__ == "__main__":
         llm_proxies = [llm_proxy]
 
     results = run_model_selection(
-        agent, llm_proxies,
+        agent,
+        llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
     )

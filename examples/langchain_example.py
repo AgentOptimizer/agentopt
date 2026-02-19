@@ -135,8 +135,11 @@ def multiagent_example():
 
 
 def run_model_selection(
-    agent_or_invoke_fn, llm_proxies, use_invoke_fn=False,
-    parallel=False, dataset_file=None,
+    agent_or_invoke_fn,
+    llm_proxies,
+    use_invoke_fn=False,
+    parallel=False,
+    dataset_file=None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
 
@@ -209,7 +212,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default='math_problems.jsonl',
+        default="math_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
     args = parser.parse_args()
@@ -226,7 +229,8 @@ if __name__ == "__main__":
     if args.example == "single":
         llm_proxy, agent_executor = result
         results = run_model_selection(
-            agent_executor, [llm_proxy],
+            agent_executor,
+            [llm_proxy],
             parallel=args.parallel,
             dataset_file=args.dataset,
         )
@@ -234,12 +238,17 @@ if __name__ == "__main__":
         # Multi-agent returns (proxies_tuple, invoke_fn)
         llm_proxies, chained_invoke = result
         if args.parallel:
-            print("Warning: parallel mode not supported for multi-agent "
-                  "(uses invoke_fn). Running sequentially.")
+            print(
+                "Warning: parallel mode not supported for multi-agent "
+                "(uses invoke_fn). Running sequentially."
+            )
         results = run_model_selection(
-            chained_invoke, list(llm_proxies),
+            chained_invoke,
+            list(llm_proxies),
             use_invoke_fn=True,
             dataset_file=args.dataset,
         )
 
-    plot_results(results, f"LangChain {label} Results", "examples/langchain_results.png")
+    plot_results(
+        results, f"LangChain {label} Results", "examples/langchain_results.png"
+    )

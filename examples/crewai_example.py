@@ -254,7 +254,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default='math_problems.jsonl',
+        default="math_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
     args = parser.parse_args()
@@ -275,7 +275,8 @@ if __name__ == "__main__":
         llm_proxies = [llm_proxy]
 
     results = run_model_selection(
-        crew, llm_proxies,
+        crew,
+        llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
     )

@@ -209,9 +209,9 @@ class BruteForceModelSelector(BaseModelSelector):
             from ..model_proxy.constants import is_crewai_crew, is_llamaindex_agent
 
             if is_crewai_crew(agent_copy):
-                from ..model_proxy.crewai import sync_crew_agents
+                from ..model_proxy.crewai import clone_crew_agents
 
-                sync_crew_agents(agent_copy, proxies, combo, self._get_model_name)
+                clone_crew_agents(agent_copy, proxies, combo, self._get_model_name)
 
             elif is_llamaindex_agent(agent_copy) and hasattr(agent_copy, "agents"):
                 from ..model_proxy.llamaindex import sync_llamaindex_workflow_agents

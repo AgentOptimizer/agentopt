@@ -11,18 +11,10 @@ import matplotlib.pyplot as plt
 from agentopt import ModelProxy, BruteForceModelSelector
 
 
-def load_dataset(dataset_dir, filename=None):
+def load_dataset(dataset_dir, filename):
     """Load JSONL dataset and return (input_data, expected_answer) tuples for LlamaIndex."""
     dataset_path = Path(dataset_dir)
-    if filename:
-        jsonl_file = dataset_path / filename
-        if not jsonl_file.exists():
-            raise ValueError(f"Dataset file not found: {jsonl_file}")
-    else:
-        jsonl_files = list(dataset_path.glob("*.jsonl"))
-        if not jsonl_files:
-            raise ValueError(f"No JSONL files found in: {dataset_dir}")
-        jsonl_file = jsonl_files[0]
+    jsonl_file = dataset_path / filename
 
     tasks = []
     with open(jsonl_file, "r", encoding="utf-8") as f:
@@ -252,7 +244,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default=None,
+        default='math_problems.jsonl',
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
     args = parser.parse_args()

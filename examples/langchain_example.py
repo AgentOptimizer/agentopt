@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from agentopt import ModelProxy, BruteForceModelSelector
 
 
-def load_dataset(dataset_dir, filename=None):
+def load_dataset(dataset_dir, filename):
     """Load JSONL dataset and return (input_data, expected_answer) tuples for LangChain."""
     dataset_path = Path(dataset_dir)
     jsonl_file = dataset_path / filename

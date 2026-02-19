@@ -1,9 +1,18 @@
-"""CrewAI-specific LLM builder and agent sync."""
+"""CrewAI-specific LLM builder, agent sync, and FrameworkAdapter."""
 
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _model_name_from_llm(llm: Any) -> Optional[str]:
+    """Extract model name string from any LLM object."""
+    from .constants import MODEL_FIELDS
+
+    return next(
+        (str(getattr(llm, f)) for f in MODEL_FIELDS if hasattr(llm, f)), None
+    )
 
 
 def build_crewai_llm(model_name: str) -> Optional[Any]:
@@ -156,3 +165,79 @@ def clone_crew_agents(
         return
 
     crew.agents = cloned_agents
+
+
+# ---------------------------------------------------------------------------
+# FrameworkAdapter
+# ---------------------------------------------------------------------------
+
+
+class CrewAIAdapter:
+    """Adapter for CrewAI ``Crew`` agents."""
+
+    invoke_method_name = "kickoff"
+
+    def detect(self, agent: Any) -> bool:
+        from .constants import is_crewai_crew
+
+        return is_crewai_crew(agent)
+
+    def get_invoke_fn(self, agent: Any) -> Callable:
+        return agent.kickoff
+
+    def register_with_proxy(
+        self, proxy: Any, agent: Any, all_proxies: List[Any]
+    ) -> None:
+        """Register closures that push model changes into the crew's sub-agents."""
+        crew_agents = agent.agents
+        n_proxies = len(all_proxies)
+        n_agents = len(crew_agents)
+
+        if n_proxies == 1:
+            # Shared-LLM: every sub-agent gets the same model.
+            def _sync(new_llm: Any, _agents: list = list(crew_agents)) -> None:
+                name = _model_name_from_llm(new_llm)
+                if name:
+                    fresh = build_crewai_llm(name)
+                    for ag in _agents:
+                        ag.llm = fresh
+
+            proxy._add_sync(_sync)
+
+        elif n_proxies == n_agents:
+            # Positional mapping: proxy i → sub-agent i.
+            idx = all_proxies.index(proxy)
+            sub_ag = crew_agents[idx]
+
+            def _sync(new_llm: Any, _ag: Any = sub_ag) -> None:
+                name = _model_name_from_llm(new_llm)
+                if name:
+                    _ag.llm = build_crewai_llm(name)
+
+            proxy._add_sync(_sync)
+
+        else:
+            logger.warning(
+                "CrewAIAdapter: cannot map %d proxies to %d crew agents — "
+                "sync not registered.",
+                n_proxies,
+                n_agents,
+            )
+
+    def clone_for_parallel(
+        self,
+        agent: Any,
+        proxies: List[Any],
+        combo: tuple,
+        get_model_name: Callable[[Any], str],
+    ) -> Any:
+        """Shallow-copy the Crew, then independently clone each sub-agent."""
+        cloned = agent.model_copy(deep=False)
+        clone_crew_agents(cloned, proxies, combo, get_model_name)
+        return cloned
+
+
+# Self-register — runs when this module is first imported.
+from .adapter import register_adapter  # noqa: E402
+
+register_adapter(CrewAIAdapter())

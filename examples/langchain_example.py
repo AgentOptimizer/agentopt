@@ -115,11 +115,10 @@ def multiagent_example():
     coder_agent = create_tool_calling_agent(coder_llm, [calculator], coder_prompt)
     coder_executor = AgentExecutor(agent=coder_agent, tools=[calculator], verbose=False)
 
-    # 5. Register executors for automatic chain rebuild on model swap
-    researcher_llm.register_langchain_executor(
-        researcher_executor, [search, wikipedia], researcher_prompt
-    )
-    coder_llm.register_langchain_executor(coder_executor, [calculator], coder_prompt)
+    # 5. Register executors for automatic chain rebuild on model swap.
+    # Framework is auto-detected; tools and prompt are extracted automatically.
+    researcher_llm.register(researcher_executor)
+    coder_llm.register(coder_executor)
 
     # 6. Custom invoke_fn that chains agents sequentially
     def chained_invoke(input_data):

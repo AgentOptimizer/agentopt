@@ -1,6 +1,7 @@
-"""OpenAI Agents SDK compatibility: ABC registration and model builder."""
+"""OpenAI Agents SDK compatibility: ABC registration, model builder, and FrameworkAdapter."""
 
-from typing import Any
+import copy
+from typing import Any, Callable, List
 
 from .constants import MODEL_FIELDS
 
@@ -64,3 +65,76 @@ def register_openai_agents_model(proxy_cls: type) -> None:
     Model.register(proxy_cls)
     proxy_cls.get_response = _get_response
     proxy_cls.stream_response = _stream_response
+
+
+# ---------------------------------------------------------------------------
+# FrameworkAdapter
+# ---------------------------------------------------------------------------
+
+
+class OpenAISDKAdapter:
+    """Adapter for OpenAI Agents SDK ``Agent`` objects.
+
+    The ABC registration and method patching happen at the class level in
+    ``register_openai_agents_model`` (called from ``model_proxy/__init__.py``),
+    so no per-instance sync is needed.  ``_get_response`` / ``_stream_response``
+    delegate to the proxy at call time, meaning model swaps take effect
+    immediately without any explicit sync callbacks.
+    """
+
+    invoke_method_name = None  # uses a custom wrapper, not a named method
+
+    def detect(self, agent: Any) -> bool:
+        module = getattr(type(agent), "__module__", "") or ""
+        return module.startswith("agents")
+
+    def get_invoke_fn(self, agent: Any) -> Callable:
+        """Return a synchronous invoke callable that runs the agent via Runner."""
+        from agents import Runner
+
+        def _invoke(input_data: Any) -> Any:
+            if isinstance(input_data, dict):
+                prompt = input_data.get("input", str(input_data))
+            else:
+                prompt = str(input_data)
+            result = Runner.run_sync(agent, prompt)
+            return result.final_output if hasattr(result, "final_output") else str(result)
+
+        return _invoke
+
+    def register_with_proxy(
+        self, proxy: Any, agent: Any, all_proxies: List[Any]
+    ) -> None:
+        # No-op: OpenAI SDK resolves the model via _get_response at call time.
+        pass
+
+    def clone_for_parallel(
+        self,
+        agent: Any,
+        proxies: List[Any],
+        combo: tuple,
+        get_model_name: Callable[[Any], str],
+    ) -> Any:
+        """Clone the Agent with a fresh concrete Model for this combination.
+
+        Bypasses the proxy entirely on the clone — assigns a real
+        ``OpenAIProvider`` Model directly so threads don't share mutable state.
+        """
+        model_spec = combo[0]
+        model_name = (
+            model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
+        )
+        fresh_model = build_openai_agents_model(model_name)
+        agent_copy = copy.copy(agent)
+        agent_copy.model = fresh_model
+        return agent_copy
+
+
+# Self-register — runs when this module is first imported (optional dep, so
+# the caller in __init__.py already wraps this in try/except).
+try:
+    from .adapter import register_adapter  # noqa: E402
+
+    register_adapter(OpenAISDKAdapter())
+except Exception:
+    pass

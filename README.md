@@ -1,6 +1,6 @@
 # AgentOpt - Optimization for AI Agents
 
-A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, and LangGraph — or any custom agent setup.
+A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, LlamaIndex, and the OpenAI Agents SDK — or any custom agent setup.
 
 > **Note: This project is in early development. APIs are subject to change.**
 
@@ -15,6 +15,9 @@ uv sync
 
 # For CrewAI support
 uv sync --extra crewai
+
+# For LlamaIndex support
+uv sync --extra llamaindex
 ```
 
 ## Quick Start
@@ -45,12 +48,12 @@ dataset = [
     ({"input": "Capital of France?"}, "Paris"),
 ]
 
-# 4. Run optimization
+# 4. Run optimization — auto-detects crew.kickoff()
 selector = ModelSelector(
     models={llm: ["openai/gpt-4o-mini", "openai/gpt-4o"]},
     eval_fn=lambda expected, actual: expected.lower() in str(actual).lower(),
     dataset=dataset,
-    agent=crew,  # auto-detects crew.kickoff()
+    agent=crew,
 )
 results = selector.select_best()
 print(results.get_best())
@@ -60,7 +63,7 @@ print(results.get_best())
 
 ```python
 from langchain_openai import ChatOpenAI
-from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import AgentExecutor, create_tool_calling_agent
 from agentopt import ModelProxy, ModelSelector
 
 # 1. Wrap the LLM
@@ -70,19 +73,72 @@ llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 agent = create_tool_calling_agent(llm, tools, prompt)
 executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
 
-# 3. Run optimization
+# 3. Run optimization — auto-detects executor.invoke()
 selector = ModelSelector(
     models={llm: ["gpt-4o-mini", "gpt-4o"]},
     eval_fn=my_eval_fn,
     dataset=dataset,
-    agent=executor,  # auto-detects executor.invoke()
+    agent=executor,
+)
+results = selector.select_best()
+```
+
+### LlamaIndex
+
+```python
+from llama_index.llms.openai import OpenAI
+from llama_index.core.agent.workflow import FunctionAgent, AgentWorkflow
+from agentopt import ModelProxy, ModelSelector
+
+# 1. Create a real LLM (ModelProxy can't be passed directly due to Pydantic v2)
+real_llm = OpenAI(model="gpt-4o-mini")
+
+# 2. Build your agent normally
+agent = FunctionAgent(
+    tools=my_tools,
+    llm=real_llm,
+    system_prompt="You are a helpful assistant.",
+)
+workflow = AgentWorkflow(agents=[agent], root_agent=agent.name)
+
+# 3. Wrap the LLM after agent creation and register
+llm = ModelProxy(real_llm)
+
+selector = ModelSelector(
+    models={llm: ["gpt-4o-mini", "gpt-4o"]},
+    eval_fn=my_eval_fn,
+    dataset=dataset,
+    agent=workflow,  # auto-detects workflow.run() (async)
+)
+results = selector.select_best()
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent
+from agents.models.openai_provider import OpenAIProvider
+from agentopt import ModelProxy, ModelSelector
+
+# 1. Wrap an OpenAI SDK model — ModelProxy is registered as a Model ABC subclass
+proxy = ModelProxy(OpenAIProvider().get_model("gpt-4o-mini"))
+
+# 2. Build your agent with the proxy as the model
+agent = Agent(name="Math QA", model=proxy, instructions="Answer math questions concisely.")
+
+# 3. Run optimization — auto-detects via Runner.run_sync()
+selector = ModelSelector(
+    models={proxy: ["gpt-4o-mini", "gpt-4o"]},
+    eval_fn=my_eval_fn,
+    dataset=dataset,
+    agent=agent,
 )
 results = selector.select_best()
 ```
 
 ### Custom Agent / Any Framework
 
-For agents that don't use `.kickoff()` or `.invoke()`, pass a custom `invoke_fn`:
+For agents that don't fit a supported framework, pass a custom `invoke_fn`:
 
 ```python
 def my_invoke(input_data):
@@ -100,6 +156,77 @@ selector = ModelSelector(
 
 ## Core Concepts
 
+### Adapter Architecture
+
+This is the internal design that makes framework auto-detection work. You don't need to understand it to use AgentOpt, but it's useful to know if you're debugging or adding a new framework.
+
+**The problem it solves:** Without adapters, every time we added a new framework (CrewAI, LangChain, LlamaIndex, etc.) we had to edit three separate files — the proxy, the selector's `__init__`, and the parallel cloning logic. All three had the same `if is_crewai: ... elif is_langchain: ...` chains. Adding framework #5 meant touching all three.
+
+**The solution:** One `FrameworkAdapter` class per framework. Each adapter answers four questions about its framework:
+
+```
+1. detect()            — Is this agent object mine?
+2. get_invoke_fn()     — How do I call the agent to get a result?
+3. register_with_proxy() — How do I wire sync callbacks so set_model() propagates?
+4. clone_for_parallel()  — How do I make a deep-safe independent copy for a thread?
+```
+
+**How it fits together at runtime:**
+
+```
+User calls: ModelSelector(agent=my_crew, ...)
+                │
+                ▼
+         get_adapter(my_crew)
+                │  iterates _REGISTRY, calls each adapter.detect()
+                │  CrewAIAdapter.detect() → type(crew).__module__.startswith("crewai") → True ✓
+                ▼
+         CrewAIAdapter
+          ├── get_invoke_fn()     → returns crew.kickoff (bound method)
+          ├── register_with_proxy() → adds sync closures to proxy._sync_callbacks
+          └── clone_for_parallel() → model_copy(deep=False) + clone_crew_agents()
+```
+
+**Self-registration:** Each framework file registers its own adapter at import time — no central list to maintain:
+
+```python
+# bottom of crewai.py
+register_adapter(CrewAIAdapter())   # runs when crewai.py is first imported
+
+# bottom of langchain.py
+register_adapter(LangChainAdapter())
+# ... etc.
+```
+
+These imports happen automatically when `agentopt` is loaded (via the `model_proxy/__init__.py` import chain), so adapters are always ready before any user code runs.
+
+**Adding a new framework** is just one new file:
+
+```python
+# model_proxy/myframework.py
+class MyFrameworkAdapter(FrameworkAdapter):
+    invoke_method_name = "run"
+
+    def detect(self, agent):
+        return type(agent).__module__.startswith("myframework")
+
+    def get_invoke_fn(self, agent):
+        return agent.run
+
+    def register_with_proxy(self, proxy, agent, all_proxies):
+        def _sync(new_llm):
+            agent.llm = new_llm          # however your framework swaps models
+        proxy._add_sync(_sync)
+
+    def clone_for_parallel(self, agent, proxies, combo, get_model_name):
+        fresh_llm = build_my_llm(get_model_name(combo[0]))
+        return agent.copy(llm=fresh_llm)  # however your framework clones
+
+register_adapter(MyFrameworkAdapter())
+```
+
+No other files need to change.
+
 ### ModelProxy
 
 A transparent wrapper around any LLM object that enables model swapping without rebuilding agents. It forwards all attribute access and method calls to the underlying model.
@@ -114,8 +241,11 @@ proxy.invoke(...)   # forwarded
 proxy.temperature   # forwarded
 
 # Swap the underlying model (by string or full object)
-proxy.set_model("gpt-4o")           # updates the model name in-place
+proxy.set_model("gpt-4o")           # rebuilds the model with the new name
 proxy.set_model(new_llm_instance)   # replaces entirely
+
+# Register an agent for automatic sync on every set_model() call
+proxy.register(my_agent)   # auto-detects framework
 
 # Inspect
 proxy.get_model()  # returns the current underlying model
@@ -128,7 +258,7 @@ Agent --> ModelProxy --> LLM (gpt-4o-mini)
                     --> LLM (gpt-4o)        # swapped, agent unchanged
 ```
 
-**String-based swapping:** When you pass a string to `set_model()`, the proxy updates the model name field on the existing model object (e.g., `.model` for CrewAI, `.model_name` for LangChain). For Pydantic-based models, it uses `model_copy()` to create an immutable update.
+**String-based swapping:** When you pass a string to `set_model()`, the proxy rebuilds the correct LLM class (`ChatOpenAI`, `ChatAnthropic`, `crewai.LLM`, etc.) based on the model name prefix. Cross-provider swaps work automatically.
 
 ### ModelSelector
 
@@ -144,6 +274,9 @@ selector = ModelSelector(
     agent=agent,         # or invoke_fn=callable
 )
 results = selector.select_best()
+
+# Parallel evaluation (runs all combinations concurrently)
+results = selector.select_best(parallel=True)
 ```
 
 **Parameters:**
@@ -153,7 +286,7 @@ results = selector.select_best()
 | `models` | `dict[ModelProxy, list]` | Maps each proxy to its candidate models (strings or objects) |
 | `eval_fn` | `(str, Any) -> bool \| float` | Compares expected answer to actual output. Returns bool or float score (higher is better) |
 | `dataset` | `list[tuple[Any, str]]` | List of `(input_data, expected_answer)` tuples. `input_data` is passed directly to the agent's invoke method |
-| `agent` | `Any` | Agent object with `.kickoff()` (CrewAI) or `.invoke()` (LangChain). Mutually exclusive with `invoke_fn` |
+| `agent` | `Any` | Agent object (CrewAI Crew, LangChain AgentExecutor, LlamaIndex AgentWorkflow, OpenAI Agents SDK Agent). Mutually exclusive with `invoke_fn` |
 | `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Mutually exclusive with `agent` |
 
 ### Multi-Agent / Multi-LLM Optimization
@@ -166,6 +299,10 @@ coder_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 
 # ... build agents with these proxies ...
 
+# Register each proxy with its executor for sync on set_model()
+researcher_llm.register(researcher_executor)
+coder_llm.register(coder_executor)
+
 selector = ModelSelector(
     models={
         researcher_llm: ["gpt-4o-mini", "gpt-4o"],
@@ -173,7 +310,7 @@ selector = ModelSelector(
     },
     eval_fn=eval_fn,
     dataset=dataset,
-    invoke_fn=my_pipeline,
+    invoke_fn=my_pipeline,  # your function that runs both agents
 )
 # Tests all 4 combinations: (mini,mini), (mini,4o), (4o,mini), (4o,4o)
 results = selector.select_best()
@@ -233,46 +370,32 @@ JSONL format:
 agentopt/
 ├── src/agentopt/
 │   ├── __init__.py              # Public API exports
-│   ├── model_proxy.py           # ModelProxy for transparent model swapping
-│   ├── model_factory.py         # create_model_from_string (LangChain model creation)
 │   ├── base_models.py           # Type aliases (EvalFn, ModelSpec, ModelsConfig)
-│   └── model_selection/
-│       ├── __init__.py          # Exports ModelSelector
-│       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
-│       └── brute_force.py       # BruteForceModelSelector (default ModelSelector)
-├── examples/
-│   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
-│   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
-│   ├── openai_sdk_example.py    # OpenAI Agents SDK with AgentOpt + baseline
-│   ├── claude_sdk_example.py    # Claude Agent SDK with AgentOpt + baseline
-│   └── math_problems.jsonl
-└── pyproject.toml
+│   ├── model_factory.py         # create_model_from_string — multi-provider LLM factory
+│   ├── model_topology.py        # Model quality/speed rankings for hill climbing
+│   └── model_proxy/
+│       ├── base.py              # ModelProxy — transparent proxy, set_model(), register()
+│       ├── adapter.py           # FrameworkAdapter ABC + registry (get_adapter, register_adapter)
+│       ├── constants.py         # Framework detection helpers + MODEL_FIELDS
+│       ├── builders.py          # Generic LLM rebuild helpers
+│       ├── crewai.py            # CrewAI support + CrewAIAdapter
+│       ├── langchain.py         # LangChain support + LangChainAdapter + extract_prompt
+│       ├── llamaindex.py        # LlamaIndex support + LlamaIndexAdapter
+│       └── openai_sdk.py        # OpenAI Agents SDK support + OpenAISDKAdapter
+└── model_selection/
+    ├── base.py                  # BaseModelSelector, ModelResult, SelectionResults
+    ├── brute_force.py           # BruteForceModelSelector (default ModelSelector)
+    ├── hill_climbing.py         # HillClimbingModelSelector (experimental)
+    └── utils.py                 # Compat re-export of extract_prompt
+
+examples/
+├── crewai_example.py            # CrewAI: single-agent, multi-agent, parallel
+├── langchain_example.py         # LangChain: single-agent, multi-agent with chaining
+├── llamaindex_example.py        # LlamaIndex: single, multi-agent, multi-LLM
+├── openai_sdk_example.py        # OpenAI Agents SDK
+└── datasets/
+    └── math_problems.jsonl
 ```
-
-## OpenAI Agents SDK / Claude Agent SDK
-
-Both SDK examples (`openai_sdk_example.py`, `claude_sdk_example.py`) follow the same pattern: load a JSONL dataset, pass a lambda as `invoke_fn` to `ModelSelector`, and let it evaluate across candidate models. No wrapper classes needed — just a `ModelProxy` and an inline `invoke_fn`.
-
-```python
-# OpenAI Agents SDK
-from agents import Agent, Runner
-from agentopt import ModelProxy, ModelSelector
-
-proxy = ModelProxy(SimpleNamespace(model="gpt-4o-mini"))
-
-selector = ModelSelector(
-    models={proxy: ["gpt-4o-mini", "gpt-4o"]},
-    eval_fn=eval_fn,
-    dataset=dataset,
-    invoke_fn=lambda input_data: Runner.run_sync(
-        Agent(name="Math QA", model=proxy.model, instructions="..."),
-        input_data["input"],
-    ).final_output,
-)
-results = selector.select_best()
-```
-
-Each file also includes a baseline function (`math_qa_baseline`) that runs the same dataset without AgentOpt for comparison.
 
 ## Environment Setup
 
@@ -280,17 +403,19 @@ Set API keys for the providers you want to use:
 
 ```bash
 export OPENAI_API_KEY=your_key_here
-```
-
-The `model_factory` module (used for LangChain string-based model creation) also supports OpenRouter as a fallback:
-
-```bash
-export OPENROUTER_API_KEY=your_key_here
+export ANTHROPIC_API_KEY=your_key_here   # for claude-* models
+export GOOGLE_API_KEY=your_key_here      # for gemini-* models
 ```
 
 Or use a `.env` file:
 ```bash
 cp .env.example .env
+```
+
+AgentOpt also supports OpenRouter as a universal fallback:
+
+```bash
+export OPENROUTER_API_KEY=your_key_here
 ```
 
 ## API Reference
@@ -300,7 +425,7 @@ cp .env.example .env
 ```python
 from agentopt import (
     # Core
-    ModelProxy,              # Transparent LLM proxy
+    ModelProxy,              # Transparent LLM proxy with auto-framework-detection
     ModelSelector,           # Brute-force model selector (default)
     BaseModelSelector,       # Abstract base for custom selectors
 

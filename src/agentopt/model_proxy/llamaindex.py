@@ -128,3 +128,107 @@ def sync_llamaindex_workflow_agents(
 
     # Replace the workflow's agents dict with independent clones
     workflow.agents = cloned_agents
+
+
+# ---------------------------------------------------------------------------
+# FrameworkAdapter
+# ---------------------------------------------------------------------------
+
+
+class LlamaIndexAdapter:
+    """Adapter for LlamaIndex ``FunctionAgent`` and ``AgentWorkflow`` agents."""
+
+    invoke_method_name = "run"
+
+    def detect(self, agent: Any) -> bool:
+        from .constants import is_llamaindex_agent
+
+        return is_llamaindex_agent(agent)
+
+    def get_invoke_fn(self, agent: Any) -> Callable:
+        """Wrap agent.run() so that the WorkflowHandler is awaited correctly.
+
+        ``inspect.iscoroutinefunction(agent.run)`` returns False due to
+        instrumentation decorators, so we use ``inspect.isawaitable()`` instead.
+        """
+        import asyncio
+        import inspect
+
+        method = agent.run
+
+        def _invoke(input_data: Any) -> Any:
+            async def _async_run() -> Any:
+                if isinstance(input_data, dict):
+                    result = method(**input_data)
+                else:
+                    result = method(input_data)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+
+            return asyncio.run(_async_run())
+
+        return _invoke
+
+    def register_with_proxy(
+        self, proxy: Any, agent: Any, all_proxies: List[Any]
+    ) -> None:
+        """Register closures that push a new LLM into LlamaIndex agents."""
+        is_workflow = hasattr(agent, "agents")  # AgentWorkflow has .agents dict
+
+        if not is_workflow:
+            # Simple FunctionAgent — direct llm assignment.
+            def _sync(new_llm: Any, _agent: Any = agent) -> None:
+                sync_llamaindex_agents([_agent], new_llm)
+
+            proxy._add_sync(_sync)
+            return
+
+        # AgentWorkflow — positional or broadcast mapping.
+        agents_dict = agent.agents
+        agent_list = list(agents_dict.values())
+        n_proxies = len(all_proxies)
+        n_agents = len(agent_list)
+
+        if n_proxies == 1:
+            def _sync(new_llm: Any, _agents: List[Any] = list(agents_dict.values())) -> None:
+                sync_llamaindex_agents(_agents, new_llm)
+
+            proxy._add_sync(_sync)
+
+        elif n_proxies == n_agents:
+            idx = all_proxies.index(proxy)
+            sub_ag = agent_list[idx]
+
+            def _sync(new_llm: Any, _ag: Any = sub_ag) -> None:
+                sync_llamaindex_agents([_ag], new_llm)
+
+            proxy._add_sync(_sync)
+
+        else:
+            logger.warning(
+                "LlamaIndexAdapter: cannot map %d proxies to %d agents — "
+                "sync not registered.",
+                n_proxies,
+                n_agents,
+            )
+
+    def clone_for_parallel(
+        self,
+        agent: Any,
+        proxies: List[Any],
+        combo: tuple,
+        get_model_name: Callable[[Any], str],
+    ) -> Any:
+        """Shallow-copy the workflow, then independently clone each sub-agent."""
+        cloned = agent.model_copy(deep=False) if isinstance(agent, BaseModel) else agent
+        if hasattr(agent, "agents"):
+            # AgentWorkflow — replace the agents dict with fresh clones.
+            sync_llamaindex_workflow_agents(cloned, proxies, combo, get_model_name)
+        return cloned
+
+
+# Self-register — runs when this module is first imported.
+from .adapter import register_adapter  # noqa: E402
+
+register_adapter(LlamaIndexAdapter())

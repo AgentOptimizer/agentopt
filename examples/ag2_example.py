@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from autogen import ConversableAgent, LLMConfig
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, ModelSelector
+from agentopt import ModelProxy, BruteForceModelSelector
 
 load_dotenv()
 
@@ -190,7 +190,7 @@ def run_model_selection(invoke_fn, llm_proxies, model_candidates=None):
         for proxy in llm_proxies
     }
 
-    selector = ModelSelector(
+    selector = BruteForceModelSelector(
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

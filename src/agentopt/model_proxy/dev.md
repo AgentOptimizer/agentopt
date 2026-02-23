@@ -175,15 +175,35 @@ No agent-side mutation is needed. The proxy is captured in a closure, so
 
 ---
 
+### 6. AG2 (AutoGen 2) — "Mutable Config Wrapper"
+
+**How it uses the LLM:**
+
+AG2's `ConversableAgent` accepts `llm_config=LLMConfig(config_list=...)` and
+validates the type. Passing `ModelProxy` as llm_config is rejected.
+
+**Mutation strategy — mutable config wrapper + closure capture:**
+
+Use a small wrapper object that holds `config_list`; the wrapper exposes a
+`model` property that reads/writes `config_list[0]['model']`. ModelProxy wraps
+this wrapper. Agents receive `LLMConfig(config_list=wrapper.config_list)`, so
+when the proxy updates the wrapper's model, the next `agent.run()` uses the new
+model. No agent registration or sync — invoke_fn captures the proxy and runs
+the agent inside the closure.
+
+**Key files:** `model_proxy/ag2.py` (`AG2ConfigWrapper`, `create_single_agent_proxy_and_invoke`, `create_multi_agent_proxies_and_invoke`)
+
+---
+
 ## Why So Many Mutations?
 
 Each framework makes different architectural choices along three axes:
 
-| Decision | CrewAI | LangChain | LlamaIndex | OpenAI SDK | Claude SDK |
-|----------|--------|-----------|------------|------------|------------|
-| **When is the LLM bound?** | Agent init (copied) | Chain build (frozen) | Agent init (stored) | Runtime (interface) | Query time (passed) |
-| **Is the binding mutable?** | Yes (`agent.llm =`) | No (chain is immutable) | Yes (`agent.llm =`) | N/A (duck-typed) | N/A (no binding) |
-| **Type validation?** | Loose | Loose | Strict Pydantic | `isinstance` ABC check | None |
+| Decision | CrewAI | LangChain | LlamaIndex | OpenAI SDK | Claude SDK | AG2 |
+|----------|--------|-----------|------------|------------|------------|-----|
+| **When is the LLM bound?** | Agent init (copied) | Chain build (frozen) | Agent init (stored) | Runtime (interface) | Query time (passed) | Agent init (config ref) |
+| **Is the binding mutable?** | Yes (`agent.llm =`) | No (chain is immutable) | Yes (`agent.llm =`) | N/A (duck-typed) | N/A (no binding) | Yes (wrapper mutates) |
+| **Type validation?** | Loose | Loose | Strict Pydantic | `isinstance` ABC check | None | Rejects proxy |
 
 These three axes create a matrix of incompatible strategies:
 
@@ -238,5 +258,6 @@ model_proxy/
 ├── crewai.py        # build_crewai_llm, sync_crew_agents, clone_crew_agents
 ├── langchain.py     # build_langchain_llm, sync_langchain_executor
 ├── llamaindex.py    # sync_llamaindex_agents, _build_llamaindex_llm
-└── openai_sdk.py    # register_openai_agents_model, _get_response, _stream_response
+├── openai_sdk.py    # register_openai_agents_model, _get_response, _stream_response
+└── ag2.py           # AG2ConfigWrapper, create_single_agent_proxy_and_invoke, create_multi_agent_proxies_and_invoke
 ```

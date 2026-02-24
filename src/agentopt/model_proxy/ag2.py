@@ -5,6 +5,10 @@ ConversableAgent._validate_llm_config to accept ModelProxy and
 silently convert LLMConfig → AG2ConfigWrapper in ModelProxy.__init__
 so that set_model() can update the config in place.
 
+Additionally, ConversableAgent.__init__ is patched to auto-register
+agents with the proxy, so _sync_registered_frameworks() can recreate
+the LLMConfig and force client recreation on set_model().
+
 This is the same registration pattern used for OpenAI Agents SDK
 in openai_sdk.py.
 """
@@ -12,7 +16,7 @@ in openai_sdk.py.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, List
 
 
 class AG2ConfigWrapper:
@@ -57,6 +61,8 @@ def register_ag2_llm_config(proxy_cls: type) -> None:
     2. Patches ``ConversableAgent._validate_llm_config`` to accept
        ModelProxy and return a linked LLMConfig whose config_list is
        shared by reference with the wrapper.
+    3. Patches ``ConversableAgent.__init__`` to auto-register agents
+       with the proxy for explicit sync on ``set_model()``.
 
     Called at import time from ``model_proxy/__init__.py``.
     """
@@ -95,6 +101,41 @@ def register_ag2_llm_config(proxy_cls: type) -> None:
         return original_validate(cls, llm_config)
 
     ConversableAgent._validate_llm_config = _patched_validate
+
+    # --- Patch ConversableAgent.__init__ for auto-registration ---
+    original_agent_init = ConversableAgent.__init__
+
+    def _patched_agent_init(self_agent: Any, *args: Any, **kwargs: Any) -> None:
+        llm_config_arg = kwargs.get("llm_config")
+        original_agent_init(self_agent, *args, **kwargs)
+        # Auto-register agent with the proxy so _sync_registered_frameworks
+        # can recreate LLMConfig + force client recreation on set_model().
+        if isinstance(llm_config_arg, proxy_cls):
+            ag2_agents = object.__getattribute__(llm_config_arg, "_ag2_agents")
+            if self_agent not in ag2_agents:
+                ag2_agents.append(self_agent)
+
+    ConversableAgent.__init__ = _patched_agent_init
+
+
+def sync_ag2_agents(agents: List[Any], wrapper: Any) -> None:
+    """Recreate LLMConfig for registered AG2 agents from the updated wrapper.
+
+    Called by ``ModelProxy._sync_registered_frameworks()`` after
+    ``set_model()`` has already mutated the wrapper's config_list.
+    This ensures AG2 agents pick up the change even if they cache
+    an ``OpenAIWrapper`` client at init time.
+    """
+    from autogen import LLMConfig
+
+    if not isinstance(wrapper, AG2ConfigWrapper):
+        return
+    new_config = LLMConfig(config_list=wrapper.config_list)
+    for agent in agents:
+        agent.llm_config = new_config
+        # Force client recreation if AG2 caches it
+        if hasattr(agent, "client"):
+            agent.client = None
 
 
 def extract_ag2_content(response: Any) -> str:

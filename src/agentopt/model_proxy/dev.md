@@ -184,9 +184,9 @@ validates the type via `_validate_llm_config()` → `LLMConfig.ensure_config()`.
 `LLMConfig` is a standalone class (not ABC, not Pydantic), so virtual subclass
 registration is not possible.
 
-**Mutation strategy — registration + patching (like OpenAI SDK):**
+**Mutation strategy — registration + patching + agent sync:**
 
-`register_ag2_llm_config(ModelProxy)` is called at import time and applies two
+`register_ag2_llm_config(ModelProxy)` is called at import time and applies three
 patches:
 
 1. **`ModelProxy.__init__`** — detects LLMConfig input and silently converts it
@@ -195,7 +195,15 @@ patches:
 
 2. **`ConversableAgent._validate_llm_config`** — detects ModelProxy and creates
    a real `LLMConfig(config_list=wrapper.config_list)` that shares the mutable
-   `config_list` by reference with the wrapper. Mutations propagate automatically.
+   `config_list` by reference with the wrapper.
+
+3. **`ConversableAgent.__init__`** — auto-registers the agent with the proxy
+   when `llm_config=proxy` is passed. This allows `_sync_registered_frameworks()`
+   to explicitly sync the agent on `set_model()`.
+
+On `set_model()`, `sync_ag2_agents()` recreates the `LLMConfig` from the
+wrapper's updated `config_list` and injects it into each registered agent,
+also forcing client recreation if AG2 caches an `OpenAIWrapper` at init time.
 
 This gives users a native-feeling API:
 
@@ -203,13 +211,14 @@ This gives users a native-feeling API:
 llm_config = LLMConfig(api_type="openai", model="gpt-4o-mini", api_key=...)
 proxy = ModelProxy(llm_config)
 agent = ConversableAgent(name="...", llm_config=proxy)
+# Agent is auto-registered — no explicit registration call needed.
 ```
 
 The selector auto-detects AG2 agents via `is_ag2_agent()` and wraps `.run()`
 with `_make_ag2_invoke_fn()`, which handles the `message=` parameter and
 response content extraction via `extract_ag2_content()`.
 
-**Key files:** `model_proxy/ag2.py` (`AG2ConfigWrapper`, `register_ag2_llm_config`, `extract_ag2_content`), `examples/ag2_example.py` (agent definitions)
+**Key files:** `model_proxy/ag2.py` (`AG2ConfigWrapper`, `register_ag2_llm_config`, `sync_ag2_agents`, `extract_ag2_content`), `examples/ag2_example.py` (agent definitions)
 
 ---
 

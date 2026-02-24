@@ -19,6 +19,7 @@ from .utils import extract_prompt
 from ..model_proxy.constants import (
     AGENT_LLM_ATTRS,
     MODEL_FIELDS,
+    is_ag2_agent,
     is_crewai_crew,
     is_langchain_executor,
     is_llamaindex_agent,
@@ -140,6 +141,11 @@ class BaseModelSelector(ABC):
             self.invoke_fn = agent.invoke
             self.is_async = False
             self._invoke_method_name = "invoke"
+        elif is_ag2_agent(agent):
+            # AG2 agents use .run(message=...) with different signature than LlamaIndex
+            self.invoke_fn = self._make_ag2_invoke_fn(agent)
+            self.is_async = False
+            self._invoke_method_name = "run"
         elif hasattr(agent, "run"):
             # LlamaIndex agents use .run() — returns a coroutine/WorkflowHandler
             # that must be awaited, but iscoroutinefunction returns False due to
@@ -271,6 +277,24 @@ class BaseModelSelector(ABC):
             f"Cannot create variant of {type(original_llm).__name__}: "
             f"no supported model field found (checked: {MODEL_FIELDS})"
         )
+
+    @staticmethod
+    def _make_ag2_invoke_fn(agent: Any) -> Callable:
+        """Create an invocation callable for an AG2 ConversableAgent.
+
+        AG2's .run() takes message= (not **kwargs) and returns a response
+        object that needs event consumption and content extraction.
+        """
+        from ..model_proxy.ag2 import extract_ag2_content
+
+        def _invoke(input_data: Any) -> str:
+            message = (
+                input_data["input"] if isinstance(input_data, dict) else str(input_data)
+            )
+            response = agent.run(message=message, max_turns=1, user_input=False)
+            return extract_ag2_content(response)
+
+        return _invoke
 
     @staticmethod
     def _make_invoke_fn(agent_copy: Any, method_name: str, is_async: bool) -> Callable:

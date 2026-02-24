@@ -97,7 +97,7 @@ def register_ag2_llm_config(proxy_cls: type) -> None:
             wrapper = object.__getattribute__(llm_config, "_optmodel")
             if isinstance(wrapper, AG2ConfigWrapper):
                 # Create LLMConfig that shares config_list with wrapper
-                return LLMConfig(config_list=wrapper.config_list)
+                return LLMConfig(*wrapper.config_list)
         return original_validate(cls, llm_config)
 
     ConversableAgent._validate_llm_config = _patched_validate
@@ -130,12 +130,12 @@ def sync_ag2_agents(agents: List[Any], wrapper: Any) -> None:
 
     if not isinstance(wrapper, AG2ConfigWrapper):
         return
-    new_config = LLMConfig(config_list=wrapper.config_list)
+    new_config = LLMConfig(*wrapper.config_list)
     for agent in agents:
         agent.llm_config = new_config
         # Force client recreation if AG2 caches it
-        if hasattr(agent, "client"):
-            agent.client = None
+        # Recreate client from new config (setting to None silently disables LLM)
+        agent.client = agent._create_client(new_config)
 
 
 def extract_ag2_content(response: Any) -> str:

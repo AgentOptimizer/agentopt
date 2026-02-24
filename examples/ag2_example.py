@@ -45,9 +45,7 @@ def eval_fn(expected, actual):
 def single_agent_example():
     """Single AG2 agent — one proxy, selector auto-detects .run()."""
     llm_config = LLMConfig(
-        api_type="openai",
-        model="gpt-4o-mini",
-        api_key=os.getenv("OPENAI_API_KEY"),
+        {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
     )
     proxy = ModelProxy(llm_config)
 
@@ -64,9 +62,7 @@ def single_agent_example():
 def multiagent_example():
     """Multi-agent (shared LLM) — researcher + coder with a single proxy."""
     llm_config = LLMConfig(
-        api_type="openai",
-        model="gpt-4o-mini",
-        api_key=os.getenv("OPENAI_API_KEY"),
+        {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
     )
     proxy = ModelProxy(llm_config)
 
@@ -103,14 +99,10 @@ def multiagent_example():
 def multiagent_multillm_example():
     """Multi-agent (separate LLMs) — independent proxy per agent."""
     researcher_config = LLMConfig(
-        api_type="openai",
-        model="gpt-4o-mini",
-        api_key=os.getenv("OPENAI_API_KEY"),
+        {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
     )
     coder_config = LLMConfig(
-        api_type="openai",
-        model="gpt-4o-mini",
-        api_key=os.getenv("OPENAI_API_KEY"),
+        {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
     )
     researcher_proxy = ModelProxy(researcher_config)
     coder_proxy = ModelProxy(coder_config)

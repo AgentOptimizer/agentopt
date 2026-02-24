@@ -291,7 +291,7 @@ class BaseModelSelector(ABC):
             message = (
                 input_data["input"] if isinstance(input_data, dict) else str(input_data)
             )
-            response = agent.run(message=message, max_turns=2, user_input=False)
+            response = agent.run(message=message, max_turns=1, user_input=False)
             return extract_ag2_content(response)
 
         return _invoke

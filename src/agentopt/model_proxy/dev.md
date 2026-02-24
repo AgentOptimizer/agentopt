@@ -208,7 +208,7 @@ also forcing client recreation if AG2 caches an `OpenAIWrapper` at init time.
 This gives users a native-feeling API:
 
 ```python
-llm_config = LLMConfig(api_type="openai", model="gpt-4o-mini", api_key=...)
+llm_config = LLMConfig({"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")})
 proxy = ModelProxy(llm_config)
 agent = ConversableAgent(name="...", llm_config=proxy)
 # Agent is auto-registered — no explicit registration call needed.

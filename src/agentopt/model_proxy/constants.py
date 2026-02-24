@@ -56,6 +56,12 @@ def is_crewai_llm(llm: Any) -> bool:
     return module.startswith("crewai")
 
 
+def is_llamaindex_llm(llm: Any) -> bool:
+    """Check if an LLM object is from LlamaIndex."""
+    module = getattr(type(llm), "__module__", "") or ""
+    return module.startswith("llama_index")
+
+
 def is_langchain_llm(llm: Any) -> bool:
     """Check if an LLM object is from LangChain."""
     module = getattr(type(llm), "__module__", "") or ""

@@ -33,6 +33,7 @@ class ModelProxy:
         object.__setattr__(self, "_crewai_agents", [])
         object.__setattr__(self, "_langchain_executors", [])
         object.__setattr__(self, "_llamaindex_agents", [])
+        object.__setattr__(self, "_ag2_agents", [])
 
     def register_crewai_agents(self, agents: List[Any]) -> None:
         """Register CrewAI agents whose LLM will be updated automatically on set_model()."""
@@ -48,6 +49,10 @@ class ModelProxy:
     def register_llamaindex_agents(self, agents: List[Any]) -> None:
         """Register LlamaIndex agents whose LLM will be updated automatically on set_model()."""
         object.__setattr__(self, "_llamaindex_agents", list(agents))
+
+    def register_ag2_agents(self, agents: List[Any]) -> None:
+        """Register AG2 agents whose LLMConfig will be updated automatically on set_model()."""
+        object.__setattr__(self, "_ag2_agents", list(agents))
 
     def set_model(self, model: Any) -> None:
         """Swap the underlying model. Accepts a model object or, in limited cases, a string name."""
@@ -133,6 +138,13 @@ class ModelProxy:
 
             sync_llamaindex_agents(llamaindex_agents, model)
 
+        # AG2 agent sync
+        ag2_agents = object.__getattribute__(self, "_ag2_agents")
+        if ag2_agents:
+            from .ag2 import sync_ag2_agents
+
+            sync_ag2_agents(ag2_agents, model)
+
     def get_model(self) -> Any:
         """Get the underlying model."""
         return object.__getattribute__(self, "_optmodel")
@@ -149,6 +161,7 @@ class ModelProxy:
             "_crewai_agents",
             "_langchain_executors",
             "_llamaindex_agents",
+            "_ag2_agents",
         ):
             object.__setattr__(self, name, value)
         else:

@@ -12,6 +12,31 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "ag2"
+version = "0.10.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "diskcache" },
+    { name = "docker" },
+    { name = "httpx" },
+    { name = "packaging" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "termcolor" },
+    { name = "tiktoken" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/b1/813195b7c30e39e5abcd3f00d163ba7d4a15fb82078165a8311c9fa85c59/ag2-0.10.5.tar.gz", hash = "sha256:692d83b87d658c56f624cf66351a97c9018d87592ec6807041e62ee3eff6f524", size = 3534972, upload-time = "2026-02-01T08:22:52.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/92/f8fe1625c956781a0181185f7d3d08519e235949b58d6894926173d69be9/ag2-0.10.5-py3-none-any.whl", hash = "sha256:e2175a0b86fea20313fa390dd03ceb4865f13592afcd6f5c6a0f5b762f0a6797", size = 962012, upload-time = "2026-02-01T08:22:49.89Z" },
+]
+
+[package.optional-dependencies]
+openai = [
+    { name = "openai" },
+]
+
+[[package]]
 name = "agentopt"
 version = "0.1.0"
 source = { editable = "." }
@@ -35,6 +60,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+ag2 = [
+    { name = "ag2", extra = ["openai"] },
+]
 crewai = [
     { name = "crewai" },
     { name = "crewai-tools" },
@@ -58,6 +86,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ag2", extras = ["openai"], marker = "extra == 'ag2'", specifier = ">=0.6.0" },
     { name = "anthropic", specifier = ">=0.32.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "crewai", marker = "extra == 'crewai'", specifier = ">=0.1.0" },
@@ -80,7 +109,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "wikipedia", specifier = ">=1.4.0" },
 ]
-provides-extras = ["dev", "crewai", "llamaindex"]
+provides-extras = ["dev", "crewai", "ag2", "llamaindex"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4723,6 +4752,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0a/d4/2b0cd0fe285e14b36db076e78c93766ff1d529d70408bd1d2a5a84f1d929/tenacity-9.1.2.tar.gz", hash = "sha256:1169d376c297e7de388d18b4481760d478b0e99a777cad3a9c86e556f4b697cb", size = 48036, upload-time = "2025-04-02T08:25:09.966Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/30/643397144bfbfec6f6ef821f36f33e57d35946c44a2352d3c9f0ae847619/tenacity-9.1.2-py3-none-any.whl", hash = "sha256:f77bf36710d8b73a50b2dd155c97b870017ad21afe6ab300326b0371b3b05138", size = 28248, upload-time = "2025-04-02T08:25:07.678Z" },
+]
+
+[[package]]
+name = "termcolor"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/79/cf31d7a93a8fdc6aa0fbb665be84426a8c5a557d9240b6239e9e11e35fc5/termcolor-3.3.0.tar.gz", hash = "sha256:348871ca648ec6a9a983a13ab626c0acce02f515b9e1983332b17af7979521c5", size = 14434, upload-time = "2025-12-29T12:55:21.882Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/d1/8bb87d21e9aeb323cc03034f5eaf2c8f69841e40e4853c2627edf8111ed3/termcolor-3.3.0-py3-none-any.whl", hash = "sha256:cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5", size = 7734, upload-time = "2025-12-29T12:55:20.718Z" },
 ]
 
 [[package]]

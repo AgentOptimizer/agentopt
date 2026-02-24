@@ -2,7 +2,8 @@
 
 from typing import Any, Optional
 
-from .constants import is_crewai_llm, is_langchain_llm
+from .ag2 import AG2ConfigWrapper
+from .constants import is_crewai_llm, is_langchain_llm, is_llamaindex_llm
 from .crewai import build_crewai_llm
 from .langchain import build_langchain_llm
 
@@ -26,5 +27,13 @@ def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
 
     if is_langchain_llm(current_llm):
         return build_langchain_llm(model_name)
+
+    if is_llamaindex_llm(current_llm):
+        from .llamaindex import _build_llamaindex_llm
+
+        return _build_llamaindex_llm(model_name, current_llm)
+
+    if isinstance(current_llm, AG2ConfigWrapper):
+        return AG2ConfigWrapper(model_name)
 
     return None

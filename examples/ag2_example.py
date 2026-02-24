@@ -83,15 +83,16 @@ def multiagent_example():
     def invoke_fn(input_data):
         question = input_data["input"]
         research_output = extract_ag2_content(
-            researcher.run(message=question, max_turns=2, user_input=False)
+            researcher.run(message=question, max_turns=1, user_input=False)
         )
-        return extract_ag2_content(
+        coder_output = extract_ag2_content(
             coder.run(
                 message=f"Context: {research_output}\n\nTask: {question}",
-                max_turns=2,
+                max_turns=1,
                 user_input=False,
             )
         )
+        return coder_output
 
     return proxy, invoke_fn
 
@@ -124,15 +125,16 @@ def multiagent_multillm_example():
     def invoke_fn(input_data):
         question = input_data["input"]
         research_output = extract_ag2_content(
-            researcher.run(message=question, max_turns=2, user_input=False)
+            researcher.run(message=question, max_turns=1, user_input=False)
         )
-        return extract_ag2_content(
+        coder_output = extract_ag2_content(
             coder.run(
                 message=f"Context: {research_output}\n\nTask: {question}",
-                max_turns=2,
+                max_turns=1,
                 user_input=False,
             )
         )
+        return coder_output
 
     return (researcher_proxy, coder_proxy), invoke_fn
 

@@ -28,7 +28,7 @@ class AG2ConfigWrapper:
     propagate to the agent automatically.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini"):
+    def __init__(self, model: str) -> None:
         self.config_list = [
             {
                 "api_type": "openai",
@@ -75,12 +75,13 @@ def register_ag2_llm_config(proxy_cls: type) -> None:
         if _is_ag2_llm_config(initial_model):
             # Extract model name from the LLMConfig
             config_list = list(initial_model.config_list)
-            if config_list:
-                first = config_list[0]
-                cfg = first if isinstance(first, dict) else first.model_dump()
-                model_name = cfg.get("model", "gpt-4o-mini")
-            else:
-                model_name = "gpt-4o-mini"
+            if not config_list:
+                raise ValueError("LLMConfig has an empty config_list")
+            first = config_list[0]
+            cfg = first if isinstance(first, dict) else first.model_dump()
+            model_name = cfg.get("model")
+            if not model_name:
+                raise ValueError("LLMConfig entry missing 'model' key")
             wrapper = AG2ConfigWrapper(model_name)
             original_init(self, wrapper)
         else:

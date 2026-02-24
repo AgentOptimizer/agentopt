@@ -1,33 +1,27 @@
-"""
-AG2 (AutoGen 2) support for ModelProxy.
+"""AG2 (AutoGen 2) support for ModelProxy.
 
-AG2 validates llm_config and rejects ModelProxy, so we use a mutable config
-wrapper that ModelProxy updates in place. No agent registration or sync is
-needed — invoke_fn captures the proxy and agents use LLMConfig(config_list=wrapper.config_list).
+AG2 validates llm_config and rejects ModelProxy, so we patch
+ConversableAgent._validate_llm_config to accept ModelProxy and
+silently convert LLMConfig → AG2ConfigWrapper in ModelProxy.__init__
+so that set_model() can update the config in place.
+
+This is the same registration pattern used for OpenAI Agents SDK
+in openai_sdk.py.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, List, Tuple
-
-from .base import ModelProxy
-
-# Optional: autogen is required for AG2
-try:
-    from autogen import ConversableAgent, LLMConfig
-except ImportError as e:
-    raise ImportError(
-        "AG2 support requires the autogen package. Install with: pip install autogen"
-    ) from e
+from typing import Any
 
 
 class AG2ConfigWrapper:
-    """
-    Mutable wrapper for AG2 LLMConfig. AG2 validates llm_config and rejects
-    ModelProxy, so we use a real LLMConfig backed by mutable config_list.
-    ModelProxy wraps this wrapper and updates config_list[0]['model'] when
-    set_model() is called.
+    """Mutable wrapper around AG2's config_list.
+
+    Exposes a ``model`` property so ModelProxy.set_model() can find and
+    update the model name.  The config_list is shared by reference with
+    the LLMConfig created during validation, so in-place mutations
+    propagate to the agent automatically.
     """
 
     def __init__(self, model: str = "gpt-4o-mini"):
@@ -48,13 +42,67 @@ class AG2ConfigWrapper:
         self.config_list[0]["model"] = value
 
 
-def _run_agent_and_get_content(agent: ConversableAgent, message: str) -> str:
-    """Run agent.run() and return the last message content or summary."""
-    response = agent.run(
-        message=message,
-        max_turns=2,
-        user_input=False,
-    )
+def _is_ag2_llm_config(obj: Any) -> bool:
+    """Check if an object is an AG2 LLMConfig."""
+    module = getattr(type(obj), "__module__", "") or ""
+    return module.startswith("autogen") and type(obj).__name__ == "LLMConfig"
+
+
+def register_ag2_llm_config(proxy_cls: type) -> None:
+    """Register *proxy_cls* to work transparently with AG2's LLMConfig.
+
+    1. Patches ``ModelProxy.__init__`` to silently convert LLMConfig →
+       AG2ConfigWrapper so ``set_model()`` works via the wrapper's
+       ``model`` property.
+    2. Patches ``ConversableAgent._validate_llm_config`` to accept
+       ModelProxy and return a linked LLMConfig whose config_list is
+       shared by reference with the wrapper.
+
+    Called at import time from ``model_proxy/__init__.py``.
+    """
+    from autogen import ConversableAgent, LLMConfig
+
+    # --- Patch ModelProxy.__init__ ---
+    original_init = proxy_cls.__init__
+
+    def _patched_init(self: Any, initial_model: Any) -> None:
+        if _is_ag2_llm_config(initial_model):
+            # Extract model name from the LLMConfig
+            config_list = list(initial_model.config_list)
+            if config_list:
+                first = config_list[0]
+                cfg = first if isinstance(first, dict) else first.model_dump()
+                model_name = cfg.get("model", "gpt-4o-mini")
+            else:
+                model_name = "gpt-4o-mini"
+            wrapper = AG2ConfigWrapper(model_name)
+            original_init(self, wrapper)
+        else:
+            original_init(self, initial_model)
+
+    proxy_cls.__init__ = _patched_init
+
+    # --- Patch ConversableAgent._validate_llm_config ---
+    original_validate = ConversableAgent._validate_llm_config.__func__
+
+    @classmethod  # type: ignore[misc]
+    def _patched_validate(cls: type, llm_config: Any) -> Any:
+        if isinstance(llm_config, proxy_cls):
+            wrapper = object.__getattribute__(llm_config, "_optmodel")
+            if isinstance(wrapper, AG2ConfigWrapper):
+                # Create LLMConfig that shares config_list with wrapper
+                return LLMConfig(config_list=wrapper.config_list)
+        return original_validate(cls, llm_config)
+
+    ConversableAgent._validate_llm_config = _patched_validate
+
+
+def extract_ag2_content(response: Any) -> str:
+    """Extract text content from an AG2 agent response.
+
+    AG2's agent.run() returns a response object whose events must be consumed
+    before the summary/messages are available.
+    """
     for _ in response.events:
         pass
     if hasattr(response, "summary") and response.summary:
@@ -64,72 +112,3 @@ def _run_agent_and_get_content(agent: ConversableAgent, message: str) -> str:
         content = getattr(last_msg, "content", None) or str(last_msg)
         return content
     return ""
-
-
-def create_single_agent_proxy_and_invoke(
-    default_model: str = "gpt-4o-mini",
-    system_message: str = "You are a helpful math assistant. Answer questions concisely with the final numerical answer.",
-) -> Tuple[ModelProxy, Callable[[Any], str]]:
-    """
-    Create a single AG2 agent wired for model selection.
-
-    Returns:
-        (proxy, invoke_fn). Use invoke_fn(input_data) with input_data["input"] as the user message.
-        BruteForceModelSelector will call proxy.set_model() before each invoke.
-    """
-    wrapper = AG2ConfigWrapper(default_model)
-    llm_config = LLMConfig(config_list=wrapper.config_list)
-    proxy = ModelProxy(wrapper)
-
-    agent = ConversableAgent(
-        name="math_assistant",
-        system_message=system_message,
-        llm_config=llm_config,
-        human_input_mode="NEVER",
-    )
-
-    def invoke_fn(input_data: Any) -> str:
-        return _run_agent_and_get_content(agent, input_data["input"])
-
-    return proxy, invoke_fn
-
-
-def create_multi_agent_proxies_and_invoke(
-    default_model: str = "gpt-4o-mini",
-    researcher_system_message: str = "You are a research assistant. Find and summarize information.",
-    coder_system_message: str = "You are a coding assistant. Write efficient code based on research.",
-) -> Tuple[Tuple[ModelProxy, ModelProxy], Callable[[Any], str]]:
-    """
-    Create a two-agent AG2 setup (researcher + coder) with separate proxies for model selection.
-
-    Returns:
-        ((researcher_proxy, coder_proxy), invoke_fn). BruteForceModelSelector can optimize
-        each proxy independently.
-    """
-    config_research = AG2ConfigWrapper(default_model)
-    config_coder = AG2ConfigWrapper(default_model)
-    researcher_proxy = ModelProxy(config_research)
-    coder_proxy = ModelProxy(config_coder)
-
-    researcher = ConversableAgent(
-        name="researcher",
-        system_message=researcher_system_message,
-        llm_config=LLMConfig(config_list=config_research.config_list),
-        human_input_mode="NEVER",
-    )
-
-    coder = ConversableAgent(
-        name="coder",
-        system_message=coder_system_message,
-        llm_config=LLMConfig(config_list=config_coder.config_list),
-        human_input_mode="NEVER",
-    )
-
-    def invoke_fn(input_data: Any) -> str:
-        question = input_data["input"]
-        research_output = _run_agent_and_get_content(researcher, question)
-        return _run_agent_and_get_content(
-            coder, f"Context: {research_output}\n\nTask: {question}"
-        )
-
-    return (researcher_proxy, coder_proxy), invoke_fn

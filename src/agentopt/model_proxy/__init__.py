@@ -10,4 +10,12 @@ except Exception:
     # Swallow any optional-dep issues (e.g., OpenAI Agents SDK pulling old TF).
     pass
 
+try:
+    from .ag2 import register_ag2_llm_config
+
+    register_ag2_llm_config(ModelProxy)
+except Exception:
+    # Swallow any optional-dep issues (autogen not installed).
+    pass
+
 __all__ = ["ModelProxy"]

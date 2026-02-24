@@ -175,23 +175,41 @@ No agent-side mutation is needed. The proxy is captured in a closure, so
 
 ---
 
-### 6. AG2 (AutoGen 2) — "Mutable Config Wrapper"
+### 6. AG2 (AutoGen 2) — "Registration + Patching"
 
 **How it uses the LLM:**
 
 AG2's `ConversableAgent` accepts `llm_config=LLMConfig(config_list=...)` and
-validates the type. Passing `ModelProxy` as llm_config is rejected.
+validates the type via `_validate_llm_config()` → `LLMConfig.ensure_config()`.
+`LLMConfig` is a standalone class (not ABC, not Pydantic), so virtual subclass
+registration is not possible.
 
-**Mutation strategy — mutable config wrapper + closure capture:**
+**Mutation strategy — registration + patching (like OpenAI SDK):**
 
-Use a small wrapper object that holds `config_list`; the wrapper exposes a
-`model` property that reads/writes `config_list[0]['model']`. ModelProxy wraps
-this wrapper. Agents receive `LLMConfig(config_list=wrapper.config_list)`, so
-when the proxy updates the wrapper's model, the next `agent.run()` uses the new
-model. No agent registration or sync — invoke_fn captures the proxy and runs
-the agent inside the closure.
+`register_ag2_llm_config(ModelProxy)` is called at import time and applies two
+patches:
 
-**Key files:** `model_proxy/ag2.py` (`AG2ConfigWrapper`, `create_single_agent_proxy_and_invoke`, `create_multi_agent_proxies_and_invoke`)
+1. **`ModelProxy.__init__`** — detects LLMConfig input and silently converts it
+   to an internal `AG2ConfigWrapper` that has a `model` property for
+   `set_model()` to update.
+
+2. **`ConversableAgent._validate_llm_config`** — detects ModelProxy and creates
+   a real `LLMConfig(config_list=wrapper.config_list)` that shares the mutable
+   `config_list` by reference with the wrapper. Mutations propagate automatically.
+
+This gives users a native-feeling API:
+
+```python
+llm_config = LLMConfig(api_type="openai", model="gpt-4o-mini", api_key=...)
+proxy = ModelProxy(llm_config)
+agent = ConversableAgent(name="...", llm_config=proxy)
+```
+
+The selector auto-detects AG2 agents via `is_ag2_agent()` and wraps `.run()`
+with `_make_ag2_invoke_fn()`, which handles the `message=` parameter and
+response content extraction via `extract_ag2_content()`.
+
+**Key files:** `model_proxy/ag2.py` (`AG2ConfigWrapper`, `register_ag2_llm_config`, `extract_ag2_content`), `examples/ag2_example.py` (agent definitions)
 
 ---
 
@@ -259,5 +277,5 @@ model_proxy/
 ├── langchain.py     # build_langchain_llm, sync_langchain_executor
 ├── llamaindex.py    # sync_llamaindex_agents, _build_llamaindex_llm
 ├── openai_sdk.py    # register_openai_agents_model, _get_response, _stream_response
-└── ag2.py           # AG2ConfigWrapper, create_single_agent_proxy_and_invoke, create_multi_agent_proxies_and_invoke
+└── ag2.py           # AG2ConfigWrapper, register_ag2_llm_config, extract_ag2_content
 ```

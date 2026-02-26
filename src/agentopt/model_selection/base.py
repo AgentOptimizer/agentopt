@@ -85,6 +85,87 @@ class SelectionResults(BaseModel):
             for result in self.results:
                 writer.writerow(result.model_dump())
 
+    def __str__(self) -> str:
+        if not self.results:
+            return "No results."
+
+        # Deduplicate by model_name, preferring entries with is_best=True.
+        seen: Dict[str, ModelResult] = {}
+        for r in self.results:
+            if r.model_name not in seen or (
+                r.is_best and not seen[r.model_name].is_best
+            ):
+                seen[r.model_name] = r
+        unique = list(seen.values())
+
+        # Sort: best accuracy first, ties broken by lowest latency.
+        unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+
+        # Format helpers.
+        def fmt_acc(v: float) -> str:
+            return f"{v:.2%}"
+
+        def fmt_lat(v: float) -> str:
+            return f"{v:.2f}s"
+
+        # Compute column widths.
+        rank_h, model_h, acc_h, lat_h = "Rank", "Model", "Accuracy", "Latency"
+        rank_w = max(len(rank_h), len(str(len(unique))))
+        model_w = max(len(model_h), *(len(r.model_name) for r in unique))
+        acc_w = max(len(acc_h), *(len(fmt_acc(r.accuracy)) for r in unique))
+        lat_w = max(len(lat_h), *(len(fmt_lat(r.latency_seconds)) for r in unique))
+
+        # Row builder.
+        marker = ">>>"
+        pad = " " * len(marker)
+
+        def row(rank_s: str, model_s: str, acc_s: str, lat_s: str, best: bool) -> str:
+            prefix = marker if best else pad
+            return (
+                f"{prefix} {rank_s:>{rank_w}}  "
+                f"{model_s:<{model_w}}  "
+                f"{acc_s:>{acc_w}}  "
+                f"{lat_s:>{lat_w}}"
+            )
+
+        header_row = row(rank_h, model_h, acc_h, lat_h, False)
+        sep = pad + " " + "-" * (len(header_row) - len(pad) - 1)
+
+        lines: List[str] = []
+        lines.append("")
+        lines.append(pad + " " + "Model Selection Results")
+        lines.append(sep)
+        lines.append(header_row)
+        lines.append(sep)
+
+        for i, r in enumerate(unique, 1):
+            lines.append(
+                row(
+                    str(i),
+                    r.model_name,
+                    fmt_acc(r.accuracy),
+                    fmt_lat(r.latency_seconds),
+                    r.is_best,
+                )
+            )
+
+        lines.append(sep)
+
+        best_result = next((r for r in unique if r.is_best), None)
+        if best_result:
+            lines.append(
+                f"{pad} Best: {best_result.model_name} "
+                f"(accuracy: {best_result.accuracy:.2%}, "
+                f"latency: {best_result.latency_seconds:.2f}s)"
+            )
+        lines.append("")
+
+        return "\n".join(lines)
+
+    def print_summary(self) -> None:
+        """Print the formatted summary table of all results."""
+        print(self)
+
 
 class BaseModelSelector(ABC):
     """Abstract base class for model selectors."""

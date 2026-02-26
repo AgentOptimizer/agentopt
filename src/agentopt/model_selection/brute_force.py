@@ -140,12 +140,13 @@ class BruteForceModelSelector(BaseModelSelector):
             for result in all_results:
                 if result.model_name == best_name:
                     result.is_best = True
-                    print(f"\n  Best: {result}")
                     break
         else:
             print("\n  No combinations succeeded")
 
-        return SelectionResults(results=all_results)
+        results = SelectionResults(results=all_results)
+        print(results)
+        return results
 
     # ------------------------------------------------------------------
     # Parallel evaluation (agent clones + thread pool)
@@ -284,9 +285,10 @@ class BruteForceModelSelector(BaseModelSelector):
             for r in all_results:
                 if r.model_name == best_name:
                     r.is_best = True
-                    print(f"\n  Best: {r}")
                     break
         else:
             print("\n  No combinations succeeded")
 
-        return SelectionResults(results=all_results)
+        results = SelectionResults(results=all_results)
+        print(results)
+        return results

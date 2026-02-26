@@ -1,11 +1,12 @@
-"""LangChain-specific LLM builder and agent sync."""
+"""LangChain/LangGraph compatible LLM builder and agent sync."""
 
 from typing import Any, List, Optional
 
 
-def build_langchain_llm(model_name: str) -> Optional[Any]:
-    """Create a LangChain chat model from a model name string.
+def build_langchain_compatible_llm(model_name: str) -> Optional[Any]:
+    """Create a LangChain-compatible chat model from a model name string.
 
+    Works for both LangChain and LangGraph agents that use langchain LLM classes.
     Delegates to :func:`agentopt.model_factory.create_model_from_string`.
     Returns a new model instance, or ``None`` on failure.
     """

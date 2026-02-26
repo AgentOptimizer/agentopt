@@ -3,9 +3,9 @@
 from typing import Any, Optional
 
 from .ag2 import AG2ConfigWrapper
-from .constants import is_crewai_llm, is_langchain_llm, is_llamaindex_llm
+from .constants import is_crewai_llm, is_langchain_compatible_llm, is_llamaindex_llm
 from .crewai import build_crewai_llm
-from .langchain import build_langchain_llm
+from .langchain_compat import build_langchain_compatible_llm
 
 
 def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
@@ -25,8 +25,8 @@ def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
     if is_crewai_llm(current_llm):
         return build_crewai_llm(model_name)
 
-    if is_langchain_llm(current_llm):
-        return build_langchain_llm(model_name)
+    if is_langchain_compatible_llm(current_llm):
+        return build_langchain_compatible_llm(model_name)
 
     if is_llamaindex_llm(current_llm):
         from .llamaindex import _build_llamaindex_llm

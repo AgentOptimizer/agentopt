@@ -12,8 +12,8 @@ MODEL_FIELDS = ("model", "model_name", "model_id")
 # Attribute names to check for the LLM on an agent, in priority order.
 AGENT_LLM_ATTRS = ("llm",)
 
-# Module prefixes that identify LangChain LLM objects.
-LANGCHAIN_MODULE_PREFIXES = (
+# Module prefixes that identify LangChain-compatible LLM objects (used by both LangChain and LangGraph).
+LANGCHAIN_COMPATIBLE_PREFIXES = (
     "langchain_openai",
     "langchain_anthropic",
     "langchain_google",
@@ -62,10 +62,10 @@ def is_llamaindex_llm(llm: Any) -> bool:
     return module.startswith("llama_index")
 
 
-def is_langchain_llm(llm: Any) -> bool:
-    """Check if an LLM object is from LangChain."""
+def is_langchain_compatible_llm(llm: Any) -> bool:
+    """Check if an LLM object is from a LangChain-compatible package (LangChain, LangGraph, etc.)."""
     module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith(LANGCHAIN_MODULE_PREFIXES)
+    return module.startswith(LANGCHAIN_COMPATIBLE_PREFIXES)
 
 
 # Mapping of model provider prefixes to required environment variables.

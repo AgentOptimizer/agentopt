@@ -75,7 +75,7 @@ This is why `register_langchain_executor(executor, tools, prompt)` must store
 the tools and prompt alongside the executor: they're required to rebuild the
 chain from scratch.
 
-**Key files:** `langchain.py` (`build_langchain_llm`, `sync_langchain_executor`)
+**Key files:** `langchain_compat.py` (`build_langchain_compatible_llm`, `sync_langchain_executor`)
 
 ---
 
@@ -283,7 +283,7 @@ model_proxy/
 ├── builders.py      # build_llm() dispatcher (detects framework, delegates)
 ├── constants.py     # Framework detection helpers, MODEL_FIELDS
 ├── crewai.py        # build_crewai_llm, sync_crew_agents, clone_crew_agents
-├── langchain.py     # build_langchain_llm, sync_langchain_executor
+├── langchain_compat.py  # build_langchain_compatible_llm, sync_langchain_executor
 ├── llamaindex.py    # sync_llamaindex_agents, _build_llamaindex_llm
 ├── openai_sdk.py    # register_openai_agents_model, _get_response, _stream_response
 └── ag2.py           # AG2ConfigWrapper, register_ag2_llm_config, extract_ag2_content

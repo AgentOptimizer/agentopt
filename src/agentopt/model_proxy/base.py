@@ -126,7 +126,7 @@ class ModelProxy:
         # LangChain executor chain rebuild
         executors = object.__getattribute__(self, "_langchain_executors")
         if executors:
-            from .langchain import sync_langchain_executor
+            from .langchain_compat import sync_langchain_executor
 
             for executor, tools, prompt in executors:
                 sync_langchain_executor(executor, model, tools, prompt)

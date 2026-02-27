@@ -2,10 +2,36 @@
 
 from typing import Any, Callable, List, Optional
 
+# Module prefixes that identify LangChain-compatible LLM objects.
+LANGCHAIN_COMPATIBLE_PREFIXES = (
+    "langchain_openai",
+    "langchain_anthropic",
+    "langchain_google",
+    "langchain_aws",
+    "langchain_community",
+)
 
-def build_langchain_llm(model_name: str) -> Optional[Any]:
-    """Create a LangChain chat model from a model name string.
 
+def is_langchain_executor(agent: Any) -> bool:
+    """Check if an agent is a LangChain AgentExecutor."""
+    module = getattr(type(agent), "__module__", "") or ""
+    return (
+        module.startswith("langchain")
+        and hasattr(agent, "agent")
+        and hasattr(agent, "tools")
+    )
+
+
+def is_langchain_compatible_llm(llm: Any) -> bool:
+    """Check if an LLM object is from a LangChain-compatible package."""
+    module = getattr(type(llm), "__module__", "") or ""
+    return module.startswith(LANGCHAIN_COMPATIBLE_PREFIXES)
+
+
+def build_langchain_compatible_llm(model_name: str) -> Optional[Any]:
+    """Create a LangChain-compatible chat model from a model name string.
+
+    Works for both LangChain and LangGraph agents that use langchain LLM classes.
     Delegates to :func:`agentopt.model_factory.create_model_from_string`.
     Returns a new model instance, or ``None`` on failure.
     """
@@ -87,8 +113,6 @@ class LangChainAdapter:
     invoke_method_name = "invoke"
 
     def detect(self, agent: Any) -> bool:
-        from .constants import is_langchain_executor
-
         return is_langchain_executor(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
@@ -135,7 +159,10 @@ class LangChainAdapter:
         not a direct attribute of the executor).
         """
         try:
-            from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+            from langchain_classic.agents import (
+                AgentExecutor,
+                create_tool_calling_agent,
+            )
         except ImportError:
             from langchain.agents import AgentExecutor, create_tool_calling_agent
 
@@ -152,7 +179,7 @@ class LangChainAdapter:
         model_name = (
             model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
         )
-        fresh_llm = build_langchain_llm(model_name)
+        fresh_llm = build_langchain_compatible_llm(model_name)
         if fresh_llm is None:
             raise RuntimeError(
                 f"LangChainAdapter.clone_for_parallel: could not build LLM for '{model_name}'."
@@ -165,6 +192,6 @@ class LangChainAdapter:
 
 
 # Self-register — runs when this module is first imported.
-from .adapter import register_adapter  # noqa: E402
+from ..adapter import register_adapter  # noqa: E402
 
 register_adapter(LangChainAdapter())

@@ -6,13 +6,23 @@ from typing import Any, Callable, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def is_crewai_crew(agent: Any) -> bool:
+    """Check if an agent is a CrewAI Crew."""
+    module = getattr(type(agent), "__module__", "") or ""
+    return module.startswith("crewai") and hasattr(agent, "agents")
+
+
+def is_crewai_llm(llm: Any) -> bool:
+    """Check if an LLM object is from CrewAI."""
+    module = getattr(type(llm), "__module__", "") or ""
+    return module.startswith("crewai")
+
+
 def _model_name_from_llm(llm: Any) -> Optional[str]:
     """Extract model name string from any LLM object."""
-    from .constants import MODEL_FIELDS
+    from ..constants import MODEL_FIELDS
 
-    return next(
-        (str(getattr(llm, f)) for f in MODEL_FIELDS if hasattr(llm, f)), None
-    )
+    return next((str(getattr(llm, f)) for f in MODEL_FIELDS if hasattr(llm, f)), None)
 
 
 def build_crewai_llm(model_name: str) -> Optional[Any]:
@@ -48,8 +58,6 @@ def sync_crew_agents(
         combo: The model specs corresponding to each proxy.
         get_model_name: Callable to extract a display name from a model spec.
     """
-    from .constants import is_crewai_crew
-
     assert is_crewai_crew(
         agent
     ), f"sync_crew_agents called on non-Crew agent: {type(agent).__name__}"
@@ -116,8 +124,6 @@ def clone_crew_agents(
         combo: The model specs corresponding to each proxy.
         get_model_name: Callable to extract a display name from a model spec.
     """
-    from .constants import is_crewai_crew
-
     assert is_crewai_crew(
         crew
     ), f"clone_crew_agents called on non-Crew: {type(crew).__name__}"
@@ -178,8 +184,6 @@ class CrewAIAdapter:
     invoke_method_name = "kickoff"
 
     def detect(self, agent: Any) -> bool:
-        from .constants import is_crewai_crew
-
         return is_crewai_crew(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
@@ -238,6 +242,6 @@ class CrewAIAdapter:
 
 
 # Self-register — runs when this module is first imported.
-from .adapter import register_adapter  # noqa: E402
+from ..adapter import register_adapter  # noqa: E402
 
 register_adapter(CrewAIAdapter())

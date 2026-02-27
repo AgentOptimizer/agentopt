@@ -11,9 +11,21 @@ from typing import Any, Callable, List
 
 from pydantic import BaseModel
 
-from .constants import MODEL_FIELDS
+from ..constants import MODEL_FIELDS
 
 logger = logging.getLogger(__name__)
+
+
+def is_llamaindex_agent(agent: Any) -> bool:
+    """Check if an agent is a LlamaIndex agent (FunctionAgent, AgentWorkflow, etc.)."""
+    module = getattr(type(agent), "__module__", "") or ""
+    return module.startswith("llama_index") and hasattr(agent, "run")
+
+
+def is_llamaindex_llm(llm: Any) -> bool:
+    """Check if an LLM object is from LlamaIndex."""
+    module = getattr(type(llm), "__module__", "") or ""
+    return module.startswith("llama_index")
 
 
 def sync_llamaindex_agents(
@@ -141,8 +153,6 @@ class LlamaIndexAdapter:
     invoke_method_name = "run"
 
     def detect(self, agent: Any) -> bool:
-        from .constants import is_llamaindex_agent
-
         return is_llamaindex_agent(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
@@ -191,7 +201,10 @@ class LlamaIndexAdapter:
         n_agents = len(agent_list)
 
         if n_proxies == 1:
-            def _sync(new_llm: Any, _agents: List[Any] = list(agents_dict.values())) -> None:
+
+            def _sync(
+                new_llm: Any, _agents: List[Any] = list(agents_dict.values())
+            ) -> None:
                 sync_llamaindex_agents(_agents, new_llm)
 
             proxy._add_sync(_sync)
@@ -229,6 +242,6 @@ class LlamaIndexAdapter:
 
 
 # Self-register — runs when this module is first imported.
-from .adapter import register_adapter  # noqa: E402
+from ..adapter import register_adapter  # noqa: E402
 
 register_adapter(LlamaIndexAdapter())

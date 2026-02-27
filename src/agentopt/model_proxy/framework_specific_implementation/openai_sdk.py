@@ -3,7 +3,7 @@
 import copy
 from typing import Any, Callable, List
 
-from .constants import MODEL_FIELDS
+from ..constants import MODEL_FIELDS
 
 
 def build_openai_agents_model(model_name: str) -> Any:
@@ -98,7 +98,9 @@ class OpenAISDKAdapter:
             else:
                 prompt = str(input_data)
             result = Runner.run_sync(agent, prompt)
-            return result.final_output if hasattr(result, "final_output") else str(result)
+            return (
+                result.final_output if hasattr(result, "final_output") else str(result)
+            )
 
         return _invoke
 
@@ -130,11 +132,7 @@ class OpenAISDKAdapter:
         return agent_copy
 
 
-# Self-register — runs when this module is first imported (optional dep, so
-# the caller in __init__.py already wraps this in try/except).
-try:
-    from .adapter import register_adapter  # noqa: E402
+# Self-register — runs when this module is first imported.
+from ..adapter import register_adapter  # noqa: E402
 
-    register_adapter(OpenAISDKAdapter())
-except Exception:
-    pass
+register_adapter(OpenAISDKAdapter())

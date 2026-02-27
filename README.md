@@ -1,6 +1,10 @@
 # AgentOpt - Optimization for AI Agents
 
+<<<<<<< HEAD
 A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, LlamaIndex, and the OpenAI Agents SDK — or any custom agent setup.
+=======
+A framework-agnostic toolkit for optimizing LLM-powered agents. Evaluate and select the best models for your agents across frameworks like CrewAI, LangChain, LangGraph, LlamaIndex, and AG2 — or any custom agent setup.
+>>>>>>> main
 
 > **Note: This project is in early development. APIs are subject to change.**
 
@@ -18,6 +22,12 @@ uv sync --extra crewai
 
 # For LlamaIndex support
 uv sync --extra llamaindex
+<<<<<<< HEAD
+=======
+
+# For AG2 (AutoGen 2) support
+uv sync --extra ag2
+>>>>>>> main
 ```
 
 ## Quick Start
@@ -134,6 +144,62 @@ selector = ModelSelector(
     agent=agent,
 )
 results = selector.select_best()
+```
+**Note:** LlamaIndex agents use Pydantic validation which prevents passing `ModelProxy` directly. The `invoke_fn` pattern works around this. Parallel mode (`select_best(parallel=True)`) requires `agent=` instead of `invoke_fn=`.
+
+### AG2 (AutoGen 2)
+
+AG2 validates `llm_config` and rejects `ModelProxy`, so use a mutable config wrapper. The agent receives a real `LLMConfig` backed by mutable `config_list`; `ModelProxy` wraps the wrapper and updates the model in place when `set_model()` is called:
+
+```python
+from autogen import ConversableAgent, LLMConfig
+from agentopt import ModelSelector, ModelProxy
+
+# 1. Mutable wrapper (AG2 rejects ModelProxy as llm_config)
+class AG2ConfigWrapper:
+    def __init__(self, model="gpt-4o-mini"):
+        self.config_list = [{"api_type": "openai", "model": model, "api_key": "..."}]
+    @property
+    def model(self):
+        return self.config_list[0]["model"]
+    @model.setter
+    def model(self, value):
+        self.config_list[0]["model"] = value
+
+config_wrapper = AG2ConfigWrapper("gpt-4o-mini")
+llm_config = LLMConfig(config_list=config_wrapper.config_list)
+llm_config_proxy = ModelProxy(config_wrapper)
+
+# 2. Build agent with real LLMConfig
+agent = ConversableAgent(
+    name="assistant",
+    system_message="You are a helpful assistant.",
+    llm_config=llm_config,
+    human_input_mode="NEVER",
+)
+
+# 3. Custom invoke_fn (AG2 uses run(), not invoke/kickoff)
+def invoke_fn(input_data):
+    response = agent.run(message=input_data["input"], max_turns=2, user_input=False)
+    for _ in response.events:
+        pass
+    return response.summary or (response.messages[-1].content if response.messages else "")
+
+# 4. Run optimization (proxy updates config_list[0]["model"] in place)
+selector = ModelSelector(
+    models={llm_config_proxy: ["gpt-4o-mini", "gpt-4o"]},
+    eval_fn=my_eval_fn,
+    dataset=dataset,
+    invoke_fn=invoke_fn,
+)
+results = selector.select_best()
+```
+
+See `examples/ag2_example.py` for a complete example. Run it with:
+
+```bash
+uv run python examples/ag2_example.py single   # single-agent
+uv run python examples/ag2_example.py multi    # multi-agent (researcher + coder)
 ```
 
 ### Custom Agent / Any Framework
@@ -286,8 +352,51 @@ results = selector.select_best(parallel=True)
 | `models` | `dict[ModelProxy, list]` | Maps each proxy to its candidate models (strings or objects) |
 | `eval_fn` | `(str, Any) -> bool \| float` | Compares expected answer to actual output. Returns bool or float score (higher is better) |
 | `dataset` | `list[tuple[Any, str]]` | List of `(input_data, expected_answer)` tuples. `input_data` is passed directly to the agent's invoke method |
+<<<<<<< HEAD
 | `agent` | `Any` | Agent object (CrewAI Crew, LangChain AgentExecutor, LlamaIndex AgentWorkflow, OpenAI Agents SDK Agent). Mutually exclusive with `invoke_fn` |
+=======
+| `agent` | `Any` | Agent object with `.kickoff()` (CrewAI) or `.invoke()` (LangChain). For AG2, use `invoke_fn` instead. Mutually exclusive with `invoke_fn` |
+>>>>>>> main
 | `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Mutually exclusive with `agent` |
+| `agent` | `Any` | Agent object with `.kickoff()` (CrewAI), `.invoke()` (LangChain), or `.run()` (LlamaIndex). Mutually exclusive with `invoke_fn` |
+| `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Mutually exclusive with `agent`. Not compatible with `parallel=True` |
+
+**`select_best()` parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `parallel` | `bool` | Evaluate combinations concurrently (default: `False`) |
+| `max_workers` | `int \| None` | Max threads for parallel mode (default: number of combinations) |
+
+### Selection Strategies
+
+AgentOpt includes two model selection strategies:
+
+- **`BruteForceModelSelector`** (default, aliased as `ModelSelector`) — Evaluates the Cartesian product of all candidate model combinations. Thorough but scales as O(n^k) where n is models per proxy and k is the number of proxies.
+
+- **`HillClimbingModelSelector`** — Neighbor-based search using model quality/speed rankings. Starts from an initial combination and iteratively swaps one model at a time, keeping improvements. Much faster for large search spaces.
+
+```python
+from agentopt import BruteForceModelSelector, HillClimbingModelSelector
+
+# Brute force (tests all combinations)
+selector = BruteForceModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
+
+# Hill climbing (smart search)
+selector = HillClimbingModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
+```
+
+### How Parallel Evaluation Works
+
+When `parallel=True`, `select_best()`:
+1. Detects which agent attribute each `ModelProxy` maps to
+2. Creates independent agent copies via Pydantic `model_copy(deep=False)`, each with a fresh LLM variant
+3. Evaluates all copies concurrently using `ThreadPoolExecutor`
+4. Sets the original proxies to the winning combination
+
+Each thread gets its own agent instance with its own LLM — no shared state, no conflicts. If cloning fails, it falls back to sequential evaluation automatically.
+
+**Note:** Parallel mode requires `agent=` (not `invoke_fn=`), since the agent must be cloneable.
 
 ### Multi-Agent / Multi-LLM Optimization
 
@@ -371,6 +480,7 @@ agentopt/
 ├── src/agentopt/
 │   ├── __init__.py              # Public API exports
 │   ├── base_models.py           # Type aliases (EvalFn, ModelSpec, ModelsConfig)
+<<<<<<< HEAD
 │   ├── model_factory.py         # create_model_from_string — multi-provider LLM factory
 │   ├── model_topology.py        # Model quality/speed rankings for hill climbing
 │   └── model_proxy/
@@ -395,6 +505,22 @@ examples/
 ├── openai_sdk_example.py        # OpenAI Agents SDK
 └── datasets/
     └── math_problems.jsonl
+=======
+│   └── model_selection/
+│       ├── __init__.py          # Exports ModelSelector
+│       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
+│       └── brute_force.py       # BruteForceModelSelector (default ModelSelector)
+├── examples/
+│   ├── crewai_example.py        # CrewAI: single-agent, multi-agent, hierarchical
+│   ├── langchain_example.py     # LangChain: single-agent, multi-agent with chaining
+│   ├── ag2_example.py           # AG2: single-agent, multi-agent with invoke_fn
+│   ├── crewai_example.py              # CrewAI: single-agent, multi-agent (CLI)
+│   ├── langchain_example.py           # LangChain: single-agent, multi-agent
+│   ├── llamaindex_example.py          # LlamaIndex: ModelProxy + invoke_fn approach
+│   └── datasets/
+│       └── math_problems.jsonl
+└── pyproject.toml
+>>>>>>> main
 ```
 
 ## Environment Setup

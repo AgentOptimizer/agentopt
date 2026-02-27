@@ -1,6 +1,6 @@
 """Core model selection functionality."""
 
-from typing import Any, Callable, List
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
@@ -22,8 +22,6 @@ class ModelProxy:
         llm = ModelProxy(ChatOpenAI(model='gpt-4o-mini'))
         executor = AgentExecutor(agent=..., tools=tools)
         llm.register(executor)          # framework auto-detected
-        # Or the old explicit form (backward-compat):
-        llm.register_langchain_executor(executor, tools, prompt)
     """
 
     def __init__(self, initial_model: Any) -> None:
@@ -56,9 +54,7 @@ class ModelProxy:
         """Auto-detect the agent's framework and register sync callbacks.
 
         This is the preferred registration method.  The framework is detected
-        automatically; users never need to call ``register_crewai_agents``,
-        ``register_langchain_executor``, or ``register_llamaindex_agents``
-        directly.
+        automatically.
 
         Args:
             agent: Any supported agent object (CrewAI Crew, LangChain
@@ -131,64 +127,6 @@ class ModelProxy:
         return object.__getattribute__(self, "_optmodel")
 
     # ------------------------------------------------------------------
-    # Backward-compat registration helpers
-    # ------------------------------------------------------------------
-
-    def register_crewai_agents(self, agents: List[Any]) -> None:
-        """Register CrewAI sub-agents for automatic LLM sync on set_model().
-
-        .. deprecated::
-            Prefer ``proxy.register(crew)`` or let the selector auto-register.
-        """
-        from .crewai import build_crewai_llm
-
-        def _sync(new_llm: Any, _agents: list = list(agents)) -> None:
-            name = next(
-                (str(getattr(new_llm, f)) for f in MODEL_FIELDS if hasattr(new_llm, f)),
-                None,
-            )
-            if name:
-                fresh = build_crewai_llm(name)
-                for ag in _agents:
-                    ag.llm = fresh
-
-        self._add_sync(_sync)
-
-    def register_langchain_executor(
-        self, executor: Any, tools: List[Any], prompt: Any
-    ) -> None:
-        """Register a LangChain AgentExecutor for automatic chain rebuild.
-
-        .. deprecated::
-            Prefer ``proxy.register(executor)`` — tools and prompt are now
-            extracted automatically.
-        """
-        from .langchain import sync_langchain_executor
-
-        def _sync(
-            new_llm: Any,
-            _exec: Any = executor,
-            _tools: list = tools,
-            _prompt: Any = prompt,
-        ) -> None:
-            sync_langchain_executor(_exec, new_llm, _tools, _prompt)
-
-        self._add_sync(_sync)
-
-    def register_llamaindex_agents(self, agents: List[Any]) -> None:
-        """Register LlamaIndex agents for automatic LLM sync on set_model().
-
-        .. deprecated::
-            Prefer ``proxy.register(agent)`` or let the selector auto-register.
-        """
-        from .llamaindex import sync_llamaindex_agents
-
-        def _sync(new_llm: Any, _agents: list = list(agents)) -> None:
-            sync_llamaindex_agents(_agents, new_llm)
-
-        self._add_sync(_sync)
-
-    # ------------------------------------------------------------------
     # Proxy protocol
     # ------------------------------------------------------------------
 
@@ -199,7 +137,7 @@ class ModelProxy:
         return getattr(model, name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("_optmodel", "_optmodel_class", "_sync_callbacks"):
+        if name in ("_optmodel", "_optmodel_class", "_sync_callbacks", "_ag2_agents"):
             object.__setattr__(self, name, value)
         else:
             model = object.__getattribute__(self, "_optmodel")

@@ -342,9 +342,10 @@ class HillClimbingModelSelector(BaseModelSelector):
                     and abs(result.accuracy - global_best_accuracy) < accuracy_tolerance
                 ):
                     result.is_best = True
-                    print(f"Best combination: {result}\n")
                     break
         else:
             print("\nNo combinations succeeded\n")
 
-        return SelectionResults(results=all_results)
+        results = SelectionResults(results=all_results)
+        print(results)
+        return results

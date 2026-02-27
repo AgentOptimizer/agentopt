@@ -140,12 +140,13 @@ class BruteForceModelSelector(BaseModelSelector):
             for result in all_results:
                 if result.model_name == best_name:
                     result.is_best = True
-                    print(f"\n  Best: {result}")
                     break
         else:
             print("\n  No combinations succeeded")
 
-        return SelectionResults(results=all_results)
+        results = SelectionResults(results=all_results)
+        print(results)
+        return results
 
     # ------------------------------------------------------------------
     # Parallel evaluation (agent clones + thread pool)
@@ -197,12 +198,15 @@ class BruteForceModelSelector(BaseModelSelector):
                 else:
                     # Fallback for unknown frameworks (shouldn't normally reach here).
                     import copy
+
                     agent_copy = copy.deepcopy(self.agent)
             except Exception as e:
                 logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
                 continue
 
-            invoke_fn = self._make_invoke_fn(agent_copy, invoke_method_name, self.is_async)
+            invoke_fn = self._make_invoke_fn(
+                agent_copy, invoke_method_name, self.is_async
+            )
             tasks.append((combo_name, combo, invoke_fn, self.is_async))
 
         if not tasks:
@@ -264,9 +268,10 @@ class BruteForceModelSelector(BaseModelSelector):
             for r in all_results:
                 if r.model_name == best_name:
                     r.is_best = True
-                    print(f"\n  Best: {r}")
                     break
         else:
             print("\n  No combinations succeeded")
 
-        return SelectionResults(results=all_results)
+        results = SelectionResults(results=all_results)
+        print(results)
+        return results

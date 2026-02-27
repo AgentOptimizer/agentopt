@@ -5,6 +5,8 @@ import (``model_selection`` imports from ``model_proxy``, not the reverse).
 This re-export keeps any existing call-sites working.
 """
 
-from ..model_proxy.langchain import extract_prompt  # noqa: F401
+from ..model_proxy.framework_specific_implementation.langchain_compat import (
+    extract_prompt,
+)  # noqa: F401
 
 __all__ = ["extract_prompt"]

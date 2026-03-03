@@ -3,13 +3,15 @@ import json
 from pathlib import Path
 
 from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
-from llama_index.llms.openai import OpenAI
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt.model_proxy.framework_specific_implementation.llamaindex import (
+    build_llamaindex_llm,
+)
 
 
 def load_dataset(dataset_dir, filename):
@@ -63,7 +65,7 @@ def single_agent_example():
     be passed as llm= directly. Instead we create the agent with a real LLM.
     The selector auto-registers agents for sync on model swap.
     """
-    initial_llm = OpenAI(model="gpt-4o-mini")
+    initial_llm = build_llamaindex_llm("gpt-4o-mini")
     llm_proxy = ModelProxy(initial_llm)
 
     agent = FunctionAgent(
@@ -94,7 +96,7 @@ def multi_agent_example():
 
     Shared LLM proxy so both agents are optimized together.
     """
-    initial_llm = OpenAI(model="gpt-4o-mini")
+    initial_llm = build_llamaindex_llm("gpt-4o-mini")
     llm_proxy = ModelProxy(initial_llm)
 
     math_agent = FunctionAgent(
@@ -136,9 +138,13 @@ def multi_agent_multi_llm_example():
     """Multi-agent AgentWorkflow with separate LLMs per agent.
 
     Each agent has its own proxy for independent optimization.
+
+    Note: Uses same-provider models to avoid cross-provider tool format
+    issues in LlamaIndex AgentWorkflow (OpenAI and Anthropic use different
+    tool_call serialization formats in conversation history).
     """
-    math_llm = OpenAI(model="gpt-4o-mini")
-    reviewer_llm = OpenAI(model="gpt-4o-mini")
+    math_llm = build_llamaindex_llm("claude-sonnet-4-20250514")
+    reviewer_llm = build_llamaindex_llm("claude-sonnet-4-20250514")
     math_proxy = ModelProxy(math_llm)
     reviewer_proxy = ModelProxy(reviewer_llm)
 
@@ -182,17 +188,14 @@ def run_model_selection(
     llm_proxies,
     parallel=False,
     dataset_file=None,
+    model_candidates=None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
+    if model_candidates is None:
+        model_candidates = ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-20250514"]
 
     selector = BruteForceModelSelector(
-        models={
-            llm: [
-                "gpt-4o-mini",
-                "gpt-4o",
-            ]
-            for llm in llm_proxies
-        },
+        models={llm: model_candidates for llm in llm_proxies},
         eval_fn=eval_fn,
         dataset=dataset,
         agent=agent,
@@ -256,10 +259,6 @@ if __name__ == "__main__":
     label, setup_fn = EXAMPLES[args.example]
     mode = "parallel" if args.parallel else "sequential"
 
-    print("=" * 40)
-    print(f"{label} ({mode})")
-    print("=" * 40)
-
     result = setup_fn()
 
     # multi-llm returns a tuple of proxies; the others return a single proxy
@@ -269,11 +268,20 @@ if __name__ == "__main__":
         llm_proxy, agent = result
         llm_proxies = [llm_proxy]
 
+    # Multi-LLM uses Anthropic-only candidates to avoid cross-provider
+    # tool format issues in LlamaIndex AgentWorkflow.
+    candidates = (
+        ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+        if args.example == "multi-llm"
+        else None  # default mixed candidates
+    )
+
     results = run_model_selection(
         agent,
         llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
+        model_candidates=candidates,
     )
 
     plot_results(

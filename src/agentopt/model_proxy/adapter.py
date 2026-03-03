@@ -1,0 +1,117 @@
+"""Framework adapter registry for ModelProxy.
+
+Each supported LLM framework (CrewAI, LangChain, LlamaIndex, OpenAI SDK, …)
+ships its own ``FrameworkAdapter`` subclass that knows how to:
+
+  1. Detect whether an agent object belongs to it (``detect``).
+  2. Return the right invoke callable for the selector (``get_invoke_fn``).
+  3. Register per-instance sync callbacks on a ``ModelProxy`` so that
+     ``proxy.set_model()`` propagates to the agent (``register_with_proxy``).
+  4. Clone the agent independently for parallel evaluation
+     (``clone_for_parallel``).
+
+Adding a new framework means creating one new file with a
+``FrameworkAdapter`` subclass and calling ``register_adapter(MyAdapter())``
+at module level.  The adapter is auto-loaded when the framework module is
+first imported (which happens as part of the normal ``model_proxy`` package
+import chain).
+"""
+
+import copy
+from abc import ABC, abstractmethod
+from typing import Any, Callable, List, Optional
+
+
+class FrameworkAdapter(ABC):
+    """Abstract base for all framework adapters.
+
+    Subclasses must implement ``detect`` and ``get_invoke_fn``.
+    The remaining methods have safe default implementations that work
+    for stateless / closure-based frameworks.
+    """
+
+    # Subclasses should override this with the agent's invoke method name
+    # ("kickoff", "invoke", "run") so the parallel selector can re-bind
+    # the method after cloning.  ``None`` means the adapter wraps it itself.
+    invoke_method_name: Optional[str] = None
+
+    @abstractmethod
+    def detect(self, agent: Any) -> bool:
+        """Return True if this adapter can handle *agent*."""
+        ...
+
+    @abstractmethod
+    def get_invoke_fn(self, agent: Any) -> Callable:
+        """Return a callable that runs *agent* on a single input."""
+        ...
+
+    def register_with_proxy(
+        self,
+        proxy: Any,
+        agent: Any,
+        all_proxies: List[Any],
+    ) -> None:
+        """Register sync callbacks on *proxy* for sequential model swapping.
+
+        Called by ``BaseModelSelector.__init__`` and ``ModelProxy.register()``.
+        Default: no-op (correct for OpenAI SDK / Claude SDK where no
+        per-instance sync is needed).
+
+        Args:
+            proxy: The ``ModelProxy`` instance to register callbacks on.
+            agent: The top-level agent object.
+            all_proxies: All proxies in the current selector's ``models`` dict,
+                used for positional mapping (proxy i → sub-agent i).
+        """
+        pass
+
+    def clone_for_parallel(
+        self,
+        agent: Any,
+        proxies: List[Any],
+        combo: tuple,
+        get_model_name: Callable[[Any], str],
+    ) -> Any:
+        """Create an independent agent clone for one parallel combination.
+
+        Default: shallow Pydantic copy (or deepcopy for non-Pydantic).
+        Framework adapters that embed the LLM structurally (e.g. LangChain)
+        must override this to rebuild the agent with a fresh LLM.
+
+        Args:
+            agent: The original top-level agent.
+            proxies: All ``ModelProxy`` instances for this selection run.
+            combo: The model specs (one per proxy) for this combination.
+            get_model_name: Callable to extract a display name from a spec.
+
+        Returns:
+            An independent copy of *agent* configured for this combination.
+        """
+        try:
+            from pydantic import BaseModel
+
+            if isinstance(agent, BaseModel):
+                return agent.model_copy(deep=False)
+        except ImportError:
+            pass
+        return copy.deepcopy(agent)
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+_REGISTRY: List[FrameworkAdapter] = []
+
+
+def register_adapter(adapter: FrameworkAdapter) -> None:
+    """Add *adapter* to the global registry.  Call at module level."""
+    _REGISTRY.append(adapter)
+
+
+def get_adapter(agent: Any) -> Optional[FrameworkAdapter]:
+    """Return the first adapter whose ``detect(agent)`` returns True."""
+    for adapter in _REGISTRY:
+        if adapter.detect(agent):
+            return adapter
+    return None

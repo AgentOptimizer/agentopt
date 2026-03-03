@@ -9,6 +9,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun, WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
@@ -49,10 +52,12 @@ def single_agent_example():
     """Single agent with search and calculator tools."""
     # 1. Wrap the LLM
     llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
+    print("  [setup] proxy created (initial model: gpt-4o-mini)")
 
     # 2. Define tools
     search = DuckDuckGoSearchRun()
     tools = [search, calculator]
+    print("  [setup] tools defined: DuckDuckGoSearch, calculator")
 
     # 3. Create agent prompt
     prompt = ChatPromptTemplate.from_messages(
@@ -62,10 +67,12 @@ def single_agent_example():
             ("placeholder", "{agent_scratchpad}"),
         ]
     )
+    print("  [setup] prompt created")
 
     # 4. Create agent and executor
     agent = create_tool_calling_agent(llm, tools, prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
+    print("  [setup] agent executor created: single researcher agent")
 
     return llm, agent_executor
 
@@ -77,11 +84,16 @@ def multiagent_example():
     """
     # 1. Wrap the LLMs
     researcher_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
+    print("  [setup] researcher_llm proxy created (initial model: gpt-4o-mini)")
     coder_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
+    print("  [setup] coder_llm proxy created (initial model: gpt-4o-mini)")
 
     # 2. Define tools for each agent
     search = DuckDuckGoSearchRun()
     wikipedia = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
+    print(
+        "  [setup] tools defined: DuckDuckGoSearch, Wikipedia (researcher), calculator (coder)"
+    )
 
     # 3. Create researcher agent
     researcher_prompt = ChatPromptTemplate.from_messages(
@@ -100,6 +112,7 @@ def multiagent_example():
     researcher_executor = AgentExecutor(
         agent=researcher_agent, tools=[search, wikipedia], verbose=False
     )
+    print("  [setup] researcher agent executor created")
 
     # 4. Create coder agent
     coder_prompt = ChatPromptTemplate.from_messages(
@@ -114,16 +127,20 @@ def multiagent_example():
     )
     coder_agent = create_tool_calling_agent(coder_llm, [calculator], coder_prompt)
     coder_executor = AgentExecutor(agent=coder_agent, tools=[calculator], verbose=False)
+    print("  [setup] coder agent executor created")
 
-    # 5. Register executors for automatic chain rebuild on model swap
-    researcher_llm.register_langchain_executor(
-        researcher_executor, [search, wikipedia], researcher_prompt
-    )
-    coder_llm.register_langchain_executor(coder_executor, [calculator], coder_prompt)
+    # 5. Register executors for automatic chain rebuild on model swap.
+    # Framework is auto-detected; tools and prompt are extracted automatically.
+    researcher_llm.register(researcher_executor)
+    coder_llm.register(coder_executor)
+    print("  [setup] executors registered with proxies (auto-sync on model swap)")
 
     # 6. Custom invoke_fn that chains agents sequentially
     def chained_invoke(input_data):
         question = input_data["input"]
+        r_model = researcher_llm.get_model().model_name
+        c_model = coder_llm.get_model().model_name
+        print(f"  [invoke] researcher={r_model}, coder={c_model} | q: {question[:50]}")
         research_result = researcher_executor.invoke({"input": question})
         research_output = research_result.get("output", "")
         coder_result = coder_executor.invoke(
@@ -142,13 +159,21 @@ def run_model_selection(
     dataset_file=None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
+    print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
+    model_candidates = [
+        "openai/gpt-4o-mini",
+        "openai/gpt-4o",
+        "anthropic/claude-sonnet-4-20250514",
+    ]
+    mode = "parallel" if parallel else "sequential"
+    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
     kwargs = {
         "models": {
             llm: [
                 "openai/gpt-4o-mini",
                 "openai/gpt-4o",
-                "openai/gpt-5.1",
+                "anthropic/claude-sonnet-4-20250514",
             ]
             for llm in llm_proxies
         },
@@ -188,12 +213,12 @@ def plot_results(results, title="Model Performance", save_path=None):
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Plot saved to {save_path}")
-    plt.show()
+    plt.close()
 
 
 EXAMPLES = {
     "single": ("Single-agent", single_agent_example),
-    "multi": ("Multi-agent (chained)", multiagent_example),
+    "multi-llm": ("Multi-agent multi-LLM (chained)", multiagent_example),
 }
 
 
@@ -224,8 +249,10 @@ if __name__ == "__main__":
     print(f"{label} ({mode})")
     print("=" * 40)
 
+    print("\n[1] Setting up agents...")
     result = setup_fn()
 
+    print("\n[2] Running model selection...")
     if args.example == "single":
         llm_proxy, agent_executor = result
         results = run_model_selection(
@@ -249,6 +276,7 @@ if __name__ == "__main__":
             dataset_file=args.dataset,
         )
 
+    print("\n[3] Saving results plot...")
     plot_results(
         results, f"LangChain {label} Results", "examples/langchain_results.png"
     )

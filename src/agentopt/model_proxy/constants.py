@@ -1,71 +1,10 @@
-"""Shared constants and framework detection for model proxy and model selection."""
+"""Shared constants for model proxy and model selection."""
 
-import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
-
-logger = logging.getLogger(__name__)
+from typing import Dict, List, Optional, Tuple
 
 # Model name fields to check on LLM objects, in priority order.
 MODEL_FIELDS = ("model", "model_name", "model_id")
-
-# Attribute names to check for the LLM on an agent, in priority order.
-AGENT_LLM_ATTRS = ("llm",)
-
-# Module prefixes that identify LangChain-compatible LLM objects (used by both LangChain and LangGraph).
-LANGCHAIN_COMPATIBLE_PREFIXES = (
-    "langchain_openai",
-    "langchain_anthropic",
-    "langchain_google",
-    "langchain_aws",
-    "langchain_community",
-)
-
-
-def is_crewai_crew(agent: Any) -> bool:
-    """Check if an agent is a CrewAI Crew."""
-    module = getattr(type(agent), "__module__", "") or ""
-    return module.startswith("crewai") and hasattr(agent, "agents")
-
-
-def is_langchain_executor(agent: Any) -> bool:
-    """Check if an agent is a LangChain AgentExecutor."""
-    module = getattr(type(agent), "__module__", "") or ""
-    return (
-        module.startswith("langchain")
-        and hasattr(agent, "agent")
-        and hasattr(agent, "tools")
-    )
-
-
-def is_llamaindex_agent(agent: Any) -> bool:
-    """Check if an agent is a LlamaIndex agent (FunctionAgent, AgentWorkflow, etc.)."""
-    module = getattr(type(agent), "__module__", "") or ""
-    return module.startswith("llama_index") and hasattr(agent, "run")
-
-
-def is_ag2_agent(agent: Any) -> bool:
-    """Check if an agent is an AG2 ConversableAgent."""
-    module = getattr(type(agent), "__module__", "") or ""
-    return module.startswith("autogen") and hasattr(agent, "run")
-
-
-def is_crewai_llm(llm: Any) -> bool:
-    """Check if an LLM object is from CrewAI."""
-    module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith("crewai")
-
-
-def is_llamaindex_llm(llm: Any) -> bool:
-    """Check if an LLM object is from LlamaIndex."""
-    module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith("llama_index")
-
-
-def is_langchain_compatible_llm(llm: Any) -> bool:
-    """Check if an LLM object is from a LangChain-compatible package (LangChain, LangGraph, etc.)."""
-    module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith(LANGCHAIN_COMPATIBLE_PREFIXES)
 
 
 # Mapping of model provider prefixes to required environment variables.

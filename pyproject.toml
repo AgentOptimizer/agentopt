@@ -33,9 +33,18 @@ crewai = [
 ag2 = [
     "ag2[openai]>=0.6.0",
 ]
+openai-agents = [
+    "openai-agents>=0.0.1",
+]
+claude-agent-sdk = [
+    "claude-agent-sdk>=0.1.0",
+]
 llamaindex = [
     "llama-index-core>=0.12.0",
     "llama-index-llms-openai>=0.3.0",
+    "llama-index-llms-anthropic>=0.10.0",
+    "llama-index-llms-gemini>=0.6.0",
+    "llama-index-llms-openrouter>=0.4.0",
 ]
 
 [build-system]

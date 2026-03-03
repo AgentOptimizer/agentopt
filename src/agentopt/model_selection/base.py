@@ -3,7 +3,6 @@ Base classes and result types for model selection.
 """
 
 import asyncio
-import copy
 import inspect
 import logging
 import time
@@ -15,16 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..base_models import Dataset, EvalFn, validate_dataset
 from ..model_proxy import ModelProxy
-from .utils import extract_prompt
-from ..model_proxy.constants import (
-    AGENT_LLM_ATTRS,
-    MODEL_FIELDS,
-    is_ag2_agent,
-    is_crewai_crew,
-    is_langchain_executor,
-    is_llamaindex_agent,
-    validate_model_candidates,
-)
+from ..model_proxy.constants import MODEL_FIELDS, validate_model_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +167,7 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        clone_fn: Optional[Callable] = None,
     ) -> None:
         """
         Initialize the model selector.
@@ -184,10 +175,19 @@ class BaseModelSelector(ABC):
         Args:
             models: Dictionary mapping ModelProxy to list of model candidates
             eval_fn: Function (expected, actual) -> bool | float (higher is better)
-            dataset: Sequence of (input_data, expected_answer) pairs, pre-loaded by the user.
-                Any object supporting len() and indexing that yields 2-element tuples works.
-            agent: agent class for agent framework that we support: Langchain, Langgraph, CrewAI, etc
-            invoke_fn: callable for customized agent
+            dataset: Sequence of (input_data, expected_answer) pairs, pre-loaded
+                by the user.  Any object supporting len() and indexing that yields
+                2-element tuples works.
+            agent: Agent object for a supported framework (CrewAI, LangChain,
+                LlamaIndex, OpenAI SDK).  Mutually exclusive with *invoke_fn*.
+            invoke_fn: Callable for a custom agent or multi-agent chain.
+                Mutually exclusive with *agent*.
+            clone_fn: Optional factory for parallel evaluation when *invoke_fn*
+                is used.  Called once per model combination with a
+                ``{proxy: model_name}`` dict; must return a fresh callable
+                (same signature as *invoke_fn*) that is independent of any
+                shared state.  Required for ``select_best(parallel=True)``
+                when *invoke_fn* is provided instead of *agent*.
         """
         if agent is None and invoke_fn is None:
             raise ValueError("Either 'agent' or 'invoke_fn' must be provided")
@@ -201,67 +201,36 @@ class BaseModelSelector(ABC):
         self.eval_fn = eval_fn
         self.dataset = dataset
         self._models = models
+        self.clone_fn = clone_fn
 
         # Validate API keys for all candidate models.
         warnings, _ = validate_model_candidates(models)
         for warning in warnings:
             raise ValueError(warning)
 
-        # Resolve invoke_fn from agent if not provided directly
         if invoke_fn is not None:
             self.invoke_fn = invoke_fn
             self.is_async = inspect.iscoroutinefunction(invoke_fn)
             self._invoke_method_name = None
-        elif hasattr(agent, "kickoff"):
-            # CrewAI agents use .kickoff()
-            self.invoke_fn = agent.kickoff
-            self.is_async = False
-            self._invoke_method_name = "kickoff"
-        elif hasattr(agent, "invoke"):
-            # LangChain and LangGraph agents use .invoke()
-            self.invoke_fn = agent.invoke
-            self.is_async = False
-            self._invoke_method_name = "invoke"
-        elif is_ag2_agent(agent):
-            # AG2 agents use .run(message=...) with different signature than LlamaIndex
-            self.invoke_fn = self._make_ag2_invoke_fn(agent)
-            self.is_async = False
-            self._invoke_method_name = "run"
-        elif hasattr(agent, "run"):
-            # LlamaIndex agents use .run() — returns a coroutine/WorkflowHandler
-            # that must be awaited, but iscoroutinefunction returns False due to
-            # instrumentation decorators. Wrap it so _evaluate handles it correctly.
-            self.invoke_fn = self._make_invoke_fn(agent, "run", is_async=False)
-            self.is_async = False
-            self._invoke_method_name = "run"
         else:
-            raise TypeError(
-                f"Unsupported agent type: {type(agent).__name__}. "
-                "Pass 'invoke_fn' directly instead."
-            )
+            # Auto-detect framework via adapter registry.
+            from ..model_proxy.adapter import get_adapter
 
-        # Register proxy → sub-agent sync for CrewAI Crews
-        if agent is not None and is_crewai_crew(agent):
-            crew_agents = agent.agents
-            proxy_list = list(models.keys())
-            if len(proxy_list) == 1:
-                proxy_list[0].register_crewai_agents(crew_agents)
-            elif len(proxy_list) == len(crew_agents):
-                for proxy, ag in zip(proxy_list, crew_agents):
-                    proxy.register_crewai_agents([ag])
+            adapter = get_adapter(agent)
+            if adapter is None:
+                raise TypeError(
+                    f"Unsupported agent type: {type(agent).__name__}. "
+                    "Pass 'invoke_fn' directly instead."
+                )
 
-        # Register proxy → LangChain AgentExecutor chain rebuild
-        elif agent is not None and is_langchain_executor(agent):
-            proxy_list = list(models.keys())
-            prompt = extract_prompt(agent)
-            if prompt is not None and len(proxy_list) == 1:
-                proxy_list[0].register_langchain_executor(agent, agent.tools, prompt)
+            self.invoke_fn = adapter.get_invoke_fn(agent)
+            self.is_async = False  # all adapters wrap async internally
+            self._invoke_method_name = getattr(adapter, "invoke_method_name", None)
 
-        # Register proxy → LlamaIndex agent LLM sync
-        elif agent is not None and is_llamaindex_agent(agent):
+            # Auto-register proxy ↔ agent sync for sequential evaluation.
             proxy_list = list(models.keys())
-            if len(proxy_list) == 1:
-                proxy_list[0].register_llamaindex_agents([agent])
+            for proxy in proxy_list:
+                adapter.register_with_proxy(proxy, agent, proxy_list)
 
     def _evaluate(
         self,
@@ -317,65 +286,6 @@ class BaseModelSelector(ABC):
     # ------------------------------------------------------------------
     # Parallel evaluation utilities
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _clone_agent(agent: Any, llm_updates: Dict[str, Any]) -> Any:
-        """Create an independent copy of the agent with LLMs replaced.
-
-        Pydantic agents: model_copy(deep=False) — avoids deepcopy of HTTP
-        clients with thread locks.
-        Other agents: copy.deepcopy fallback.
-        """
-        if isinstance(agent, BaseModel):
-            return agent.model_copy(update=llm_updates, deep=False)
-        else:
-            agent_copy = copy.deepcopy(agent)
-            for attr, llm in llm_updates.items():
-                setattr(agent_copy, attr, llm)
-            return agent_copy
-
-    @staticmethod
-    def _create_variant(original_llm: Any, model_name: str) -> Any:
-        """Create a fresh LLM with a different model name, preserving settings."""
-        if isinstance(original_llm, BaseModel):
-            target_field = next(
-                (f for f in MODEL_FIELDS if f in type(original_llm).model_fields),
-                None,
-            )
-            if target_field:
-                return original_llm.model_copy(update={target_field: model_name})
-        else:
-            target_field = next(
-                (f for f in MODEL_FIELDS if hasattr(original_llm, f)),
-                None,
-            )
-            if target_field:
-                new_llm = copy.deepcopy(original_llm)
-                setattr(new_llm, target_field, model_name)
-                return new_llm
-
-        raise TypeError(
-            f"Cannot create variant of {type(original_llm).__name__}: "
-            f"no supported model field found (checked: {MODEL_FIELDS})"
-        )
-
-    @staticmethod
-    def _make_ag2_invoke_fn(agent: Any) -> Callable:
-        """Create an invocation callable for an AG2 ConversableAgent.
-
-        AG2's .run() takes message= (not **kwargs) and returns a response
-        object that needs event consumption and content extraction.
-        """
-        from ..model_proxy.ag2 import extract_ag2_content
-
-        def _invoke(input_data: Any) -> str:
-            message = (
-                input_data["input"] if isinstance(input_data, dict) else str(input_data)
-            )
-            response = agent.run(message=message, max_turns=1, user_input=False)
-            return extract_ag2_content(response)
-
-        return _invoke
 
     @staticmethod
     def _make_invoke_fn(agent_copy: Any, method_name: str, is_async: bool) -> Callable:
@@ -457,22 +367,6 @@ class BaseModelSelector(ABC):
                 best_latency = r.latency_seconds
 
         return (best.model_name, best.accuracy) if best else None
-
-    def _detect_proxy_attrs(
-        self,
-        proxies: List[ModelProxy],
-    ) -> Dict[int, str]:
-        """Detect which agent attribute each proxy corresponds to."""
-        mapping: Dict[int, str] = {}
-        for proxy in proxies:
-            proxy_model = proxy.get_model()
-            for attr in AGENT_LLM_ATTRS:
-                if hasattr(self.agent, attr):
-                    val = getattr(self.agent, attr)
-                    if val is proxy or val is proxy_model:
-                        mapping[id(proxy)] = attr
-                        break
-        return mapping
 
     @abstractmethod
     def select_best(

@@ -195,10 +195,7 @@ def run_model_selection(
         model_candidates = ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-20250514"]
 
     selector = BruteForceModelSelector(
-        models={
-            llm: model_candidates
-            for llm in llm_proxies
-        },
+        models={llm: model_candidates for llm in llm_proxies},
         eval_fn=eval_fn,
         dataset=dataset,
         agent=agent,

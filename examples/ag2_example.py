@@ -181,7 +181,9 @@ def multiagent_multillm_example():
         question = input_data["input"]
         r_model = researcher_proxy.get_model().model
         c_model = coder_proxy.get_model().model
-        print(f"  [invoke] researcher_model={r_model}, coder_model={c_model} | q: {question[:60]}")
+        print(
+            f"  [invoke] researcher_model={r_model}, coder_model={c_model} | q: {question[:60]}"
+        )
         research_output = extract_ag2_content(
             researcher.run(message=question, max_turns=1, user_input=False)
         )
@@ -203,7 +205,9 @@ def multiagent_multillm_example():
         """
         r_model = model_map[researcher_proxy]
         c_model = model_map[coder_proxy]
-        print(f"  [clone_fn] building fresh agents (researcher: {r_model}, coder: {c_model})")
+        print(
+            f"  [clone_fn] building fresh agents (researcher: {r_model}, coder: {c_model})"
+        )
         fresh_researcher = ConversableAgent(
             name="researcher",
             system_message="You are a research assistant. Find and summarize information.",

@@ -91,7 +91,9 @@ def multiagent_example():
     # 2. Define tools for each agent
     search = DuckDuckGoSearchRun()
     wikipedia = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
-    print("  [setup] tools defined: DuckDuckGoSearch, Wikipedia (researcher), calculator (coder)")
+    print(
+        "  [setup] tools defined: DuckDuckGoSearch, Wikipedia (researcher), calculator (coder)"
+    )
 
     # 3. Create researcher agent
     researcher_prompt = ChatPromptTemplate.from_messages(
@@ -158,7 +160,11 @@ def run_model_selection(
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
-    model_candidates = ["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"]
+    model_candidates = [
+        "openai/gpt-4o-mini",
+        "openai/gpt-4o",
+        "anthropic/claude-sonnet-4-20250514",
+    ]
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 

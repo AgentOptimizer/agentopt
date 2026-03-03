@@ -99,7 +99,9 @@ def single_agent_example():
 def multiagent_example():
     # 1. Wrap the LLM
     llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))
-    print("  [setup] proxy created (initial model: openai/gpt-4o-mini, shared by all agents)")
+    print(
+        "  [setup] proxy created (initial model: openai/gpt-4o-mini, shared by all agents)"
+    )
 
     # 2. Standard CrewAI setup — no tools so agents answer directly
     researcher = Agent(

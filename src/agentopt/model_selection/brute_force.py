@@ -211,11 +211,18 @@ class BruteForceModelSelector(BaseModelSelector):
                         )
                     else:
                         import copy
+
                         agent_copy = copy.deepcopy(self.agent)
                     # Use the adapter's own get_invoke_fn — it knows the correct
                     # invocation signature for the framework (e.g. LlamaIndex uses
                     # asyncio.run, AG2 needs message= kwargs + extract_ag2_content).
-                    invoke_fn = adapter.get_invoke_fn(agent_copy) if adapter is not None else self._make_invoke_fn(agent_copy, invoke_method_name, self.is_async)
+                    invoke_fn = (
+                        adapter.get_invoke_fn(agent_copy)
+                        if adapter is not None
+                        else self._make_invoke_fn(
+                            agent_copy, invoke_method_name, self.is_async
+                        )
+                    )
                     tasks.append((combo_name, combo, invoke_fn, False))
             except Exception as e:
                 logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)

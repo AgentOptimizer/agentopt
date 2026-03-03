@@ -66,7 +66,6 @@ def _no_key_error(provider: str, model_name: str) -> ValueError:
     )
 
 
-
 def build_llamaindex_llm(model_name: str) -> Any:
     """Create a LlamaIndex LLM object from a model name string.
 
@@ -95,8 +94,11 @@ def build_llamaindex_llm(model_name: str) -> Any:
         - **Native OpenAI**: bare names work for both native and
           OpenRouter, e.g. ``gpt-4o-mini``, ``gpt-4o``.
     """
+
     def _log_created(llm: Any, provider: str, via: str = "native") -> Any:
-        print(f"  [build_llamaindex_llm] {model_name} -> {type(llm).__name__} (via {via})")
+        print(
+            f"  [build_llamaindex_llm] {model_name} -> {type(llm).__name__} (via {via})"
+        )
         return llm
 
     # --- AWS Bedrock (Anthropic on Bedrock) ---
@@ -109,12 +111,16 @@ def build_llamaindex_llm(model_name: str) -> Any:
             try:
                 from llama_index.llms.anthropic import Anthropic
 
-                return _log_created(Anthropic(
-                    model=clean_name,
-                    aws_region=aws_region,
-                    aws_access_key_id=aws_key,
-                    aws_secret_access_key=aws_secret,
-                ), "Bedrock", "aws")
+                return _log_created(
+                    Anthropic(
+                        model=clean_name,
+                        aws_region=aws_region,
+                        aws_access_key_id=aws_key,
+                        aws_secret_access_key=aws_secret,
+                    ),
+                    "Bedrock",
+                    "aws",
+                )
             except ImportError:
                 pass
         fallback = _openrouter_fallback(model_name)
@@ -127,8 +133,7 @@ def build_llamaindex_llm(model_name: str) -> Any:
 
     # --- OpenAI ---
     if model_name.startswith("openai/") or any(
-        model_name.startswith(p)
-        for p in ("gpt-", "o1-", "o3-", "o4-")
+        model_name.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-")
     ):
         clean_name = model_name.removeprefix("openai/")
         openai_key = os.getenv("OPENAI_API_KEY")
@@ -149,7 +154,9 @@ def build_llamaindex_llm(model_name: str) -> Any:
             try:
                 from llama_index.llms.gemini import Gemini
 
-                return _log_created(Gemini(model=clean_name, api_key=google_key), "Gemini")
+                return _log_created(
+                    Gemini(model=clean_name, api_key=google_key), "Gemini"
+                )
             except ImportError:
                 pass
         fallback = _openrouter_fallback(clean_name)
@@ -165,7 +172,9 @@ def build_llamaindex_llm(model_name: str) -> Any:
             try:
                 from llama_index.llms.anthropic import Anthropic
 
-                return _log_created(Anthropic(model=clean_name, api_key=anthropic_key), "Anthropic")
+                return _log_created(
+                    Anthropic(model=clean_name, api_key=anthropic_key), "Anthropic"
+                )
             except ImportError:
                 pass
         fallback = _openrouter_fallback(clean_name)
@@ -408,7 +417,9 @@ class LlamaIndexAdapter:
         """
         if not hasattr(agent, "agents"):
             # Simple FunctionAgent — model_copy works fine
-            cloned = agent.model_copy(deep=False) if isinstance(agent, BaseModel) else agent
+            cloned = (
+                agent.model_copy(deep=False) if isinstance(agent, BaseModel) else agent
+            )
             return cloned
 
         # AgentWorkflow — reconstruct with fresh cloned agents
@@ -422,24 +433,33 @@ class LlamaIndexAdapter:
         if n_proxies == 1:
             model_spec = combo[0]
             model_name = (
-                model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
+                model_spec
+                if isinstance(model_spec, str)
+                else get_model_name(model_spec)
             )
             fresh_llm = _build_llamaindex_llm(model_name)
             for name, ag in agents_dict.items():
-                cloned_agents[name] = ag.model_copy(update={"llm": fresh_llm}, deep=False)
+                cloned_agents[name] = ag.model_copy(
+                    update={"llm": fresh_llm}, deep=False
+                )
                 print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
         elif n_proxies == n_agents:
             for (name, ag), model_spec in zip(agents_dict.items(), combo):
                 model_name = (
-                    model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
+                    model_spec
+                    if isinstance(model_spec, str)
+                    else get_model_name(model_spec)
                 )
                 fresh_llm = _build_llamaindex_llm(model_name)
-                cloned_agents[name] = ag.model_copy(update={"llm": fresh_llm}, deep=False)
+                cloned_agents[name] = ag.model_copy(
+                    update={"llm": fresh_llm}, deep=False
+                )
                 print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
         else:
             logger.warning(
                 "Cannot map %d proxies to %d agents for parallel clone.",
-                n_proxies, n_agents,
+                n_proxies,
+                n_agents,
             )
             return agent
 

@@ -156,7 +156,9 @@ def multiagent_example():
     print("  [setup] proxy created (initial model: gpt-4o-mini)")
 
     workflow = MultiAgentWorkflow(solver_model=proxy, reviewer_model=proxy)
-    print("  [setup] LangGraph workflow compiled: add_system -> call_solver -> call_reviewer -> finalize")
+    print(
+        "  [setup] LangGraph workflow compiled: add_system -> call_solver -> call_reviewer -> finalize"
+    )
     print("  [setup] both nodes share the same proxy")
 
     def invoke_fn(input_data):
@@ -190,7 +192,9 @@ def multiagent_multillm_example():
     print("  [setup] reviewer_proxy created (initial model: claude-sonnet-4-20250514)")
 
     agent = MultiAgentWorkflow(solver_model=solver_proxy, reviewer_model=reviewer_proxy)
-    print("  [setup] LangGraph workflow compiled: add_system -> call_solver (OpenAI) -> call_reviewer (Claude) -> finalize")
+    print(
+        "  [setup] LangGraph workflow compiled: add_system -> call_solver (OpenAI) -> call_reviewer (Claude) -> finalize"
+    )
 
     def invoke_fn(input_data):
         return agent.invoke(input_data)
@@ -203,7 +207,9 @@ def multiagent_multillm_example():
         """
         s_model = model_map[solver_proxy]
         r_model = model_map[reviewer_proxy]
-        print(f"  [clone_fn] building fresh workflow (solver: {s_model}, reviewer: {r_model})")
+        print(
+            f"  [clone_fn] building fresh workflow (solver: {s_model}, reviewer: {r_model})"
+        )
         fresh_solver = create_model_from_string(s_model)
         fresh_reviewer = create_model_from_string(r_model)
         fresh_wf = MultiAgentWorkflow(
@@ -215,13 +221,19 @@ def multiagent_multillm_example():
 
 
 def run_model_selection(
-    agent_or_invoke_fn, llm_proxies, dataset_file=None, clone_fn=None, parallel=False,
+    agent_or_invoke_fn,
+    llm_proxies,
+    dataset_file=None,
+    clone_fn=None,
+    parallel=False,
     model_candidates=None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
     if model_candidates is None:
-        model_candidates = {p: ["openai/gpt-4o-mini", "openai/gpt-4o"] for p in llm_proxies}
+        model_candidates = {
+            p: ["openai/gpt-4o-mini", "openai/gpt-4o"] for p in llm_proxies
+        }
     elif isinstance(model_candidates, list):
         model_candidates = {p: model_candidates for p in llm_proxies}
 

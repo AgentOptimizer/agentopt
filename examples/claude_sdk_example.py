@@ -146,7 +146,9 @@ def multi_agent_multi_llm_example():
         """Build fresh invoke_fn with independent options per proxy."""
         s_model = model_map[solver_proxy]
         r_model = model_map[reviewer_proxy]
-        print(f"  [clone_fn] building fresh agents (solver: {s_model}, reviewer: {r_model})")
+        print(
+            f"  [clone_fn] building fresh agents (solver: {s_model}, reviewer: {r_model})"
+        )
         fresh_solver = ClaudeAgentOptions(model=s_model)
         fresh_reviewer = ClaudeAgentOptions(model=r_model)
 
@@ -169,7 +171,9 @@ def multi_agent_multi_llm_example():
     return (solver_proxy, reviewer_proxy), invoke_fn, clone_fn
 
 
-def run_model_selection(invoke_fn, llm_proxies, parallel=False, dataset_file=None, clone_fn=None):
+def run_model_selection(
+    invoke_fn, llm_proxies, parallel=False, dataset_file=None, clone_fn=None
+):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
     model_candidates = ["haiku", "sonnet"]
@@ -183,10 +187,7 @@ def run_model_selection(invoke_fn, llm_proxies, parallel=False, dataset_file=Non
         kwargs["clone_fn"] = clone_fn
 
     selector = BruteForceModelSelector(
-        models={
-            llm: model_candidates
-            for llm in llm_proxies
-        },
+        models={llm: model_candidates for llm in llm_proxies},
         eval_fn=eval_fn,
         dataset=dataset,
         **kwargs,

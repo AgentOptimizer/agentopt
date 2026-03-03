@@ -89,9 +89,19 @@ def multillm_example():
         c_model = coder_proxy.get_model().model
         print(f"  [invoke] researcher={r_model}, coder={c_model} | q: {question[:60]}")
         research_result = Runner.run_sync(researcher, question)
-        research_output = research_result.final_output if hasattr(research_result, "final_output") else str(research_result)
-        coder_result = Runner.run_sync(coder, f"Context: {research_output}\n\nTask: {question}")
-        return coder_result.final_output if hasattr(coder_result, "final_output") else str(coder_result)
+        research_output = (
+            research_result.final_output
+            if hasattr(research_result, "final_output")
+            else str(research_result)
+        )
+        coder_result = Runner.run_sync(
+            coder, f"Context: {research_output}\n\nTask: {question}"
+        )
+        return (
+            coder_result.final_output
+            if hasattr(coder_result, "final_output")
+            else str(coder_result)
+        )
 
     def clone_fn(model_map):
         """Build fresh agents for parallel evaluation.
@@ -100,7 +110,9 @@ def multillm_example():
         """
         r_model = model_map[researcher_proxy]
         c_model = model_map[coder_proxy]
-        print(f"  [clone_fn] building fresh agents (researcher: {r_model}, coder: {c_model})")
+        print(
+            f"  [clone_fn] building fresh agents (researcher: {r_model}, coder: {c_model})"
+        )
         fresh_researcher = Agent(
             name="researcher",
             model=build_openai_agents_model(r_model),
@@ -115,9 +127,19 @@ def multillm_example():
         def fresh_invoke(input_data):
             question = input_data["input"]
             research_result = Runner.run_sync(fresh_researcher, question)
-            research_output = research_result.final_output if hasattr(research_result, "final_output") else str(research_result)
-            coder_result = Runner.run_sync(fresh_coder, f"Context: {research_output}\n\nTask: {question}")
-            return coder_result.final_output if hasattr(coder_result, "final_output") else str(coder_result)
+            research_output = (
+                research_result.final_output
+                if hasattr(research_result, "final_output")
+                else str(research_result)
+            )
+            coder_result = Runner.run_sync(
+                fresh_coder, f"Context: {research_output}\n\nTask: {question}"
+            )
+            return (
+                coder_result.final_output
+                if hasattr(coder_result, "final_output")
+                else str(coder_result)
+            )
 
         return fresh_invoke
 
@@ -180,7 +202,9 @@ EXAMPLES = {
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="OpenAI Agents SDK model selection example")
+    parser = argparse.ArgumentParser(
+        description="OpenAI Agents SDK model selection example"
+    )
     parser.add_argument("example", choices=EXAMPLES.keys(), help="Which example to run")
     parser.add_argument(
         "--dataset",
@@ -223,4 +247,6 @@ if __name__ == "__main__":
 
     if not args.no_plot:
         print("\n[3] Saving results plot...")
-        plot_results(results, f"OpenAI SDK {label} Results", "examples/openai_sdk_results.png")
+        plot_results(
+            results, f"OpenAI SDK {label} Results", "examples/openai_sdk_results.png"
+        )

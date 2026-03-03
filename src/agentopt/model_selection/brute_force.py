@@ -30,12 +30,14 @@ class BruteForceModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        clone_fn: Optional[Callable] = None,
     ) -> None:
         super().__init__(
             models=models,
             eval_fn=eval_fn,
             agent=agent,
             invoke_fn=invoke_fn,
+            clone_fn=clone_fn,
             dataset=dataset,
         )
 
@@ -92,6 +94,8 @@ class BruteForceModelSelector(BaseModelSelector):
                 proxy.set_model(model_obj)
 
             print(f"  [{idx}/{len(all_combinations)}] Evaluating: {combo_name}")
+            for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
+                print(f"    proxy[{i}] → {self._get_model_name(model_obj)}")
             try:
                 accuracy, latency = self._evaluate(self.dataset, label=combo_name)
 
@@ -164,16 +168,17 @@ class BruteForceModelSelector(BaseModelSelector):
             max_workers = len(all_combinations)
 
         invoke_method_name = self._invoke_method_name
-        if invoke_method_name is None:
+        if invoke_method_name is None and self.clone_fn is None:
             raise RuntimeError(
-                "Parallel mode requires an agent (not invoke_fn). "
-                "Pass agent= instead of invoke_fn=."
+                "Parallel mode requires either an agent= or a clone_fn= alongside "
+                "invoke_fn=.  Pass clone_fn= to enable parallel evaluation for "
+                "custom multi-agent chains."
             )
 
-        # Resolve the adapter once for cloning.
+        # Resolve the adapter once for agent-based cloning (None for clone_fn path).
         from ..model_proxy.adapter import get_adapter
 
-        adapter = get_adapter(self.agent)
+        adapter = get_adapter(self.agent) if self.agent is not None else None
 
         print(f"\n{'='*60}")
         print(
@@ -182,32 +187,39 @@ class BruteForceModelSelector(BaseModelSelector):
         )
         print(f"{'='*60}\n")
 
-        # Phase 1: Create agent copies (serial — cloning must not race).
+        # Phase 1: Create agent/invoke_fn copies (serial — cloning must not race).
         print(f"  Cloning agents for {len(all_combinations)} combinations ...")
         tasks: List[Tuple[str, tuple, Any, bool]] = []
 
         for idx, combo in enumerate(all_combinations, 1):
             combo_name = " + ".join(self._get_model_name(m) for m in combo)
             print(f"    clone {idx}/{len(all_combinations)}: {combo_name}", flush=True)
+            for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
+                print(f"      proxy[{i}] → {self._get_model_name(model_obj)}")
 
             try:
-                if adapter is not None:
-                    agent_copy = adapter.clone_for_parallel(
-                        self.agent, proxies, combo, self._get_model_name
-                    )
+                if self.clone_fn is not None:
+                    # User-supplied factory for invoke_fn-based multi-agent chains.
+                    model_map = dict(zip(proxies, combo))
+                    fresh_invoke = self.clone_fn(model_map)
+                    tasks.append((combo_name, combo, fresh_invoke, self.is_async))
                 else:
-                    # Fallback for unknown frameworks (shouldn't normally reach here).
-                    import copy
-
-                    agent_copy = copy.deepcopy(self.agent)
+                    # Adapter-based cloning for recognized framework agents.
+                    if adapter is not None:
+                        agent_copy = adapter.clone_for_parallel(
+                            self.agent, proxies, combo, self._get_model_name
+                        )
+                    else:
+                        import copy
+                        agent_copy = copy.deepcopy(self.agent)
+                    # Use the adapter's own get_invoke_fn — it knows the correct
+                    # invocation signature for the framework (e.g. LlamaIndex uses
+                    # asyncio.run, AG2 needs message= kwargs + extract_ag2_content).
+                    invoke_fn = adapter.get_invoke_fn(agent_copy) if adapter is not None else self._make_invoke_fn(agent_copy, invoke_method_name, self.is_async)
+                    tasks.append((combo_name, combo, invoke_fn, False))
             except Exception as e:
                 logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
                 continue
-
-            invoke_fn = self._make_invoke_fn(
-                agent_copy, invoke_method_name, self.is_async
-            )
-            tasks.append((combo_name, combo, invoke_fn, self.is_async))
 
         if not tasks:
             raise RuntimeError("All clone attempts failed. Cannot evaluate any models.")

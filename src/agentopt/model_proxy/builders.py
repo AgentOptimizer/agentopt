@@ -10,7 +10,7 @@ from .framework_specific_implementation.langchain_compat import (
 )
 from .framework_specific_implementation.llamaindex import (
     is_llamaindex_llm,
-    _build_llamaindex_llm,
+    build_llamaindex_llm,
 )
 
 
@@ -35,7 +35,7 @@ def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
         return build_langchain_compatible_llm(model_name)
 
     if is_llamaindex_llm(current_llm):
-        return _build_llamaindex_llm(model_name, current_llm)
+        return build_llamaindex_llm(model_name)
 
     if is_ag2_llm(current_llm):
         return AG2ConfigWrapper(model_name)

@@ -36,7 +36,7 @@ def build_langchain_compatible_llm(model_name: str) -> Optional[Any]:
     Returns a new model instance, or ``None`` on failure.
     """
     try:
-        from ..model_factory import create_model_from_string
+        from ...model_factory import create_model_from_string
 
         return create_model_from_string(model_name)
     except Exception:

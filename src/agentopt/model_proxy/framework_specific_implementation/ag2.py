@@ -31,6 +31,23 @@ def is_ag2_llm(llm: Any) -> bool:
     return isinstance(llm, AG2ConfigWrapper)
 
 
+def _build_ag2_config(model: str) -> dict:
+    """Build an AG2 config_list entry with correct api_type and key for the model."""
+    bare = model.split("/", 1)[-1] if "/" in model else model
+    if bare.startswith("claude") or model.startswith("anthropic/"):
+        return {
+            "api_type": "anthropic",
+            "model": bare,
+            "api_key": os.getenv("ANTHROPIC_API_KEY"),
+        }
+    # Default to OpenAI-compatible
+    return {
+        "api_type": "openai",
+        "model": bare,
+        "api_key": os.getenv("OPENAI_API_KEY"),
+    }
+
+
 class AG2ConfigWrapper:
     """Mutable wrapper around AG2's config_list.
 
@@ -41,13 +58,7 @@ class AG2ConfigWrapper:
     """
 
     def __init__(self, model: str) -> None:
-        self.config_list = [
-            {
-                "api_type": "openai",
-                "model": model,
-                "api_key": os.getenv("OPENAI_API_KEY"),
-            }
-        ]
+        self.config_list = [_build_ag2_config(model)]
 
     @property
     def model(self) -> str:
@@ -55,7 +66,7 @@ class AG2ConfigWrapper:
 
     @model.setter
     def model(self, value: str) -> None:
-        self.config_list[0]["model"] = value
+        self.config_list[0] = _build_ag2_config(value)
 
 
 def _is_ag2_llm_config(obj: Any) -> bool:
@@ -230,9 +241,7 @@ class AG2Adapter:
         model_name = (
             model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
         )
-        new_config = LLMConfig(
-            {"model": model_name, "api_key": os.getenv("OPENAI_API_KEY")}
-        )
+        new_config = LLMConfig(_build_ag2_config(model_name))
         agent_copy = copy.copy(agent)
         agent_copy.llm_config = new_config
         agent_copy.client = agent_copy._create_client(new_config)

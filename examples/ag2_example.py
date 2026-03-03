@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_proxy.framework_specific_implementation.ag2 import (
     extract_ag2_content,
+    _build_ag2_config,
 )
 
 
@@ -50,6 +51,7 @@ def single_agent_example():
         {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
     )
     proxy = ModelProxy(llm_config)
+    print("  [setup] proxy created (initial model: gpt-4o-mini)")
 
     agent = ConversableAgent(
         name="math_assistant",
@@ -57,8 +59,10 @@ def single_agent_example():
         llm_config=proxy,
         human_input_mode="NEVER",
     )
+    print("  [setup] agent created: math_assistant")
 
-    return proxy, agent
+    # Single-agent uses agent= path; parallel is handled via AG2Adapter.clone_for_parallel.
+    return proxy, agent, None
 
 
 def multiagent_example():
@@ -67,6 +71,7 @@ def multiagent_example():
         {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
     )
     proxy = ModelProxy(llm_config)
+    print("  [setup] proxy created (initial model: gpt-4o-mini)")
 
     researcher = ConversableAgent(
         name="researcher",
@@ -74,6 +79,7 @@ def multiagent_example():
         llm_config=proxy,
         human_input_mode="NEVER",
     )
+    print("  [setup] agent created: researcher")
 
     coder = ConversableAgent(
         name="coder",
@@ -81,12 +87,17 @@ def multiagent_example():
         llm_config=proxy,
         human_input_mode="NEVER",
     )
+    print("  [setup] agent created: coder")
+    print("  [setup] pipeline: researcher -> coder (shared proxy)")
 
     def invoke_fn(input_data):
         question = input_data["input"]
+        model_name = proxy.get_model().model
+        print(f"  [invoke] model={model_name} | researcher processing: {question[:60]}")
         research_output = extract_ag2_content(
             researcher.run(message=question, max_turns=1, user_input=False)
         )
+        print(f"  [invoke] model={model_name} | coder processing with research context")
         coder_output = extract_ag2_content(
             coder.run(
                 message=f"Context: {research_output}\n\nTask: {question}",
@@ -96,7 +107,44 @@ def multiagent_example():
         )
         return coder_output
 
-    return proxy, invoke_fn
+    def clone_fn(model_map):
+        """Build fresh agents for parallel evaluation.
+
+        model_map: {proxy -> model_name_string} for this combination.
+        Both agents share the same model since there is one proxy.
+        """
+        model_name = model_map[proxy]
+        print(f"  [clone_fn] building fresh researcher + coder (model: {model_name})")
+        new_config = LLMConfig(_build_ag2_config(model_name))
+        fresh_researcher = ConversableAgent(
+            name="researcher",
+            system_message="You are a research assistant. Find and summarize information.",
+            llm_config=new_config,
+            human_input_mode="NEVER",
+        )
+        fresh_coder = ConversableAgent(
+            name="coder",
+            system_message="You are a coding assistant. Write efficient code based on research.",
+            llm_config=new_config,
+            human_input_mode="NEVER",
+        )
+
+        def fresh_invoke(input_data):
+            question = input_data["input"]
+            research_output = extract_ag2_content(
+                fresh_researcher.run(message=question, max_turns=1, user_input=False)
+            )
+            return extract_ag2_content(
+                fresh_coder.run(
+                    message=f"Context: {research_output}\n\nTask: {question}",
+                    max_turns=1,
+                    user_input=False,
+                )
+            )
+
+        return fresh_invoke
+
+    return proxy, invoke_fn, clone_fn
 
 
 def multiagent_multillm_example():
@@ -108,7 +156,9 @@ def multiagent_multillm_example():
         {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
     )
     researcher_proxy = ModelProxy(researcher_config)
+    print("  [setup] researcher_proxy created (initial model: gpt-4o-mini)")
     coder_proxy = ModelProxy(coder_config)
+    print("  [setup] coder_proxy created (initial model: gpt-4o-mini)")
 
     researcher = ConversableAgent(
         name="researcher",
@@ -116,6 +166,7 @@ def multiagent_multillm_example():
         llm_config=researcher_proxy,
         human_input_mode="NEVER",
     )
+    print("  [setup] agent created: researcher")
 
     coder = ConversableAgent(
         name="coder",
@@ -123,12 +174,18 @@ def multiagent_multillm_example():
         llm_config=coder_proxy,
         human_input_mode="NEVER",
     )
+    print("  [setup] agent created: coder")
+    print("  [setup] pipeline: researcher (proxy1) -> coder (proxy2)")
 
     def invoke_fn(input_data):
         question = input_data["input"]
+        r_model = researcher_proxy.get_model().model
+        c_model = coder_proxy.get_model().model
+        print(f"  [invoke] researcher_model={r_model}, coder_model={c_model} | q: {question[:60]}")
         research_output = extract_ag2_content(
             researcher.run(message=question, max_turns=1, user_input=False)
         )
+        print(f"  [invoke] coder processing with research context")
         coder_output = extract_ag2_content(
             coder.run(
                 message=f"Context: {research_output}\n\nTask: {question}",
@@ -138,12 +195,52 @@ def multiagent_multillm_example():
         )
         return coder_output
 
-    return (researcher_proxy, coder_proxy), invoke_fn
+    def clone_fn(model_map):
+        """Build fresh agents for parallel evaluation.
+
+        model_map: {researcher_proxy -> model_name, coder_proxy -> model_name}.
+        Each proxy maps to its own model candidate for this combination.
+        """
+        r_model = model_map[researcher_proxy]
+        c_model = model_map[coder_proxy]
+        print(f"  [clone_fn] building fresh agents (researcher: {r_model}, coder: {c_model})")
+        fresh_researcher = ConversableAgent(
+            name="researcher",
+            system_message="You are a research assistant. Find and summarize information.",
+            llm_config=LLMConfig(_build_ag2_config(r_model)),
+            human_input_mode="NEVER",
+        )
+        fresh_coder = ConversableAgent(
+            name="coder",
+            system_message="You are a coding assistant. Write efficient code based on research.",
+            llm_config=LLMConfig(_build_ag2_config(c_model)),
+            human_input_mode="NEVER",
+        )
+
+        def fresh_invoke(input_data):
+            question = input_data["input"]
+            research_output = extract_ag2_content(
+                fresh_researcher.run(message=question, max_turns=1, user_input=False)
+            )
+            return extract_ag2_content(
+                fresh_coder.run(
+                    message=f"Context: {research_output}\n\nTask: {question}",
+                    max_turns=1,
+                    user_input=False,
+                )
+            )
+
+        return fresh_invoke
+
+    return (researcher_proxy, coder_proxy), invoke_fn, clone_fn
 
 
-def run_model_selection(agent_or_invoke_fn, llm_proxies, dataset_file=None):
+def run_model_selection(
+    agent_or_invoke_fn, llm_proxies, dataset_file=None, clone_fn=None, parallel=False
+):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
-    model_candidates = ["gpt-4o-mini", "gpt-4.1-mini"]
+    print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
+    model_candidates = ["gpt-4o-mini", "anthropic/claude-sonnet-4-20250514"]
 
     models = {p: model_candidates for p in llm_proxies}
 
@@ -151,16 +248,20 @@ def run_model_selection(agent_or_invoke_fn, llm_proxies, dataset_file=None):
     # Multi-agent: pass invoke_fn= for custom chaining
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "run"):
         kwargs = {"invoke_fn": agent_or_invoke_fn}
+        if clone_fn is not None:
+            kwargs["clone_fn"] = clone_fn
     else:
         kwargs = {"agent": agent_or_invoke_fn}
 
+    mode = "parallel" if parallel else "sequential"
+    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
     selector = BruteForceModelSelector(
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,
         **kwargs,
     )
-    results = selector.select_best()
+    results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
     return results
 
@@ -200,6 +301,11 @@ if __name__ == "__main__":
         help="JSONL filename in examples/datasets/",
     )
     parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Evaluate model combinations in parallel (requires clone_fn for multi examples)",
+    )
+    parser.add_argument(
         "--no-plot", action="store_true", help="Skip saving the results plot"
     )
     args = parser.parse_args()
@@ -209,19 +315,24 @@ if __name__ == "__main__":
     print(f"AG2 — {label}")
     print("=" * 40)
 
+    print("\n[1] Setting up agents...")
     result = setup_fn()
-    # multi-llm returns a tuple of proxies; the others return a single proxy or agent
+    # All setup functions return (proxy_or_proxies, agent_or_invoke_fn, clone_fn).
     if isinstance(result[0], tuple):
-        llm_proxies, agent_or_invoke = result
+        llm_proxies, agent_or_invoke, clone_fn = result
     else:
-        llm_proxy_or_agent, agent_or_invoke = result
+        llm_proxy_or_agent, agent_or_invoke, clone_fn = result
         llm_proxies = [llm_proxy_or_agent]
 
+    print("\n[2] Running model selection...")
     results = run_model_selection(
         agent_or_invoke,
         llm_proxies,
         dataset_file=args.dataset,
+        clone_fn=clone_fn,
+        parallel=args.parallel,
     )
 
     if not args.no_plot:
+        print("\n[3] Saving results plot...")
         plot_results(results, f"AG2 {label} Results", "examples/ag2_results.png")

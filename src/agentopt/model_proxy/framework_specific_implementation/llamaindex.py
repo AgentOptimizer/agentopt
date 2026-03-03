@@ -7,6 +7,7 @@ a real LLM and ``register_llamaindex_agent()`` ensures that
 """
 
 import logging
+import os
 from typing import Any, Callable, List
 
 from pydantic import BaseModel
@@ -14,6 +15,175 @@ from pydantic import BaseModel
 from ..constants import MODEL_FIELDS
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# LlamaIndex LLM factory — provider detection + API key fallback
+# ---------------------------------------------------------------------------
+
+
+def _openrouter_model_name(model_name: str) -> str:
+    """Ensure model name has the provider prefix OpenRouter expects.
+
+    OpenRouter requires prefixed names like ``anthropic/claude-sonnet-4-20250514``
+    or ``openai/gpt-4o``.  Bare OpenAI names (``gpt-4o``) work without prefix.
+    """
+    if "/" in model_name:
+        return model_name
+
+    lower = model_name.lower()
+    if "claude" in lower:
+        return f"anthropic/{model_name}"
+    if "gemini" in lower:
+        return f"google/{model_name}"
+    return model_name
+
+
+def _openrouter_fallback(model_name: str) -> Any:
+    """Route any model through OpenRouter via ``llama_index.llms.openrouter.OpenRouter``.
+
+    Uses the dedicated LlamaIndex OpenRouter integration which handles
+    all models (Claude, GPT, Gemini, etc.) natively — no validation
+    patches or protocol hacks needed.
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+
+    from llama_index.llms.openrouter import OpenRouter
+
+    return OpenRouter(
+        model=_openrouter_model_name(model_name),
+        api_key=api_key,
+        is_function_calling_model=True,
+    )
+
+
+def _no_key_error(provider: str, model_name: str) -> ValueError:
+    return ValueError(
+        f"No API key found for '{model_name}'. "
+        f"Set {provider} or OPENROUTER_API_KEY."
+    )
+
+
+
+def build_llamaindex_llm(model_name: str) -> Any:
+    """Create a LlamaIndex LLM object from a model name string.
+
+    Provider detection mirrors ``model_factory.create_model_from_string``
+    but produces LlamaIndex LLM objects instead of LangChain ones.
+
+    Fallback chain: native API key → OpenRouter.
+
+    Supported providers:
+    - ``bedrock/`` prefix → Anthropic with AWS credentials
+    - ``openai/`` prefix or ``gpt-*`` / ``o1-*`` / ``o3-*`` → OpenAI
+    - ``anthropic/`` prefix or ``claude`` keyword → Anthropic
+    - ``google/`` prefix or ``gemini`` keyword → Gemini
+    - Default → OpenAI if key available, else OpenRouter
+
+    Model naming:
+        Native provider APIs and OpenRouter use **different model name
+        formats**.  Pass the name that matches the provider you intend to
+        use (or that will be selected by the fallback chain):
+
+        - **Native Anthropic**: full date-suffixed IDs, e.g.
+          ``claude-sonnet-4-20250514``, ``claude-haiku-4-5-20251001``.
+        - **OpenRouter**: short names, e.g. ``claude-sonnet-4``,
+          ``claude-haiku-4.5``.  OpenRouter also accepts its own prefixed
+          format (``anthropic/claude-sonnet-4``).
+        - **Native OpenAI**: bare names work for both native and
+          OpenRouter, e.g. ``gpt-4o-mini``, ``gpt-4o``.
+    """
+    def _log_created(llm: Any, provider: str, via: str = "native") -> Any:
+        print(f"  [build_llamaindex_llm] {model_name} -> {type(llm).__name__} (via {via})")
+        return llm
+
+    # --- AWS Bedrock (Anthropic on Bedrock) ---
+    if model_name.startswith("bedrock/"):
+        clean_name = model_name.removeprefix("bedrock/")
+        aws_key = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY")
+        aws_region = os.getenv("AWS_DEFAULT_REGION", os.getenv("AWS_REGION"))
+        if aws_key and aws_secret and aws_region:
+            try:
+                from llama_index.llms.anthropic import Anthropic
+
+                return _log_created(Anthropic(
+                    model=clean_name,
+                    aws_region=aws_region,
+                    aws_access_key_id=aws_key,
+                    aws_secret_access_key=aws_secret,
+                ), "Bedrock", "aws")
+            except ImportError:
+                pass
+        fallback = _openrouter_fallback(model_name)
+        if fallback:
+            return _log_created(fallback, "Bedrock", "openrouter")
+        raise _no_key_error(
+            "AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_DEFAULT_REGION",
+            model_name,
+        )
+
+    # --- OpenAI ---
+    if model_name.startswith("openai/") or any(
+        model_name.startswith(p)
+        for p in ("gpt-", "o1-", "o3-", "o4-")
+    ):
+        clean_name = model_name.removeprefix("openai/")
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            from llama_index.llms.openai import OpenAI
+
+            return _log_created(OpenAI(model=clean_name, api_key=openai_key), "OpenAI")
+        fallback = _openrouter_fallback(clean_name)
+        if fallback:
+            return _log_created(fallback, "OpenAI", "openrouter")
+        raise _no_key_error("OPENAI_API_KEY", model_name)
+
+    # --- Google / Gemini ---
+    if model_name.startswith("google/") or "gemini" in model_name.lower():
+        clean_name = model_name.removeprefix("google/")
+        google_key = os.getenv("GOOGLE_API_KEY")
+        if google_key:
+            try:
+                from llama_index.llms.gemini import Gemini
+
+                return _log_created(Gemini(model=clean_name, api_key=google_key), "Gemini")
+            except ImportError:
+                pass
+        fallback = _openrouter_fallback(clean_name)
+        if fallback:
+            return _log_created(fallback, "Gemini", "openrouter")
+        raise _no_key_error("GOOGLE_API_KEY", model_name)
+
+    # --- Anthropic / Claude ---
+    if model_name.startswith("anthropic/") or "claude" in model_name.lower():
+        clean_name = model_name.removeprefix("anthropic/")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
+            try:
+                from llama_index.llms.anthropic import Anthropic
+
+                return _log_created(Anthropic(model=clean_name, api_key=anthropic_key), "Anthropic")
+            except ImportError:
+                pass
+        fallback = _openrouter_fallback(clean_name)
+        if fallback:
+            return _log_created(fallback, "Anthropic", "openrouter")
+        raise _no_key_error("ANTHROPIC_API_KEY", model_name)
+
+    # --- Default: try native OpenAI, then OpenRouter ---
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        from llama_index.llms.openai import OpenAI
+
+        return _log_created(OpenAI(model=model_name, api_key=openai_key), "OpenAI")
+
+    fallback = _openrouter_fallback(model_name)
+    if fallback:
+        return _log_created(fallback, "default", "openrouter")
+    raise _no_key_error("OPENAI_API_KEY", model_name)
 
 
 def is_llamaindex_agent(agent: Any) -> bool:
@@ -47,22 +217,13 @@ def sync_llamaindex_agents(
         )
 
 
-def _build_llamaindex_llm(model_name: str, original_llm: Any) -> Any:
+def _build_llamaindex_llm(model_name: str, original_llm: Any = None) -> Any:
     """Create a fresh LlamaIndex LLM with a different model name.
 
-    Uses model_copy on the original LLM to preserve API keys and settings.
+    Delegates to ``build_llamaindex_llm`` which picks the correct
+    provider class based on the model name and available API keys.
     """
-    if isinstance(original_llm, BaseModel):
-        target_field = next(
-            (f for f in MODEL_FIELDS if f in type(original_llm).model_fields),
-            None,
-        )
-        if target_field:
-            return original_llm.model_copy(update={target_field: model_name})
-
-    raise TypeError(
-        f"Cannot create LlamaIndex LLM variant of {type(original_llm).__name__}"
-    )
+    return build_llamaindex_llm(model_name)
 
 
 def sync_llamaindex_workflow_agents(
@@ -102,17 +263,12 @@ def sync_llamaindex_workflow_agents(
         model_name = (
             model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
         )
-        original_llm = agent_list[0].llm
-        fresh_llm = _build_llamaindex_llm(model_name, original_llm)
+        fresh_llm = _build_llamaindex_llm(model_name)
 
         for name, ag in agents_dict.items():
             cloned_ag = ag.model_copy(update={"llm": fresh_llm}, deep=False)
             cloned_agents[name] = cloned_ag
-            logger.debug(
-                "  [sync] %s → %s",
-                name,
-                model_name,
-            )
+            print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
     elif n_proxies == n_agents:
         # Positional mapping: proxy i → agent i
         for (name, ag), model_spec in zip(agents_dict.items(), combo):
@@ -121,14 +277,10 @@ def sync_llamaindex_workflow_agents(
                 if isinstance(model_spec, str)
                 else get_model_name(model_spec)
             )
-            fresh_llm = _build_llamaindex_llm(model_name, ag.llm)
+            fresh_llm = _build_llamaindex_llm(model_name)
             cloned_ag = ag.model_copy(update={"llm": fresh_llm}, deep=False)
             cloned_agents[name] = cloned_ag
-            logger.debug(
-                "  [sync] %s → %s",
-                name,
-                model_name,
-            )
+            print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
     else:
         logger.warning(
             "Cannot map %d proxies to %d LlamaIndex agents. "
@@ -160,11 +312,23 @@ class LlamaIndexAdapter:
 
         ``inspect.iscoroutinefunction(agent.run)`` returns False due to
         instrumentation decorators, so we use ``inspect.isawaitable()`` instead.
+
+        Uses a persistent event loop to avoid "Event loop is closed" errors
+        when LlamaIndex caches async resources (locks, connections) across
+        multiple invocations of the same workflow.
         """
         import asyncio
         import inspect
+        import threading
 
         method = agent.run
+
+        # Create a dedicated event loop running in a background thread.
+        # This loop stays open for the lifetime of the invoke_fn, so
+        # LlamaIndex's cached async resources remain valid.
+        _loop = asyncio.new_event_loop()
+        _thread = threading.Thread(target=_loop.run_forever, daemon=True)
+        _thread.start()
 
         def _invoke(input_data: Any) -> Any:
             async def _async_run() -> Any:
@@ -176,7 +340,8 @@ class LlamaIndexAdapter:
                     return await result
                 return result
 
-            return asyncio.run(_async_run())
+            future = asyncio.run_coroutine_threadsafe(_async_run(), _loop)
+            return future.result()
 
         return _invoke
 
@@ -233,12 +398,56 @@ class LlamaIndexAdapter:
         combo: tuple,
         get_model_name: Callable[[Any], str],
     ) -> Any:
-        """Shallow-copy the workflow, then independently clone each sub-agent."""
-        cloned = agent.model_copy(deep=False) if isinstance(agent, BaseModel) else agent
-        if hasattr(agent, "agents"):
-            # AgentWorkflow — replace the agents dict with fresh clones.
-            sync_llamaindex_workflow_agents(cloned, proxies, combo, get_model_name)
-        return cloned
+        """Create a completely fresh AgentWorkflow with cloned sub-agents.
+
+        AgentWorkflow is NOT a Pydantic BaseModel — it's a Workflow with
+        internal mutable state (Context, memory, step registry).
+        ``model_copy(deep=False)`` doesn't work and ``copy.copy`` shares
+        internal state across threads.  The only safe approach is to
+        reconstruct the workflow from scratch with fresh agent clones.
+        """
+        if not hasattr(agent, "agents"):
+            # Simple FunctionAgent — model_copy works fine
+            cloned = agent.model_copy(deep=False) if isinstance(agent, BaseModel) else agent
+            return cloned
+
+        # AgentWorkflow — reconstruct with fresh cloned agents
+        from llama_index.core.agent.workflow import AgentWorkflow
+
+        agents_dict = agent.agents
+        n_proxies = len(proxies)
+        n_agents = len(agents_dict)
+        cloned_agents = {}
+
+        if n_proxies == 1:
+            model_spec = combo[0]
+            model_name = (
+                model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
+            )
+            fresh_llm = _build_llamaindex_llm(model_name)
+            for name, ag in agents_dict.items():
+                cloned_agents[name] = ag.model_copy(update={"llm": fresh_llm}, deep=False)
+                print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
+        elif n_proxies == n_agents:
+            for (name, ag), model_spec in zip(agents_dict.items(), combo):
+                model_name = (
+                    model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
+                )
+                fresh_llm = _build_llamaindex_llm(model_name)
+                cloned_agents[name] = ag.model_copy(update={"llm": fresh_llm}, deep=False)
+                print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
+        else:
+            logger.warning(
+                "Cannot map %d proxies to %d agents for parallel clone.",
+                n_proxies, n_agents,
+            )
+            return agent
+
+        # Reconstruct a fresh AgentWorkflow — no shared state with original
+        return AgentWorkflow(
+            agents=list(cloned_agents.values()),
+            root_agent=agent.root_agent,
+        )
 
 
 # Self-register — runs when this module is first imported.

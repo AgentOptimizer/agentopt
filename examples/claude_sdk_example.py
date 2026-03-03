@@ -47,14 +47,24 @@ async def _query_async(prompt, options):
 
 def single_agent_example():
     """Single agent wrapped with ModelProxy for model selection."""
-    proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
+    proxy = ModelProxy(ClaudeAgentOptions(model="haiku"))
+    print("  [setup] proxy created (initial model: haiku)")
 
-    # BruteForceModelSelector swaps the model via proxy.set_model() before
-    # calling invoke_fn, so the proxy is captured here via closure.
     def invoke_fn(input_data):
         return asyncio.run(_query_async(input_data["input"], proxy))
 
-    return proxy, invoke_fn
+    def clone_fn(model_map):
+        """Build a fresh invoke_fn with independent ClaudeAgentOptions."""
+        model_name = model_map[proxy]
+        print(f"  [clone_fn] building fresh options (model: {model_name})")
+        fresh_options = ClaudeAgentOptions(model=model_name)
+
+        def fresh_invoke(input_data):
+            return asyncio.run(_query_async(input_data["input"], fresh_options))
+
+        return fresh_invoke
+
+    return proxy, invoke_fn, clone_fn
 
 
 def multi_agent_example():
@@ -63,10 +73,10 @@ def multi_agent_example():
     Solver answers the question, then Reviewer verifies the answer.
     Both use the same ModelProxy so they are optimized together.
     """
-    proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
+    proxy = ModelProxy(ClaudeAgentOptions(model="haiku"))
+    print("  [setup] proxy created (initial model: haiku)")
+    print("  [setup] pipeline: solver -> reviewer (shared proxy)")
 
-    # BruteForceModelSelector swaps the model via proxy.set_model() before
-    # calling invoke_fn, so the proxy is captured here via closure.
     def invoke_fn(input_data):
         question = input_data["input"]
         answer = asyncio.run(
@@ -81,7 +91,29 @@ def multi_agent_example():
         )
         return verified
 
-    return proxy, invoke_fn
+    def clone_fn(model_map):
+        """Build fresh invoke_fn — one shared ClaudeAgentOptions per combo."""
+        model_name = model_map[proxy]
+        print(f"  [clone_fn] building fresh solver + reviewer (model: {model_name})")
+        fresh_options = ClaudeAgentOptions(model=model_name)
+
+        def fresh_invoke(input_data):
+            question = input_data["input"]
+            answer = asyncio.run(
+                _query_async(f"Solve this math problem: {question}", fresh_options)
+            )
+            verified = asyncio.run(
+                _query_async(
+                    f"Verify this answer to '{question}': {answer}. "
+                    f"Reply with just the final number.",
+                    fresh_options,
+                )
+            )
+            return verified
+
+        return fresh_invoke
+
+    return proxy, invoke_fn, clone_fn
 
 
 def multi_agent_multi_llm_example():
@@ -90,11 +122,12 @@ def multi_agent_multi_llm_example():
     Solver and Reviewer each have their own ModelProxy so they can be
     optimized independently by BruteForceModelSelector.
     """
-    solver_proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
-    reviewer_proxy = ModelProxy(ClaudeAgentOptions(model="claude-3-5-haiku-latest"))
+    solver_proxy = ModelProxy(ClaudeAgentOptions(model="haiku"))
+    print("  [setup] solver_proxy created (initial model: haiku)")
+    reviewer_proxy = ModelProxy(ClaudeAgentOptions(model="haiku"))
+    print("  [setup] reviewer_proxy created (initial model: haiku)")
+    print("  [setup] pipeline: solver (proxy1) -> reviewer (proxy2)")
 
-    # BruteForceModelSelector swaps the model via proxy.set_model() before
-    # calling invoke_fn, so proxies are captured here via closure.
     def invoke_fn(input_data):
         question = input_data["input"]
         answer = asyncio.run(
@@ -109,23 +142,54 @@ def multi_agent_multi_llm_example():
         )
         return verified
 
-    return (solver_proxy, reviewer_proxy), invoke_fn
+    def clone_fn(model_map):
+        """Build fresh invoke_fn with independent options per proxy."""
+        s_model = model_map[solver_proxy]
+        r_model = model_map[reviewer_proxy]
+        print(f"  [clone_fn] building fresh agents (solver: {s_model}, reviewer: {r_model})")
+        fresh_solver = ClaudeAgentOptions(model=s_model)
+        fresh_reviewer = ClaudeAgentOptions(model=r_model)
+
+        def fresh_invoke(input_data):
+            question = input_data["input"]
+            answer = asyncio.run(
+                _query_async(f"Solve this math problem: {question}", fresh_solver)
+            )
+            verified = asyncio.run(
+                _query_async(
+                    f"Verify this answer to '{question}': {answer}. "
+                    f"Reply with just the final number.",
+                    fresh_reviewer,
+                )
+            )
+            return verified
+
+        return fresh_invoke
+
+    return (solver_proxy, reviewer_proxy), invoke_fn, clone_fn
 
 
-def run_model_selection(invoke_fn, llm_proxies, parallel=False, dataset_file=None):
+def run_model_selection(invoke_fn, llm_proxies, parallel=False, dataset_file=None, clone_fn=None):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
+    print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
+    model_candidates = ["haiku", "sonnet"]
+    mode = "parallel" if parallel else "sequential"
+    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
+
+    kwargs = {
+        "invoke_fn": invoke_fn,
+    }
+    if clone_fn is not None:
+        kwargs["clone_fn"] = clone_fn
 
     selector = BruteForceModelSelector(
         models={
-            llm: [
-                "claude-3-5-haiku-latest",
-                "claude-sonnet-4-20250514",
-            ]
+            llm: model_candidates
             for llm in llm_proxies
         },
         eval_fn=eval_fn,
         dataset=dataset,
-        invoke_fn=invoke_fn,
+        **kwargs,
     )
 
     results = selector.select_best(parallel=parallel)
@@ -183,33 +247,41 @@ if __name__ == "__main__":
         default="math_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: math_problems.jsonl)",
     )
+    parser.add_argument(
+        "--no-plot", action="store_true", help="Skip saving the results plot"
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
     mode = "parallel" if args.parallel else "sequential"
 
     print("=" * 40)
-    print(f"{label} ({mode})")
+    print(f"Claude SDK — {label} ({mode})")
     print("=" * 40)
 
+    print("\n[1] Setting up agents...")
     result = setup_fn()
 
-    # multi-llm returns a tuple of proxies; the others return a single proxy
+    # All setup functions now return 3-tuples: (proxy_or_proxies, invoke_fn, clone_fn)
     if isinstance(result[0], tuple):
-        llm_proxies, invoke = result
+        llm_proxies, invoke, clone_fn = result
     else:
-        llm_proxy, invoke = result
+        llm_proxy, invoke, clone_fn = result
         llm_proxies = [llm_proxy]
 
+    print("\n[2] Running model selection...")
     results = run_model_selection(
         invoke,
         llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
+        clone_fn=clone_fn,
     )
 
-    plot_results(
-        results,
-        f"Claude {label} Results",
-        "examples/claude_results.png",
-    )
+    if not args.no_plot:
+        print("\n[3] Saving results plot...")
+        plot_results(
+            results,
+            f"Claude {label} Results",
+            "examples/claude_results.png",
+        )

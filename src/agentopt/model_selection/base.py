@@ -167,6 +167,7 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        clone_fn: Optional[Callable] = None,
     ) -> None:
         """
         Initialize the model selector.
@@ -181,6 +182,12 @@ class BaseModelSelector(ABC):
                 LlamaIndex, OpenAI SDK).  Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent or multi-agent chain.
                 Mutually exclusive with *agent*.
+            clone_fn: Optional factory for parallel evaluation when *invoke_fn*
+                is used.  Called once per model combination with a
+                ``{proxy: model_name}`` dict; must return a fresh callable
+                (same signature as *invoke_fn*) that is independent of any
+                shared state.  Required for ``select_best(parallel=True)``
+                when *invoke_fn* is provided instead of *agent*.
         """
         if agent is None and invoke_fn is None:
             raise ValueError("Either 'agent' or 'invoke_fn' must be provided")
@@ -194,6 +201,7 @@ class BaseModelSelector(ABC):
         self.eval_fn = eval_fn
         self.dataset = dataset
         self._models = models
+        self.clone_fn = clone_fn
 
         # Validate API keys for all candidate models.
         warnings, _ = validate_model_candidates(models)

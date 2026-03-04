@@ -23,8 +23,10 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
-    ArmEliminationModelSelector,
+    BaseModelSelector,
+    BruteForceModelSelector,
     HillClimbingModelSelector,
+    ArmEliminationModelSelector,
 )
 from agentopt.model_proxy.framework_specific_implementation import (
     build_openai_agents_model,
@@ -32,8 +34,8 @@ from agentopt.model_proxy.framework_specific_implementation import (
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
-    "arm_elimination": ArmEliminationModelSelector,
     "hill_climbing": HillClimbingModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
 }
 
 

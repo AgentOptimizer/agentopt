@@ -41,7 +41,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
     ----------
     n_initial:
         Number of dataset samples to use in the first round.
-        Defaults to ``max(10, len(dataset) // 10)``.
+        Defaults to ``max(1, len(dataset) // 10)`` (targets ≥ 10 rounds).
     growth_factor:
         Multiplier applied to the batch size after each round (default 2.0).
         With 1 000 samples and ``n_initial=100`` the schedule is
@@ -73,7 +73,10 @@ class ArmEliminationModelSelector(BaseModelSelector):
             clone_fn=clone_fn,
         )
         n = len(self.dataset)
-        self.n_initial = n_initial if n_initial is not None else max(10, n // 10)
+        if n_initial is None:
+            self.n_initial = max(1, n // 10)
+        else:
+            self.n_initial = n_initial
         self.growth_factor = growth_factor
         self.confidence = confidence
 
@@ -135,6 +138,12 @@ class ArmEliminationModelSelector(BaseModelSelector):
             f"confidence={self.confidence}"
         )
         print(f"{'='*60}")
+
+        if self.n_initial >= n_total:
+            print(
+                f"  Warning: n_initial ({self.n_initial}) >= dataset size ({n_total}). "
+                "Only one round possible — consider a larger dataset or a smaller n_initial."
+            )
 
         offset = 0
         batch_size = self.n_initial
@@ -271,6 +280,12 @@ class ArmEliminationModelSelector(BaseModelSelector):
             f"confidence={self.confidence}"
         )
         print(f"{'='*60}")
+
+        if self.n_initial >= n_total:
+            print(
+                f"  Warning: n_initial ({self.n_initial}) >= dataset size ({n_total}). "
+                "Only one round possible — consider a larger dataset or a smaller n_initial."
+            )
 
         # Phase 1: Clone agents for all combinations (serial).
         print(f"\n  Cloning agents for {len(all_combinations)} combinations ...")

@@ -15,6 +15,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt.model_selection import (
+    ArmEliminationModelSelector,
+    HillClimbingModelSelector,
+)
+
+SELECTORS = {
+    "brute_force": BruteForceModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
+    "hill_climbing": HillClimbingModelSelector,
+}
 
 
 class WorkflowState(TypedDict):
@@ -227,6 +237,7 @@ def run_model_selection(
     clone_fn=None,
     parallel=False,
     model_candidates=None,
+    selector_name: str = "brute_force",
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -248,7 +259,8 @@ def run_model_selection(
 
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
-    selector = BruteForceModelSelector(
+    SelectorCls = SELECTORS[selector_name]
+    selector = SelectorCls(
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,
@@ -311,6 +323,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip saving the results plot",
     )
+    parser.add_argument(
+        "--selector",
+        choices=sorted(SELECTORS.keys()),
+        default="brute_force",
+        help="Model selector to use (default: brute_force)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -344,6 +362,7 @@ if __name__ == "__main__":
         clone_fn=clone_fn,
         parallel=args.parallel,
         model_candidates=per_proxy_candidates,
+        selector_name=args.selector,
     )
 
     if not args.no_plot:

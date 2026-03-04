@@ -15,7 +15,6 @@ from agentopt.model_selection import (
     HillClimbingModelSelector,
 )
 
-
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
     "arm_elimination": ArmEliminationModelSelector,

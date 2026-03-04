@@ -30,7 +30,6 @@ from agentopt.model_proxy.framework_specific_implementation.ag2 import (
     _build_ag2_config,
 )
 
-
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
     "arm_elimination": ArmEliminationModelSelector,

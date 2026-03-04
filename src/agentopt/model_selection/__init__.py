@@ -2,16 +2,16 @@
 Model selection module.
 """
 
-from .arm_elimination import ArmEliminationModelSelector
+from .base import BaseModelSelector, ModelResult, SelectionResults
 from .brute_force import BruteForceModelSelector
 from .hill_climbing import HillClimbingModelSelector
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .arm_elimination import ArmEliminationModelSelector
 
 __all__ = [
     "BaseModelSelector",
-    "ArmEliminationModelSelector",
     "BruteForceModelSelector",
     "HillClimbingModelSelector",
+    "ArmEliminationModelSelector",
     "ModelResult",
     "SelectionResults",
 ]

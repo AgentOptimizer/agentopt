@@ -15,6 +15,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt.model_selection import (
+    ArmEliminationModelSelector,
+    HillClimbingModelSelector,
+)
+
+SELECTORS = {
+    "brute_force": BruteForceModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
+    "hill_climbing": HillClimbingModelSelector,
+}
 
 
 def load_dataset(dataset_dir, filename):
@@ -157,6 +167,7 @@ def run_model_selection(
     use_invoke_fn=False,
     parallel=False,
     dataset_file=None,
+    selector_name: str = "brute_force",
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -186,7 +197,8 @@ def run_model_selection(
     else:
         kwargs["agent"] = agent_or_invoke_fn
 
-    selector = BruteForceModelSelector(**kwargs)
+    SelectorCls = SELECTORS[selector_name]
+    selector = SelectorCls(**kwargs)
 
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
@@ -240,6 +252,12 @@ if __name__ == "__main__":
         default="math_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
+    parser.add_argument(
+        "--selector",
+        choices=sorted(SELECTORS.keys()),
+        default="brute_force",
+        help="Model selector to use (default: brute_force)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -260,6 +278,7 @@ if __name__ == "__main__":
             [llm_proxy],
             parallel=args.parallel,
             dataset_file=args.dataset,
+            selector_name=args.selector,
         )
     else:
         # Multi-agent returns (proxies_tuple, invoke_fn)
@@ -274,6 +293,7 @@ if __name__ == "__main__":
             list(llm_proxies),
             use_invoke_fn=True,
             dataset_file=args.dataset,
+            selector_name=args.selector,
         )
 
     print("\n[3] Saving results plot...")

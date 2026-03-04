@@ -10,6 +10,16 @@ from crewai_tools import (  # noqa: F401 — available for tool-based examples
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt.model_selection import (
+    ArmEliminationModelSelector,
+    HillClimbingModelSelector,
+)
+
+SELECTORS = {
+    "brute_force": BruteForceModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
+    "hill_climbing": HillClimbingModelSelector,
+}
 
 
 def load_dataset(dataset_dir, filename):
@@ -202,14 +212,21 @@ def multiagent_multillm_example():
     return (llm_research, llm_sde), crew
 
 
-def run_model_selection(crew, llm_proxies, parallel=False, dataset_file=None):
+def run_model_selection(
+    crew,
+    llm_proxies,
+    parallel: bool = False,
+    dataset_file=None,
+    selector_name: str = "brute_force",
+):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
     model_candidates = ["openai/gpt-4o-mini", "openai/gpt-4o", "openai/gpt-5.1"]
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
-    selector = BruteForceModelSelector(
+    SelectorCls = SELECTORS[selector_name]
+    selector = SelectorCls(
         models={
             llm_proxy: [
                 "openai/gpt-4o-mini",
@@ -276,6 +293,12 @@ if __name__ == "__main__":
         default="research_code_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
+    parser.add_argument(
+        "--selector",
+        choices=sorted(SELECTORS.keys()),
+        default="brute_force",
+        help="Model selector to use (default: brute_force)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -300,6 +323,7 @@ if __name__ == "__main__":
         llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
+        selector_name=args.selector,
     )
 
     print("\n[3] Saving results plot...")

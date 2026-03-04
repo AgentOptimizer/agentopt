@@ -14,6 +14,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt.model_selection import (
+    ArmEliminationModelSelector,
+    HillClimbingModelSelector,
+)
+
+SELECTORS = {
+    "brute_force": BruteForceModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
+    "hill_climbing": HillClimbingModelSelector,
+}
 
 
 def load_dataset(dataset_dir, filename):
@@ -172,7 +182,12 @@ def multi_agent_multi_llm_example():
 
 
 def run_model_selection(
-    invoke_fn, llm_proxies, parallel=False, dataset_file=None, clone_fn=None
+    invoke_fn,
+    llm_proxies,
+    parallel=False,
+    dataset_file=None,
+    clone_fn=None,
+    selector_name: str = "brute_force",
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -186,7 +201,8 @@ def run_model_selection(
     if clone_fn is not None:
         kwargs["clone_fn"] = clone_fn
 
-    selector = BruteForceModelSelector(
+    SelectorCls = SELECTORS[selector_name]
+    selector = SelectorCls(
         models={llm: model_candidates for llm in llm_proxies},
         eval_fn=eval_fn,
         dataset=dataset,
@@ -251,6 +267,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-plot", action="store_true", help="Skip saving the results plot"
     )
+    parser.add_argument(
+        "--selector",
+        choices=sorted(SELECTORS.keys()),
+        default="brute_force",
+        help="Model selector to use (default: brute_force)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -277,6 +299,7 @@ if __name__ == "__main__":
         parallel=args.parallel,
         dataset_file=args.dataset,
         clone_fn=clone_fn,
+        selector_name=args.selector,
     )
 
     if not args.no_plot:

@@ -22,9 +22,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
-from agentopt.model_proxy.framework_specific_implementation.openai_sdk import (
+from agentopt.model_selection import (
+    ArmEliminationModelSelector,
+    HillClimbingModelSelector,
+)
+from agentopt.model_proxy.framework_specific_implementation import (
     build_openai_agents_model,
 )
+
+SELECTORS = {
+    "brute_force": BruteForceModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
+    "hill_climbing": HillClimbingModelSelector,
+}
 
 
 def load_dataset(dataset_dir, filename):
@@ -147,7 +157,12 @@ def multillm_example():
 
 
 def run_model_selection(
-    agent_or_invoke_fn, llm_proxies, dataset_file=None, clone_fn=None, parallel=False
+    agent_or_invoke_fn,
+    llm_proxies,
+    dataset_file=None,
+    clone_fn=None,
+    parallel=False,
+    selector_name: str = "brute_force",
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -166,7 +181,8 @@ def run_model_selection(
 
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
-    selector = BruteForceModelSelector(
+    SelectorCls = SELECTORS[selector_name]
+    selector = SelectorCls(
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,
@@ -220,6 +236,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-plot", action="store_true", help="Skip saving the results plot"
     )
+    parser.add_argument(
+        "--selector",
+        choices=sorted(SELECTORS.keys()),
+        default="brute_force",
+        help="Model selector to use (default: brute_force)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -243,6 +265,7 @@ if __name__ == "__main__":
         dataset_file=args.dataset,
         clone_fn=clone_fn,
         parallel=args.parallel,
+        selector_name=args.selector,
     )
 
     if not args.no_plot:

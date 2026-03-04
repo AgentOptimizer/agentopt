@@ -9,9 +9,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
-from agentopt.model_proxy.framework_specific_implementation.llamaindex import (
-    build_llamaindex_llm,
+from agentopt.model_selection import (
+    ArmEliminationModelSelector,
+    HillClimbingModelSelector,
 )
+from agentopt.model_proxy.framework_specific_implementation import build_llamaindex_llm
+
+SELECTORS = {
+    "brute_force": BruteForceModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
+    "hill_climbing": HillClimbingModelSelector,
+}
 
 
 def load_dataset(dataset_dir, filename):
@@ -189,12 +197,14 @@ def run_model_selection(
     parallel=False,
     dataset_file=None,
     model_candidates=None,
+    selector_name: str = "brute_force",
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     if model_candidates is None:
         model_candidates = ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-20250514"]
 
-    selector = BruteForceModelSelector(
+    SelectorCls = SELECTORS[selector_name]
+    selector = SelectorCls(
         models={llm: model_candidates for llm in llm_proxies},
         eval_fn=eval_fn,
         dataset=dataset,
@@ -254,6 +264,12 @@ if __name__ == "__main__":
         default="math_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
     )
+    parser.add_argument(
+        "--selector",
+        choices=sorted(SELECTORS.keys()),
+        default="brute_force",
+        help="Model selector to use (default: brute_force)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -282,6 +298,7 @@ if __name__ == "__main__":
         parallel=args.parallel,
         dataset_file=args.dataset,
         model_candidates=candidates,
+        selector_name=args.selector,
     )
 
     plot_results(

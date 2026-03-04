@@ -46,6 +46,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[callable] = None,
+        clone_fn: Optional[callable] = None,
         max_iterations: int = 20,
         num_restarts: int = 3,
         patience: int = 3,
@@ -62,6 +63,8 @@ class HillClimbingModelSelector(BaseModelSelector):
                 Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent.
                 Mutually exclusive with *agent*.
+            clone_fn: Optional factory for parallel evaluation with invoke_fn.
+                See BaseModelSelector for full documentation.
             max_iterations: Maximum iterations per restart before stopping.
             num_restarts: Number of random restarts.
             patience: Stop a restart after this many consecutive iterations
@@ -73,6 +76,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             eval_fn=eval_fn,
             agent=agent,
             invoke_fn=invoke_fn,
+            clone_fn=clone_fn,
             dataset=dataset,
         )
         self.max_iterations = max_iterations
@@ -206,6 +210,10 @@ class HillClimbingModelSelector(BaseModelSelector):
         for iteration in range(self.max_iterations):
             combo_name = self._combo_key(combo)
             seen.add(combo_name)
+
+            print(f"  Iter {iteration + 1} assignment:")
+            for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
+                print(f"    proxy[{i}] → {self._get_model_name(model_obj)}")
 
             # Re-use cached result if this combination was already evaluated.
             if combo_name in self._eval_cache:
@@ -342,9 +350,10 @@ class HillClimbingModelSelector(BaseModelSelector):
                     and abs(result.accuracy - global_best_accuracy) < accuracy_tolerance
                 ):
                     result.is_best = True
-                    print(f"Best combination: {result}\n")
                     break
         else:
             print("\nNo combinations succeeded\n")
 
-        return SelectionResults(results=all_results)
+        results = SelectionResults(results=all_results)
+        print(results)
+        return results

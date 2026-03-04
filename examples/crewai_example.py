@@ -10,6 +10,16 @@ from crewai_tools import (  # noqa: F401 — available for tool-based examples
 import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt.model_selection import (
+    ArmEliminationModelSelector,
+    HillClimbingModelSelector,
+)
+
+SELECTORS = {
+    "brute_force": BruteForceModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
+    "hill_climbing": HillClimbingModelSelector,
+}
 
 
 def load_dataset(dataset_dir, filename):
@@ -65,6 +75,7 @@ def without_opt_single_agent_example():
 def single_agent_example():
     # 1. Wrap the LLM
     llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))
+    print("  [setup] proxy created (initial model: openai/gpt-4o-mini)")
 
     # 2. Standard CrewAI setup — no tools so the agent answers directly
     researcher = Agent(
@@ -75,12 +86,14 @@ def single_agent_example():
         verbose=False,
         max_iter=5,
     )
+    print("  [setup] agent created: Researcher")
 
     task = Task(
         description="{input}",
         expected_output="A clear, concise answer",
         agent=researcher,
     )
+    print("  [setup] task created: research task")
 
     crew = Crew(
         agents=[researcher],
@@ -88,6 +101,7 @@ def single_agent_example():
         process=Process.sequential,
         verbose=False,
     )
+    print("  [setup] crew assembled: 1 agent, 1 task")
 
     return llm, crew
 
@@ -95,6 +109,9 @@ def single_agent_example():
 def multiagent_example():
     # 1. Wrap the LLM
     llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))
+    print(
+        "  [setup] proxy created (initial model: openai/gpt-4o-mini, shared by all agents)"
+    )
 
     # 2. Standard CrewAI setup — no tools so agents answer directly
     researcher = Agent(
@@ -105,6 +122,7 @@ def multiagent_example():
         verbose=False,
         max_iter=5,
     )
+    print("  [setup] agent created: Researcher")
 
     sde = Agent(
         role="SDE",
@@ -114,6 +132,7 @@ def multiagent_example():
         verbose=False,
         max_iter=5,
     )
+    print("  [setup] agent created: SDE")
 
     # Task 1: Research
     research_task = Task(
@@ -136,13 +155,16 @@ def multiagent_example():
         process=Process.sequential,
         verbose=False,
     )
+    print("  [setup] crew assembled: 2 agents, 2 tasks (research -> code)")
     return llm, crew
 
 
 def multiagent_multillm_example():
     # 1. Wrap the LLMs
     llm_research = ModelProxy(LLM(model="openai/gpt-4o-mini"))
+    print("  [setup] llm_research proxy created (initial model: openai/gpt-4o-mini)")
     llm_sde = ModelProxy(LLM(model="openai/gpt-4o-mini"))
+    print("  [setup] llm_sde proxy created (initial model: openai/gpt-4o-mini)")
 
     # 2. Standard CrewAI setup — no tools so agents answer directly
     researcher = Agent(
@@ -153,6 +175,7 @@ def multiagent_multillm_example():
         verbose=False,
         max_iter=5,
     )
+    print("  [setup] agent created: Researcher (using llm_research proxy)")
 
     sde = Agent(
         role="SDE",
@@ -162,6 +185,7 @@ def multiagent_multillm_example():
         verbose=False,
         max_iter=5,
     )
+    print("  [setup] agent created: SDE (using llm_sde proxy)")
 
     # Task 1: Research
     research_task = Task(
@@ -184,13 +208,25 @@ def multiagent_multillm_example():
         process=Process.sequential,
         verbose=False,
     )
+    print("  [setup] crew assembled: 2 agents, 2 tasks, independent proxies")
     return (llm_research, llm_sde), crew
 
 
-def run_model_selection(crew, llm_proxies, parallel=False, dataset_file=None):
+def run_model_selection(
+    crew,
+    llm_proxies,
+    parallel: bool = False,
+    dataset_file=None,
+    selector_name: str = "brute_force",
+):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
+    print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
+    model_candidates = ["openai/gpt-4o-mini", "openai/gpt-4o", "openai/gpt-5.1"]
+    mode = "parallel" if parallel else "sequential"
+    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
-    selector = BruteForceModelSelector(
+    SelectorCls = SELECTORS[selector_name]
+    selector = SelectorCls(
         models={
             llm_proxy: [
                 "openai/gpt-4o-mini",
@@ -229,7 +265,7 @@ def plot_results(results, title="Model Performance", save_path=None):
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Plot saved to {save_path}")
-    plt.show()
+    plt.close()
 
 
 EXAMPLES = {
@@ -254,8 +290,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default="math_problems.jsonl",
+        default="research_code_problems.jsonl",
         help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
+    )
+    parser.add_argument(
+        "--selector",
+        choices=sorted(SELECTORS.keys()),
+        default="brute_force",
+        help="Model selector to use (default: brute_force)",
     )
     args = parser.parse_args()
 
@@ -266,6 +308,7 @@ if __name__ == "__main__":
     print(f"{label} ({mode})")
     print("=" * 40)
 
+    print("\n[1] Setting up agents...")
     result = setup_fn()
     # multi-llm returns a tuple of proxies; the others return a single proxy
     if isinstance(result[0], tuple):
@@ -274,11 +317,14 @@ if __name__ == "__main__":
         llm_proxy, crew = result
         llm_proxies = [llm_proxy]
 
+    print("\n[2] Running model selection...")
     results = run_model_selection(
         crew,
         llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
+        selector_name=args.selector,
     )
 
+    print("\n[3] Saving results plot...")
     plot_results(results, f"CrewAI {label} Results", "examples/crewai_results.png")

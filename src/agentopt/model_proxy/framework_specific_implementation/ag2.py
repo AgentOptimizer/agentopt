@@ -15,8 +15,37 @@ in openai_sdk.py.
 
 from __future__ import annotations
 
+import copy
 import os
-from typing import Any, List
+from typing import Any, Callable, List
+
+
+def is_ag2_agent(agent: Any) -> bool:
+    """Check if an agent is an AG2 ConversableAgent."""
+    module = getattr(type(agent), "__module__", "") or ""
+    return module.startswith("autogen") and hasattr(agent, "run")
+
+
+def is_ag2_llm(llm: Any) -> bool:
+    """Check if an LLM object is an AG2ConfigWrapper."""
+    return isinstance(llm, AG2ConfigWrapper)
+
+
+def _build_ag2_config(model: str) -> dict:
+    """Build an AG2 config_list entry with correct api_type and key for the model."""
+    bare = model.split("/", 1)[-1] if "/" in model else model
+    if bare.startswith("claude") or model.startswith("anthropic/"):
+        return {
+            "api_type": "anthropic",
+            "model": bare,
+            "api_key": os.getenv("ANTHROPIC_API_KEY"),
+        }
+    # Default to OpenAI-compatible
+    return {
+        "api_type": "openai",
+        "model": bare,
+        "api_key": os.getenv("OPENAI_API_KEY"),
+    }
 
 
 class AG2ConfigWrapper:
@@ -29,13 +58,7 @@ class AG2ConfigWrapper:
     """
 
     def __init__(self, model: str) -> None:
-        self.config_list = [
-            {
-                "api_type": "openai",
-                "model": model,
-                "api_key": os.getenv("OPENAI_API_KEY"),
-            }
-        ]
+        self.config_list = [_build_ag2_config(model)]
 
     @property
     def model(self) -> str:
@@ -43,7 +66,7 @@ class AG2ConfigWrapper:
 
     @model.setter
     def model(self, value: str) -> None:
-        self.config_list[0]["model"] = value
+        self.config_list[0] = _build_ag2_config(value)
 
 
 def _is_ag2_llm_config(obj: Any) -> bool:
@@ -84,6 +107,9 @@ def register_ag2_llm_config(proxy_cls: type) -> None:
                 raise ValueError("LLMConfig entry missing 'model' key")
             wrapper = AG2ConfigWrapper(model_name)
             original_init(self, wrapper)
+            # Initialize _ag2_agents list so the patched ConversableAgent.__init__
+            # can append agents to it.
+            object.__setattr__(self, "_ag2_agents", [])
         else:
             original_init(self, initial_model)
 
@@ -154,3 +180,78 @@ def extract_ag2_content(response: Any) -> str:
         content = getattr(last_msg, "content", None) or str(last_msg)
         return content
     return ""
+
+
+# ---------------------------------------------------------------------------
+# FrameworkAdapter
+# ---------------------------------------------------------------------------
+
+
+class AG2Adapter:
+    """Adapter for AG2 ``ConversableAgent`` objects."""
+
+    invoke_method_name = "run"
+
+    def detect(self, agent: Any) -> bool:
+        return is_ag2_agent(agent)
+
+    def get_invoke_fn(self, agent: Any) -> Callable:
+        """Wrap agent.run() to handle input dict and extract content."""
+
+        def _invoke(input_data: Any) -> Any:
+            if isinstance(input_data, dict):
+                message = input_data.get("input", str(input_data))
+            else:
+                message = str(input_data)
+            response = agent.run(message=message, max_turns=1, user_input=False)
+            return extract_ag2_content(response)
+
+        return _invoke
+
+    def register_with_proxy(
+        self, proxy: Any, agent: Any, all_proxies: List[Any]
+    ) -> None:
+        """Register sync callback that calls sync_ag2_agents on set_model()."""
+        try:
+            ag2_agents = object.__getattribute__(proxy, "_ag2_agents")
+        except AttributeError:
+            ag2_agents: list = []
+            object.__setattr__(proxy, "_ag2_agents", ag2_agents)
+
+        if agent not in ag2_agents:
+            ag2_agents.append(agent)
+
+        def _sync(new_llm: Any, _agents: list = ag2_agents) -> None:
+            if isinstance(new_llm, AG2ConfigWrapper):
+                sync_ag2_agents(_agents, new_llm)
+
+        proxy._add_sync(_sync)
+
+    def clone_for_parallel(
+        self,
+        agent: Any,
+        proxies: List[Any],
+        combo: tuple,
+        get_model_name: Callable[[Any], str],
+    ) -> Any:
+        """Clone the AG2 agent with a fresh LLMConfig for this combination."""
+        from autogen import LLMConfig
+
+        model_spec = combo[0]
+        model_name = (
+            model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
+        )
+        new_config = LLMConfig(_build_ag2_config(model_name))
+        agent_copy = copy.copy(agent)
+        agent_copy.llm_config = new_config
+        agent_copy.client = agent_copy._create_client(new_config)
+        return agent_copy
+
+
+# Self-register — runs when this module is first imported.
+try:
+    from ..adapter import register_adapter  # noqa: E402
+
+    register_adapter(AG2Adapter())
+except Exception:
+    pass

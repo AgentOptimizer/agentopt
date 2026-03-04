@@ -8,7 +8,11 @@ This package provides:
 
 from .model_proxy import ModelProxy
 from .model_factory import create_model_from_string, normalize_models
-from .model_selection import BruteForceBruteForceModelSelector, HillClimbingModelSelector, BayesianOptimizationModelSelector
+from .model_selection import (
+    BruteForceModelSelector,
+    HillClimbingModelSelector,
+    ArmEliminationModelSelector,
+)
 from .base_models import (
     Dataset,
     EvalFn,
@@ -23,7 +27,7 @@ __all__ = [
     "BaseModelSelector",
     "BruteForceModelSelector",
     "HillClimbingModelSelector",
-    "BayesianOptimizationModelSelector",
+    "ArmEliminationModelSelector",
     "create_model_from_string",
     "normalize_models",
     # Types

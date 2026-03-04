@@ -1,6 +1,6 @@
 """Core model selection functionality."""
 
-from typing import Any, List
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
@@ -12,50 +12,68 @@ class ModelProxy:
     """
     Transparent proxy that wraps an LLM and allows model swapping.
 
-    Usage:
+    Usage (single-agent, auto-wired via selector):
         from crewai import Agent, LLM
-
-        # 1. Wrap the LLM
         llm = ModelProxy(LLM(model='gpt-4o-mini'))
-
-        # 2. Use directly in agent
         agent = Agent(role="...", llm=llm, ...)
+        # Selector auto-registers — no manual register() call needed.
 
-        # 3. BayesianOptimizationModelSelector / BruteForceModelSelector can swap the underlying model
-        llm.set_model(LLM(model='gpt-4o'))
+    Usage (multi-agent, manual register):
+        llm = ModelProxy(ChatOpenAI(model='gpt-4o-mini'))
+        executor = AgentExecutor(agent=..., tools=tools)
+        llm.register(executor)          # framework auto-detected
     """
 
     def __init__(self, initial_model: Any) -> None:
-        object.__setattr__(
-            self, "_optmodel", initial_model
-        )  # the model class that will be wrapped
+        object.__setattr__(self, "_optmodel", initial_model)
         object.__setattr__(self, "_optmodel_class", type(initial_model))
-        object.__setattr__(self, "_crewai_agents", [])
-        object.__setattr__(self, "_langchain_executors", [])
-        object.__setattr__(self, "_llamaindex_agents", [])
-        object.__setattr__(self, "_ag2_agents", [])
+        # List of (new_llm: Any) -> None callables, populated by adapters.
+        object.__setattr__(self, "_sync_callbacks", [])
 
-    def register_crewai_agents(self, agents: List[Any]) -> None:
-        """Register CrewAI agents whose LLM will be updated automatically on set_model()."""
-        object.__setattr__(self, "_crewai_agents", list(agents))
+    # ------------------------------------------------------------------
+    # Internal sync machinery (called by FrameworkAdapters)
+    # ------------------------------------------------------------------
 
-    def register_langchain_executor(
-        self, executor: Any, tools: List[Any], prompt: Any
-    ) -> None:
-        """Register a LangChain AgentExecutor for automatic chain rebuild on set_model()."""
-        executors = object.__getattribute__(self, "_langchain_executors")
-        executors.append((executor, tools, prompt))
+    def _add_sync(self, fn: Callable[[Any], None]) -> None:
+        """Register a sync callback.  Called by FrameworkAdapters only."""
+        callbacks = object.__getattribute__(self, "_sync_callbacks")
+        callbacks.append(fn)
 
-    def register_llamaindex_agents(self, agents: List[Any]) -> None:
-        """Register LlamaIndex agents whose LLM will be updated automatically on set_model()."""
-        object.__setattr__(self, "_llamaindex_agents", list(agents))
+    def _sync_registered_frameworks(self) -> None:
+        """Fire all registered sync callbacks with the current model."""
+        model = object.__getattribute__(self, "_optmodel")
+        callbacks = object.__getattribute__(self, "_sync_callbacks")
+        for fn in callbacks:
+            fn(model)
 
-    def register_ag2_agents(self, agents: List[Any]) -> None:
-        """Register AG2 agents whose LLMConfig will be updated automatically on set_model()."""
-        object.__setattr__(self, "_ag2_agents", list(agents))
+    # ------------------------------------------------------------------
+    # Public API — framework-agnostic
+    # ------------------------------------------------------------------
+
+    def register(self, agent: Any) -> None:
+        """Auto-detect the agent's framework and register sync callbacks.
+
+        This is the preferred registration method.  The framework is detected
+        automatically.
+
+        Args:
+            agent: Any supported agent object (CrewAI Crew, LangChain
+                AgentExecutor, LlamaIndex FunctionAgent / AgentWorkflow,
+                OpenAI Agents SDK Agent).
+        """
+        from .adapter import get_adapter
+
+        adapter = get_adapter(agent)
+        if adapter is None:
+            raise TypeError(
+                f"Unsupported agent type: {type(agent).__name__}. "
+                "Pass invoke_fn= to the selector instead, or implement a "
+                "FrameworkAdapter for this agent type."
+            )
+        adapter.register_with_proxy(self, agent, [self])
 
     def set_model(self, model: Any) -> None:
-        """Swap the underlying model. Accepts a model object or, in limited cases, a string name."""
+        """Swap the underlying model.  Accepts a model object or a string name."""
         if isinstance(model, str):
             current_model = object.__getattribute__(self, "_optmodel")
             if current_model is None:
@@ -70,7 +88,6 @@ class ModelProxy:
                 return
 
             if isinstance(current_model, BaseModel):
-                ## Pydantic path: use model_copy to create an immutable update
                 target_field = next(
                     (f for f in MODEL_FIELDS if f in type(current_model).model_fields),
                     None,
@@ -87,7 +104,6 @@ class ModelProxy:
                         self._sync_registered_frameworks()
                         return
             else:
-                ## Non-pydantic fallback: directly set the attribute
                 target_field = next(
                     (a for a in MODEL_FIELDS if hasattr(current_model, a)), None
                 )
@@ -106,48 +122,13 @@ class ModelProxy:
         object.__setattr__(self, "_optmodel_class", type(model))
         self._sync_registered_frameworks()
 
-    def _sync_registered_frameworks(self) -> None:
-        """Sync the current model to registered CrewAI agents and LangChain executors."""
-        model = object.__getattribute__(self, "_optmodel")
-
-        # CrewAI agent sync
-        agents = object.__getattribute__(self, "_crewai_agents")
-        if agents:
-            from .crewai import build_crewai_llm
-
-            model_name = next(
-                (str(getattr(model, f)) for f in MODEL_FIELDS if hasattr(model, f)),
-                None,
-            )
-            if model_name is not None:
-                for ag in agents:
-                    ag.llm = build_crewai_llm(model_name)
-
-        # LangChain executor chain rebuild
-        executors = object.__getattribute__(self, "_langchain_executors")
-        if executors:
-            from .langchain import sync_langchain_executor
-
-            for executor, tools, prompt in executors:
-                sync_langchain_executor(executor, model, tools, prompt)
-
-        # LlamaIndex agent sync
-        llamaindex_agents = object.__getattribute__(self, "_llamaindex_agents")
-        if llamaindex_agents:
-            from .llamaindex import sync_llamaindex_agents
-
-            sync_llamaindex_agents(llamaindex_agents, model)
-
-        # AG2 agent sync
-        ag2_agents = object.__getattribute__(self, "_ag2_agents")
-        if ag2_agents:
-            from .ag2 import sync_ag2_agents
-
-            sync_ag2_agents(ag2_agents, model)
-
     def get_model(self) -> Any:
         """Get the underlying model."""
         return object.__getattribute__(self, "_optmodel")
+
+    # ------------------------------------------------------------------
+    # Proxy protocol
+    # ------------------------------------------------------------------
 
     def __getattr__(self, name: str) -> Any:
         model = object.__getattribute__(self, "_optmodel")
@@ -156,13 +137,7 @@ class ModelProxy:
         return getattr(model, name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in (
-            "_optmodel",
-            "_crewai_agents",
-            "_langchain_executors",
-            "_llamaindex_agents",
-            "_ag2_agents",
-        ):
+        if name in ("_optmodel", "_optmodel_class", "_sync_callbacks", "_ag2_agents"):
             object.__setattr__(self, name, value)
         else:
             model = object.__getattribute__(self, "_optmodel")

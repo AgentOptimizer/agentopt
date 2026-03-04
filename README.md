@@ -403,7 +403,7 @@ AgentOpt includes three model selection strategies:
 - **`ArmEliminationModelSelector`** — Successive elimination strategy that evaluates combinations in rounds with growing batch sizes and drops statistically dominated arms using confidence bounds. Often reduces total API calls versus brute force.
 
 ```python
-from agentopt import ArmEliminationModelSelector, BruteForceModelSelector, HillClimbingModelSelector
+from agentopt import BaseModelSelector, BruteForceModelSelector, HillClimbingModelSelector, ArmEliminationModelSelector
 
 # Brute force (tests all combinations)
 selector = BruteForceModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
@@ -548,6 +548,7 @@ agentopt/
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
 │       ├── brute_force.py       # BruteForceModelSelector (default ModelSelector)
 │       ├── hill_climbing.py     # HillClimbingModelSelector (experimental)
+│       ├── arm_elimination.py   # ArmEliminationModelSelector (successive elimination)
 │       └── utils.py             # Compat re-export of extract_prompt
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single, multi-agent, multi-LLM
@@ -624,6 +625,7 @@ from agentopt import (
     ModelSelector,           # Brute-force model selector (default)
     BruteForceModelSelector, # Explicit brute-force selector
     HillClimbingModelSelector, # Hill-climbing selector (experimental)
+    ArmEliminationModelSelector, # Arm-elimination selector (bandit-style successive elimination)
     BaseModelSelector,       # Abstract base for custom selectors
 
     # Results

@@ -33,7 +33,7 @@ AgentOpt works in three steps:
 
 ```python
 from crewai import Agent, Task, Crew, LLM
-from agentopt import ModelSelector, ModelProxy
+from agentopt import ModelProxy, ModelSelector
 
 # 1. Wrap the LLM
 llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))

@@ -245,12 +245,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             unseen = [c for c in all_combinations if c not in evaluated]
             if not unseen:
                 break
-            if len(unseen) > 2000:
-                # Subsample candidates for EI evaluation
-                random.shuffle(unseen)
-                candidates = unseen[:2000]
-            else:
-                candidates = unseen
+            candidates = unseen
 
             cand_X = torch.tensor(
                 [list(c) for c in candidates],

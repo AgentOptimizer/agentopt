@@ -249,7 +249,7 @@ def my_invoke(input_data):
     result = my_custom_agent.run(input_data["input"])
     return result
 
-selector = BayesianOptimizationModelSelector(
+selector = ModelSelector(
     models={llm: ["gpt-4o-mini", "gpt-4o"]},
     eval_fn=my_eval_fn,
     dataset=dataset,
@@ -434,7 +434,7 @@ Each thread gets its own agent/invoke instance — no shared state, no conflicts
 
 ### Multi-Agent / Multi-LLM Optimization
 
-When your pipeline uses multiple LLMs (e.g., different agents with different models), create a separate `ModelProxy` for each and pass them all to `BayesianOptimizationModelSelector`. It evaluates the **Cartesian product** of all candidate combinations.
+When your pipeline uses multiple LLMs (e.g., different agents with different models), create a separate `ModelProxy` for each and pass them all to `ModelSelector` (or another selector). It evaluates the **Cartesian product** of all candidate combinations.
 
 ```python
 researcher_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
@@ -442,7 +442,7 @@ coder_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
 
 # ... build agents with these proxies ...
 
-selector = BayesianOptimizationModelSelector(
+selector = ModelSelector(
     models={
         researcher_llm: ["gpt-4o-mini", "gpt-4o"],
         coder_llm: ["gpt-4o-mini", "gpt-4o"],

@@ -1,14 +1,22 @@
 """
-Bayesian optimization model selection using BoTorch MixedSingleTaskGP.
+Bayesian optimization model selector.
 
-All variables are categorical (model choice per proxy). The metric optimized is Accuracy.
+Uses a BoTorch `MixedSingleTaskGP` with categorical inputs (one dimension per
+proxy model choice) to iteratively select promising combinations via Expected
+Improvement (EI) on accuracy.
 """
 
+import itertools
+import logging
+import random
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ..base_models import EvalFn
+from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
 from .base import BaseModelSelector, ModelResult, SelectionResults
+
+
+logger = logging.getLogger(__name__)
 
 
 def _require_botorch() -> None:
@@ -25,34 +33,35 @@ def _require_botorch() -> None:
 
 
 class BayesianOptimizationModelSelector(BaseModelSelector):
-    """
-    Selects the best model for each proxy using Bayesian optimization with
-    BoTorch MixedSingleTaskGP. All variables are categorical (model choice per proxy).
-    The objective is to maximize Accuracy.
+    """Select models via Bayesian optimization.
+
+    This selector treats each proxy's model choice as a categorical variable and
+    fits a BoTorch `MixedSingleTaskGP` over the discrete combination space. It
+    first evaluates a handful of random combinations, then alternates between
+    refitting the GP and selecting the next combination according to Expected
+    Improvement (EI) on accuracy.
+
+    Parameters
+    ----------
+    n_iterations:
+        Number of Bayesian optimization steps performed after the initial
+        random evaluations.
+    n_initial_random:
+        Number of randomly chosen combinations evaluated before fitting the GP
+        for the first time.
     """
 
     def __init__(
         self,
         models: Dict[ModelProxy, List[Any]],
         eval_fn: EvalFn,
-        dataset: List[Tuple[Any, str]],
+        dataset: Dataset,
         agent: Any = None,
-        invoke_fn: Optional[callable] = None,
+        invoke_fn: Optional[Any] = None,
         n_iterations: int = 50,
         n_initial_random: int = 5,
     ) -> None:
-        """
-        Initialize the Bayesian optimization model selector.
-
-        Args:
-            models: Dictionary mapping ModelProxy to list of model candidates.
-            eval_fn: Function (expected, actual) -> bool | float (higher is better).
-            dataset: List of (input_data, expected_answer) tuples.
-            agent: Agent for supported frameworks (Langchain, Langgraph, CrewAI, etc.).
-            invoke_fn: Custom invoke callable if not using agent's default.
-            n_iterations: Total number of acquisition steps (excluding initial random).
-            n_initial_random: Number of random combinations to evaluate before fitting GP.
-        """
+        """Initialize the Bayesian optimization model selector."""
         super().__init__(
             models=models,
             eval_fn=eval_fn,
@@ -65,18 +74,14 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         self.n_initial_random = n_initial_random
 
     def select_best(self) -> SelectionResults:
+        """Run Bayesian optimization and return results.
+
+        Returns
+        -------
+        SelectionResults
+            Container with all evaluated combinations and the best one flagged
+            via ``is_best=True``.
         """
-        Select the best model for each proxy via Bayesian optimization.
-
-        Uses MixedSingleTaskGP (all dimensions categorical), maximizes Accuracy,
-        and suggests next points with Expected Improvement over unseen combinations.
-
-        Returns:
-            SelectionResults containing all evaluated combinations and the best.
-        """
-        import itertools
-        import random
-
         import torch
         from botorch.acquisition.analytic import LogExpectedImprovement
         from botorch.models.gp_regression_mixed import MixedSingleTaskGP
@@ -107,12 +112,12 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             set_proxies_from_combo(combo)
             return self._evaluate(self.dataset)
 
-        print(f"\n{'='*60}")
-        print(
-            f"Bayesian optimization: {total_combos} combinations, "
-            f"{self.n_initial_random} random + {self.n_iterations} BO iterations"
+        logger.info(
+            "Bayesian optimization: %d combinations, %d random + %d BO iterations",
+            total_combos,
+            self.n_initial_random,
+            self.n_iterations,
         )
-        print(f"{'='*60}\n")
 
         # 1) Initial random evaluations
         initial_pool = list(all_combos)
@@ -127,8 +132,11 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
             try:
                 accuracy, latency = evaluate_combo(combo)
-                print(
-                    f"✓ [init] [{combo_name}] Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s"
+                logger.info(
+                    "[init] [%s] Accuracy: %.3f, Latency: %.3fs",
+                    combo_name,
+                    accuracy,
+                    latency,
                 )
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
@@ -142,7 +150,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     )
                 )
             except Exception as e:
-                print(f"✗ [init] [{combo_name}] failed: {e}")
+                logger.warning("[init] [%s] failed: %s", combo_name, e)
                 all_results.append(
                     ModelResult(
                         model_name=combo_name,
@@ -156,7 +164,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         # 2) Bayesian optimization loop
         for it in range(self.n_iterations):
             if len(X_list) < 2:
-                # Need at least 2 points to fit GP; add more random
+                # Need at least 2 points to fit GP; add more random.
                 remaining = [c for c in all_combos if c not in evaluated]
                 if not remaining:
                     break
@@ -167,8 +175,11 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 )
                 try:
                     accuracy, latency = evaluate_combo(combo)
-                    print(
-                        f"✓ [random] [{combo_name}] Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s"
+                    logger.info(
+                        "[random] [%s] Accuracy: %.3f, Latency: %.3fs",
+                        combo_name,
+                        accuracy,
+                        latency,
                     )
                     X_list.append(list(combo))
                     Y_list.append(accuracy)
@@ -182,7 +193,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                         )
                     )
                 except Exception as e:
-                    print(f"✗ [random] [{combo_name}] failed: {e}")
+                    logger.warning("[random] [%s] failed: %s", combo_name, e)
                 continue
 
             # Fit MixedSingleTaskGP (all dimensions categorical)
@@ -229,9 +240,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
             try:
                 accuracy, latency = evaluate_combo(combo)
-                print(
-                    f"✓ [BO {it+1}/{self.n_iterations}] [{combo_name}] "
-                    f"Accuracy: {accuracy:.2%}, Latency: {latency:.2f}s"
+                logger.info(
+                    "[BO %d/%d] [%s] Accuracy: %.3f, Latency: %.3fs",
+                    it + 1,
+                    self.n_iterations,
+                    combo_name,
+                    accuracy,
+                    latency,
                 )
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
@@ -245,7 +260,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     )
                 )
             except Exception as e:
-                print(f"✗ [BO] [{combo_name}] failed: {e}")
+                logger.warning("[BO] [%s] failed: %s", combo_name, e)
 
         # 3) Determine best and set proxies
         accuracy_tolerance = 1e-9
@@ -266,12 +281,11 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 best_combination = result.model_name
 
         if best_combination is not None:
-            # Find the combo that corresponds to best_combination and set proxies
+            # Find the combo that corresponds to best_combination and set proxies.
             for result in all_results:
                 if result.model_name == best_combination:
                     result.is_best = True
                     break
-            # Set proxies to best: we need to find the combo from the name or from best accuracy
             for combo in all_combos:
                 name = " + ".join(
                     self._get_model_name(m) for m in combo_to_models(combo)
@@ -279,11 +293,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 if name == best_combination:
                     set_proxies_from_combo(combo)
                     break
-            print(
-                f"\n🏆 Best combination: {best_combination} "
-                f"(accuracy: {best_accuracy:.2%}, latency: {best_latency:.2f}s)"
+            logger.info(
+                "Best combination: %s (accuracy=%.3f, latency=%.3fs)",
+                best_combination,
+                best_accuracy,
+                best_latency,
             )
         else:
-            print("\n✗ No successful evaluations")
+            logger.warning("No successful evaluations.")
 
         return SelectionResults(results=all_results)

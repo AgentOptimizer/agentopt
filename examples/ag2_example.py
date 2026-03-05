@@ -26,6 +26,7 @@ from agentopt.model_selection import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    BayesianOptimizationModelSelector,
 )
 from agentopt.model_proxy.framework_specific_implementation.ag2 import (
     extract_ag2_content,
@@ -36,6 +37,7 @@ SELECTORS = {
     "brute_force": BruteForceModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
 

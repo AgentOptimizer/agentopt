@@ -12,6 +12,7 @@ from .model_selection import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    BayesianOptimizationModelSelector,
 )
 from .base_models import (
     Dataset,
@@ -31,6 +32,7 @@ __all__ = [
     "BruteForceModelSelector",
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
+    "BayesianOptimizationModelSelector",
     "ModelSelector",
     "create_model_from_string",
     "normalize_models",

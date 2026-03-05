@@ -21,6 +21,9 @@ from .base_models import (
 )
 from .model_selection.base import BaseModelSelector, ModelResult, SelectionResults
 
+# Backwards-compatible alias: default brute-force selector
+ModelSelector = BruteForceModelSelector
+
 __all__ = [
     # Core
     "ModelProxy",
@@ -28,6 +31,7 @@ __all__ = [
     "BruteForceModelSelector",
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
+    "ModelSelector",
     "create_model_from_string",
     "normalize_models",
     # Types

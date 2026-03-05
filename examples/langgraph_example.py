@@ -16,14 +16,16 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
-    ArmEliminationModelSelector,
+    BaseModelSelector,
+    BruteForceModelSelector,
     HillClimbingModelSelector,
+    ArmEliminationModelSelector,
 )
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
-    "arm_elimination": ArmEliminationModelSelector,
     "hill_climbing": HillClimbingModelSelector,
+    "arm_elimination": ArmEliminationModelSelector,
 }
 
 

@@ -27,13 +27,13 @@ AgentOpt works in three steps:
 
 1. **Wrap** your LLM with `ModelProxy`
 2. **Build** your agent as usual (the proxy is transparent)
-3. **Run** `BayesianOptimizationModelSelector` to find the best model
+3. **Run** `ModelSelector` (default brute-force) to find the best model
 
 ### CrewAI
 
 ```python
 from crewai import Agent, Task, Crew, LLM
-from agentopt import BayesianOptimizationModelSelector, ModelProxy
+from agentopt import ModelSelector, ModelProxy
 
 # 1. Wrap the LLM
 llm = ModelProxy(LLM(model="openai/gpt-4o-mini"))

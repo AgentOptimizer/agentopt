@@ -73,8 +73,15 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         self.n_iterations = n_iterations
         self.n_initial_random = n_initial_random
 
-    def select_best(self) -> SelectionResults:
         """Run Bayesian optimization and return results.
+
+        Parameters
+        ----------
+        parallel:
+            Accepted for API compatibility with other selectors. Currently
+            ignored — Bayesian optimization always runs sequentially.
+        max_workers:
+            Unused placeholder for future parallel support.
 
         Returns
         -------

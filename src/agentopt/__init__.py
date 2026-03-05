@@ -3,7 +3,7 @@ Model selection and optimization for LLM-powered agents using `ModelProxy`.
 
 This package provides:
 - `ModelProxy` as a transparent proxy that wraps LLM objects and allows model swapping
-- model selection utilities (`BruteForceModelSelector`, `HillClimbingModelSelector`, `BayesianOptimizationModelSelector`) to choose among models
+- model selection utilities (`BruteForceModelSelector`, `HillClimbingModelSelector`, `ArmEliminationModelSelector`, `BayesianOptimizationModelSelector`) to choose among models
 """
 
 from .model_proxy import ModelProxy

@@ -73,6 +73,11 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         self.n_iterations = n_iterations
         self.n_initial_random = n_initial_random
 
+    def select_best(
+        self,
+        parallel: bool = False,
+        max_workers: Optional[int] = None,
+    ) -> SelectionResults:
         """Run Bayesian optimization and return results.
 
         Parameters

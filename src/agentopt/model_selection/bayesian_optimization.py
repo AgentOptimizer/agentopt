@@ -99,8 +99,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         candidate_lists = list(self._models.values())
         n_proxies = len(proxies)
         n_choices = [len(c) for c in candidate_lists]
-        all_combos = list(itertools.product(*[range(n) for n in n_choices]))
-        total_combos = len(all_combos)
+        all_combinations = list(itertools.product(*[range(n) for n in n_choices]))
+        total_combos = len(all_combinations)
 
         # Index -> (combo tuple), set of already evaluated (as tuple)
         evaluated: Set[Tuple[int, ...]] = set()
@@ -127,7 +127,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         )
 
         # 1) Initial random evaluations
-        initial_pool = list(all_combos)
+        initial_pool = list(all_combinations)
         random.shuffle(initial_pool)
         for idx in range(min(self.n_initial_random, len(initial_pool))):
             combo = initial_pool[idx]
@@ -172,7 +172,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         for it in range(self.n_iterations):
             if len(X_list) < 2:
                 # Need at least 2 points to fit GP; add more random.
-                remaining = [c for c in all_combos if c not in evaluated]
+                remaining = [c for c in all_combinations if c not in evaluated]
                 if not remaining:
                     break
                 combo = random.choice(remaining)
@@ -219,8 +219,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             # Best observed accuracy (for EI)
             best_f = train_Y.max().item()
 
-            # Candidate set: all unseen combinations (or sample if huge)
-            unseen = [c for c in all_combos if c not in evaluated]
+            # Candidate set: all unseen combinations
+            unseen = [c for c in all_combinations if c not in evaluated]
             if not unseen:
                 break
             if len(unseen) > 2000:
@@ -293,7 +293,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 if result.model_name == best_combination:
                     result.is_best = True
                     break
-            for combo in all_combos:
+            for combo in all_combinations:
                 name = " + ".join(
                     self._get_model_name(m) for m in combo_to_models(combo)
                 )

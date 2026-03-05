@@ -58,8 +58,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Any] = None,
-        n_iterations: int = 50,
-        n_initial_random: int = 5,
+        n_iterations: Optional[int] = None,
+        n_initial_random: Optional[int] = None,
     ) -> None:
         """Initialize the Bayesian optimization model selector."""
         super().__init__(
@@ -70,6 +70,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             dataset=dataset,
         )
         _require_botorch()
+        # If left as ``None``, effective defaults are chosen inside ``select_best``
+        # based on the number of combinations.
         self.n_iterations = n_iterations
         self.n_initial_random = n_initial_random
 
@@ -107,6 +109,21 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         all_combinations = list(itertools.product(*[range(n) for n in n_choices]))
         total_combos = len(all_combinations)
 
+        # Choose effective defaults if the user did not override them.
+        if self.n_initial_random is None:
+            # Common BO heuristic: ~2 * (dim + 1) random points.
+            n_initial_random = min(2 * (n_proxies + 1), total_combos)
+        else:
+            n_initial_random = self.n_initial_random
+
+        if self.n_iterations is None:
+            # By default, evaluate ~20% of the total combination space via BO.
+            n_iterations = int(0.2 * total_combos)
+        else:
+            n_iterations = self.n_iterations
+
+        n_iterations = max(0, n_iterations)
+
         # Index -> (combo tuple), set of already evaluated (as tuple)
         evaluated: Set[Tuple[int, ...]] = set()
         X_list: List[List[int]] = []
@@ -127,14 +144,14 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         logger.info(
             "Bayesian optimization: %d combinations, %d random + %d BO iterations",
             total_combos,
-            self.n_initial_random,
-            self.n_iterations,
+            n_initial_random,
+            n_iterations,
         )
 
         # 1) Initial random evaluations
         initial_pool = list(all_combinations)
         random.shuffle(initial_pool)
-        for idx in range(min(self.n_initial_random, len(initial_pool))):
+        for idx in range(min(n_initial_random, len(initial_pool))):
             combo = initial_pool[idx]
             if combo in evaluated:
                 continue
@@ -174,7 +191,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 )
 
         # 2) Bayesian optimization loop
-        for it in range(self.n_iterations):
+        for it in range(n_iterations):
             if len(X_list) < 2:
                 # Need at least 2 points to fit GP; add more random.
                 remaining = [c for c in all_combinations if c not in evaluated]
@@ -255,7 +272,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 logger.info(
                     "[BO %d/%d] [%s] Accuracy: %.3f, Latency: %.3fs",
                     it + 1,
-                    self.n_iterations,
+                    n_iterations,
                     combo_name,
                     accuracy,
                     latency,

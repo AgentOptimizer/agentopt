@@ -394,25 +394,50 @@ results = selector.select_best(parallel=True)
 
 ### Selection Strategies
 
-AgentOpt includes three model selection strategies:
+AgentOpt includes four model selection strategies:
 
 - **`BruteForceModelSelector`** (default, aliased as `ModelSelector`) — Evaluates the Cartesian product of all candidate model combinations. Thorough but scales as O(n^k) where n is models per proxy and k is the number of proxies.
+
+- **`RandomSearchModelSelector`** — Samples a random fraction of the full Cartesian product and evaluates only that subset. Useful when brute force is too expensive but you still want broad coverage. Supports the same sequential and parallel modes as brute force via `select_best(parallel=...)`.
 
 - **`HillClimbingModelSelector`** — Neighbor-based search using model quality/speed rankings. Starts from an initial combination and iteratively swaps one model at a time, keeping improvements. Much faster for large search spaces.
 
 - **`ArmEliminationModelSelector`** — Successive elimination strategy that evaluates combinations in rounds with growing batch sizes and drops statistically dominated arms using confidence bounds. Often reduces total API calls versus brute force.
 
 ```python
-from agentopt import BaseModelSelector, BruteForceModelSelector, HillClimbingModelSelector, ArmEliminationModelSelector
+from agentopt import (
+    BaseModelSelector,
+    BruteForceModelSelector,
+    RandomSearchModelSelector,
+    HillClimbingModelSelector,
+    ArmEliminationModelSelector,
+)
 
 # Brute force (tests all combinations)
 selector = BruteForceModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
+
+# Random search (tests a sampled subset)
+selector = RandomSearchModelSelector(
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    agent=agent,
+    sample_fraction=0.25,
+)
 
 # Hill climbing (smart search)
 selector = HillClimbingModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
 
 # Arm elimination (bandit-style successive elimination)
 selector = ArmEliminationModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
+```
+
+`RandomSearchModelSelector` samples without replacement from the full search space. Set `sample_fraction` to a value in `(0, 1]`; for example, `0.25` evaluates 25% of all combinations.
+
+Example CLI usage:
+
+```bash
+python examples/ag2_example.py single --selector random_search --sample-fraction 0.25
 ```
 
 ### How Parallel Evaluation Works
@@ -547,6 +572,7 @@ agentopt/
 │   └── model_selection/
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
 │       ├── brute_force.py       # BruteForceModelSelector (default ModelSelector)
+│       ├── random_search.py     # RandomSearchModelSelector (sampled brute-force)
 │       ├── hill_climbing.py     # HillClimbingModelSelector (experimental)
 │       ├── arm_elimination.py   # ArmEliminationModelSelector (successive elimination)
 │       └── utils.py             # Compat re-export of extract_prompt
@@ -624,6 +650,7 @@ from agentopt import (
     ModelProxy,              # Transparent LLM proxy with auto-framework-detection
     ModelSelector,           # Brute-force model selector (default)
     BruteForceModelSelector, # Explicit brute-force selector
+    RandomSearchModelSelector, # Random subset search over model combinations
     HillClimbingModelSelector, # Hill-climbing selector (experimental)
     ArmEliminationModelSelector, # Arm-elimination selector (bandit-style successive elimination)
     BaseModelSelector,       # Abstract base for custom selectors

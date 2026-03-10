@@ -195,7 +195,7 @@ class BruteForceModelSelector(BaseModelSelector):
 
         # Phase 1: Create agent/invoke_fn copies (serial — cloning must not race).
         print(f"  Cloning agents for {len(all_combinations)} combinations ...")
-        tasks: List[Tuple[str, tuple, Any, bool]] = []
+        tasks: List[Tuple[str, tuple, Any, bool, Any]] = []
 
         for idx, combo in enumerate(all_combinations, 1):
             combo_name = " + ".join(self._get_model_name(m) for m in combo)
@@ -208,7 +208,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     # User-supplied factory for invoke_fn-based multi-agent chains.
                     model_map = dict(zip(proxies, combo))
                     fresh_invoke = self.clone_fn(model_map)
-                    tasks.append((combo_name, combo, fresh_invoke, self.is_async))
+                    tasks.append((combo_name, combo, fresh_invoke, self.is_async, None))
                 else:
                     # Adapter-based cloning for recognized framework agents.
                     if adapter is not None:
@@ -229,7 +229,7 @@ class BruteForceModelSelector(BaseModelSelector):
                             agent_copy, invoke_method_name, self.is_async
                         )
                     )
-                    tasks.append((combo_name, combo, invoke_fn, False))
+                    tasks.append((combo_name, combo, invoke_fn, False, agent_copy))
             except Exception as e:
                 logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
                 continue
@@ -245,13 +245,15 @@ class BruteForceModelSelector(BaseModelSelector):
         future_to_info: Dict[Any, Tuple[str, tuple]] = {}
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for combo_name, combo, invoke_fn, is_async_flag in tasks:
+            for combo_name, combo, invoke_fn, is_async_flag, agent_copy in tasks:
                 future = executor.submit(
                     self._evaluate_single,
                     invoke_fn,
                     is_async_flag,
                     self.eval_fn,
                     self.dataset,
+                    adapter=adapter,
+                    agent=agent_copy,
                     label=combo_name,
                 )
                 future_to_info[future] = (combo_name, combo)

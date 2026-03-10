@@ -1,7 +1,7 @@
 """CrewAI-specific LLM builder, agent sync, and FrameworkAdapter."""
 
 import logging
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Optional
 
 from ..adapter import FrameworkAdapter
 
@@ -67,10 +67,7 @@ class CrewAIAdapter(FrameworkAdapter):
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]
     ) -> None:
-        raise NotImplementedError(
-            "CrewAIAdapter does not use register_with_proxy: ModelProxy is registered "
-            "as a BaseLLM subclass and delegates to _optmodel at call time."
-        )
+        pass  # Model swapping is handled transparently via BaseLLM ABC registration.
 
     def get_token_usage(self, agent: Any) -> Tuple[int, int]:
         """Return tokens consumed since the last call, via crew.usage_metrics."""

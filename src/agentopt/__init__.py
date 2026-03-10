@@ -7,9 +7,6 @@ This package provides:
 """
 
 from .model_proxy import ModelProxy
-from .model_proxy.framework_specific_implementation.langchain_compat import (
-    create_model_from_string,
-)
 from .model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -38,7 +35,6 @@ __all__ = [
     "ArmEliminationModelSelector",
     "BayesianOptimizationModelSelector",
     "ModelSelector",
-    "create_model_from_string",
     # Types
     "ModelResult",
     "SelectionResults",

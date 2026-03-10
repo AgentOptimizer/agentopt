@@ -20,7 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -28,10 +28,31 @@ from agentopt.model_selection import (
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
 )
-from agentopt.model_proxy.framework_specific_implementation.ag2 import (
-    extract_ag2_content,
-    _build_ag2_config,
-)
+
+
+def _build_config(model: str) -> dict:
+    bare = model.split("/", 1)[-1] if "/" in model else model
+    if bare.startswith("claude") or model.startswith("anthropic/"):
+        return {
+            "api_type": "anthropic",
+            "model": bare,
+            "api_key": os.getenv("ANTHROPIC_API_KEY"),
+        }
+    return {"api_type": "openai", "model": bare, "api_key": os.getenv("OPENAI_API_KEY")}
+
+
+def _extract(response) -> str:
+    for _ in response.events:
+        pass
+    if hasattr(response, "summary") and response.summary:
+        return response.summary
+    if response.messages:
+        last = response.messages[-1]
+        if isinstance(last, dict):
+            return last.get("content") or str(last)
+        return last.content if hasattr(last, "content") else str(last)
+    return ""
+
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
@@ -108,12 +129,10 @@ def multiagent_example():
     def invoke_fn(input_data):
         question = input_data["input"]
         model_name = proxy.get_model().model
-        print(f"  [invoke] model={model_name} | researcher processing: {question[:60]}")
-        research_output = extract_ag2_content(
+        research_output = _extract(
             researcher.run(message=question, max_turns=1, user_input=False)
         )
-        print(f"  [invoke] model={model_name} | coder processing with research context")
-        coder_output = extract_ag2_content(
+        coder_output = _extract(
             coder.run(
                 message=f"Context: {research_output}\n\nTask: {question}",
                 max_turns=1,
@@ -130,7 +149,7 @@ def multiagent_example():
         """
         model_name = model_map[proxy]
         print(f"  [clone_fn] building fresh researcher + coder (model: {model_name})")
-        new_config = LLMConfig(_build_ag2_config(model_name))
+        new_config = LLMConfig(_build_config(model_name))
         fresh_researcher = ConversableAgent(
             name="researcher",
             system_message="You are a research assistant. Find and summarize information.",
@@ -146,10 +165,10 @@ def multiagent_example():
 
         def fresh_invoke(input_data):
             question = input_data["input"]
-            research_output = extract_ag2_content(
+            research_output = _extract(
                 fresh_researcher.run(message=question, max_turns=1, user_input=False)
             )
-            return extract_ag2_content(
+            return _extract(
                 fresh_coder.run(
                     message=f"Context: {research_output}\n\nTask: {question}",
                     max_turns=1,
@@ -199,11 +218,11 @@ def multiagent_multillm_example():
         print(
             f"  [invoke] researcher_model={r_model}, coder_model={c_model} | q: {question[:60]}"
         )
-        research_output = extract_ag2_content(
+        research_output = _extract(
             researcher.run(message=question, max_turns=1, user_input=False)
         )
         print(f"  [invoke] coder processing with research context")
-        coder_output = extract_ag2_content(
+        coder_output = _extract(
             coder.run(
                 message=f"Context: {research_output}\n\nTask: {question}",
                 max_turns=1,
@@ -226,22 +245,22 @@ def multiagent_multillm_example():
         fresh_researcher = ConversableAgent(
             name="researcher",
             system_message="You are a research assistant. Find and summarize information.",
-            llm_config=LLMConfig(_build_ag2_config(r_model)),
+            llm_config=LLMConfig(_build_config(r_model)),
             human_input_mode="NEVER",
         )
         fresh_coder = ConversableAgent(
             name="coder",
             system_message="You are a coding assistant. Write efficient code based on research.",
-            llm_config=LLMConfig(_build_ag2_config(c_model)),
+            llm_config=LLMConfig(_build_config(c_model)),
             human_input_mode="NEVER",
         )
 
         def fresh_invoke(input_data):
             question = input_data["input"]
-            research_output = extract_ag2_content(
+            research_output = _extract(
                 fresh_researcher.run(message=question, max_turns=1, user_input=False)
             )
-            return extract_ag2_content(
+            return _extract(
                 fresh_coder.run(
                     message=f"Context: {research_output}\n\nTask: {question}",
                     max_turns=1,

@@ -117,10 +117,7 @@ class OpenAISDKAdapter(FrameworkAdapter):
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]
     ) -> None:
-        raise NotImplementedError(
-            "OpenAISDKAdapter does not use register_with_proxy: ModelProxy is registered "
-            "as a Model subclass and resolves via _get_response at call time."
-        )
+        pass  # Model swapping is handled transparently via Model ABC registration.
 
     def clone_for_parallel(
         self,

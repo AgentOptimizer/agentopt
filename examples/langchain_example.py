@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,

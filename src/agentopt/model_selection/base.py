@@ -31,10 +31,10 @@ class ModelResult(BaseModel):
     is_best: bool = False
 
     def __str__(self) -> str:
-        total_tokens = self.input_tokens + self.output_tokens
         return (
             f"{self.model_name} (accuracy: {self.accuracy:.2%}, "
-            f"latency: {self.latency_seconds:.2f}s, tokens: {total_tokens})"
+            f"latency: {self.latency_seconds:.2f}s, "
+            f"in_tokens: {self.input_tokens}, out_tokens: {self.output_tokens})"
         )
 
 
@@ -107,7 +107,7 @@ class SelectionResults(BaseModel):
             return f"{v:.2f}s"
 
         def fmt_tok(r: ModelResult) -> str:
-            return str(r.input_tokens + r.output_tokens)
+            return f"{r.input_tokens}/{r.output_tokens}"
 
         # Compute column widths.
         rank_h, model_h, acc_h, lat_h, tok_h = (
@@ -115,7 +115,7 @@ class SelectionResults(BaseModel):
             "Model",
             "Accuracy",
             "Latency",
-            "Tokens",
+            "Tokens (in/out)",
         )
         rank_w = max(len(rank_h), len(str(len(unique))))
         model_w = max(len(model_h), *(len(r.model_name) for r in unique))
@@ -169,7 +169,7 @@ class SelectionResults(BaseModel):
                 f"{pad} Best: {best_result.model_name} "
                 f"(accuracy: {best_result.accuracy:.2%}, "
                 f"latency: {best_result.latency_seconds:.2f}s, "
-                f"tokens: {best_result.input_tokens + best_result.output_tokens})"
+                f"in_tokens: {best_result.input_tokens}, out_tokens: {best_result.output_tokens})"
             )
         lines.append("")
 

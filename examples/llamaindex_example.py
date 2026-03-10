@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -16,7 +16,8 @@ from agentopt.model_selection import (
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
 )
-from agentopt.model_proxy.framework_specific_implementation import build_llamaindex_llm
+from llama_index.llms.openai import OpenAI as LlamaOpenAI
+from llama_index.llms.anthropic import Anthropic as LlamaAnthropic
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
@@ -78,7 +79,7 @@ def single_agent_example():
     be passed as llm= directly. Instead we create the agent with a real LLM.
     The selector auto-registers agents for sync on model swap.
     """
-    initial_llm = build_llamaindex_llm("gpt-4o-mini")
+    initial_llm = LlamaOpenAI(model="gpt-4o-mini")
     llm_proxy = ModelProxy(initial_llm)
 
     agent = FunctionAgent(
@@ -109,7 +110,7 @@ def multi_agent_example():
 
     Shared LLM proxy so both agents are optimized together.
     """
-    initial_llm = build_llamaindex_llm("gpt-4o-mini")
+    initial_llm = LlamaOpenAI(model="gpt-4o-mini")
     llm_proxy = ModelProxy(initial_llm)
 
     math_agent = FunctionAgent(
@@ -156,8 +157,8 @@ def multi_agent_multi_llm_example():
     issues in LlamaIndex AgentWorkflow (OpenAI and Anthropic use different
     tool_call serialization formats in conversation history).
     """
-    math_llm = build_llamaindex_llm("claude-sonnet-4-20250514")
-    reviewer_llm = build_llamaindex_llm("claude-sonnet-4-20250514")
+    math_llm = LlamaAnthropic(model="claude-sonnet-4-20250514")
+    reviewer_llm = LlamaAnthropic(model="claude-sonnet-4-20250514")
     math_proxy = ModelProxy(math_llm)
     reviewer_proxy = ModelProxy(reviewer_llm)
 

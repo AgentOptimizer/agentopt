@@ -38,7 +38,7 @@ class AG2ConfigWrapper:
 
     @staticmethod
     def _build_config(model: str) -> dict:
-        """Build an AG2 config_list entry with correct api_type and key for the model."""
+        """Build an AG2 config_list entry for the given model name."""
         bare = model.split("/", 1)[-1] if "/" in model else model
         if bare.startswith("claude") or model.startswith("anthropic/"):
             return {
@@ -46,7 +46,6 @@ class AG2ConfigWrapper:
                 "model": bare,
                 "api_key": os.getenv("ANTHROPIC_API_KEY"),
             }
-        # Default to OpenAI-compatible
         return {
             "api_type": "openai",
             "model": bare,
@@ -175,24 +174,6 @@ class AG2Adapter(FrameworkAdapter):
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() to handle input dict and extract content."""
 
-        def _extract(response: Any) -> str:
-            """Extract text from an AG2 response.
-
-            Events must be consumed before summary/messages are available.
-            """
-            for _ in response.events:
-                pass
-            if hasattr(response, "summary") and response.summary:
-                return response.summary
-            if response.messages:
-                last_msg = response.messages[-1]
-                if isinstance(last_msg, dict):
-                    return last_msg.get("content") or str(last_msg)
-                return (
-                    last_msg.content if hasattr(last_msg, "content") else str(last_msg)
-                )
-            return ""
-
         def _invoke(input_data: Any) -> Any:
             if isinstance(input_data, dict):
                 message = input_data.get("input", str(input_data))
@@ -200,6 +181,19 @@ class AG2Adapter(FrameworkAdapter):
                 message = str(input_data)
             response = agent.run(message=message, max_turns=1, user_input=False)
             self._last_responses[id(agent)] = response
+
+            def _extract(r: Any) -> str:
+                for _ in r.events:
+                    pass
+                if hasattr(r, "summary") and r.summary:
+                    return r.summary
+                if r.messages:
+                    last = r.messages[-1]
+                    if isinstance(last, dict):
+                        return last.get("content") or str(last)
+                    return last.content if hasattr(last, "content") else str(last)
+                return ""
+
             return _extract(response)
 
         return _invoke
@@ -237,12 +231,12 @@ class AG2Adapter(FrameworkAdapter):
         get_model_name: Callable[[Any], str],
     ) -> Any:
         """Clone the AG2 agent with a fresh LLMConfig for this combination."""
-        from autogen import LLMConfig
-
         model_spec = combo[0]
         model_name = (
             model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
         )
+        from autogen import LLMConfig
+
         new_config = LLMConfig(AG2ConfigWrapper._build_config(model_name))
         agent_copy = copy.copy(agent)
         agent_copy.llm_config = new_config

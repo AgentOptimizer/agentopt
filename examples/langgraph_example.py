@@ -5,16 +5,15 @@ from typing import Any, Dict, List, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, convert_to_messages
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langgraph.graph import END, StateGraph
-
-from agentopt import create_model_from_string
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -187,7 +186,11 @@ def multiagent_example():
         """
         model_name = model_map[proxy]
         print(f"  [clone_fn] building fresh workflow (model: {model_name})")
-        fresh_llm = create_model_from_string(model_name)
+        fresh_llm = (
+            ChatAnthropic(model=model_name)
+            if "claude" in model_name
+            else ChatOpenAI(model=model_name)
+        )
         fresh_wf = MultiAgentWorkflow(solver_model=fresh_llm, reviewer_model=fresh_llm)
         return fresh_wf.invoke
 
@@ -199,8 +202,8 @@ def multiagent_multillm_example():
 
     Solver uses OpenAI, reviewer uses Anthropic (Claude).
     """
-    solver_llm = create_model_from_string("gpt-4o-mini")
-    reviewer_llm = create_model_from_string("claude-sonnet-4-20250514")
+    solver_llm = ChatOpenAI(model="gpt-4o-mini")
+    reviewer_llm = ChatAnthropic(model="claude-sonnet-4-20250514")
     solver_proxy = ModelProxy(solver_llm)
     print("  [setup] solver_proxy created (initial model: gpt-4o-mini)")
     reviewer_proxy = ModelProxy(reviewer_llm)
@@ -225,8 +228,16 @@ def multiagent_multillm_example():
         print(
             f"  [clone_fn] building fresh workflow (solver: {s_model}, reviewer: {r_model})"
         )
-        fresh_solver = create_model_from_string(s_model)
-        fresh_reviewer = create_model_from_string(r_model)
+        fresh_solver = (
+            ChatAnthropic(model=s_model)
+            if "claude" in s_model
+            else ChatOpenAI(model=s_model)
+        )
+        fresh_reviewer = (
+            ChatAnthropic(model=r_model)
+            if "claude" in r_model
+            else ChatOpenAI(model=r_model)
+        )
         fresh_wf = MultiAgentWorkflow(
             solver_model=fresh_solver, reviewer_model=fresh_reviewer
         )

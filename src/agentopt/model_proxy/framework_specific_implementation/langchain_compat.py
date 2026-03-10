@@ -158,14 +158,21 @@ def build_langchain_compatible_llm(model_name: str) -> Optional[Any]:
 # ---------------------------------------------------------------------------
 
 
-class _TokenCountingCallback:
-    """Minimal LangChain callback handler that accumulates token usage."""
+try:
+    from langchain_core.callbacks import BaseCallbackHandler as _BaseCallbackHandler
+except ImportError:
+    _BaseCallbackHandler = object  # type: ignore[misc, assignment]
+
+
+class _TokenCountingCallback(_BaseCallbackHandler):
+    """LangChain callback handler that accumulates token usage."""
 
     def __init__(self) -> None:
+        if _BaseCallbackHandler is not object:
+            super().__init__()
         self.input_tokens: int = 0
         self.output_tokens: int = 0
 
-    # LangChain calls on_llm_end after each LLM call with an LLMResult.
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         llm_output = response.llm_output
         if llm_output and "token_usage" in llm_output:
@@ -178,16 +185,6 @@ class _TokenCountingCallback:
         self.input_tokens = 0
         self.output_tokens = 0
         return in_tok, out_tok
-
-    # Required no-op stubs so LangChain doesn't raise AttributeError.
-    def on_llm_start(self, *args: Any, **kwargs: Any) -> None: ...
-    def on_llm_error(self, *args: Any, **kwargs: Any) -> None: ...
-    def on_chain_start(self, *args: Any, **kwargs: Any) -> None: ...
-    def on_chain_end(self, *args: Any, **kwargs: Any) -> None: ...
-    def on_chain_error(self, *args: Any, **kwargs: Any) -> None: ...
-    def on_tool_start(self, *args: Any, **kwargs: Any) -> None: ...
-    def on_tool_end(self, *args: Any, **kwargs: Any) -> None: ...
-    def on_tool_error(self, *args: Any, **kwargs: Any) -> None: ...
 
 
 class LangChainAdapter(FrameworkAdapter):
@@ -257,14 +254,16 @@ class LangChainAdapter(FrameworkAdapter):
             and hasattr(agent, "tools")
         )
 
-    def get_invoke_fn(self, agent: Any) -> Callable:
-        # Install a token-counting callback on the executor's LLM.
+    def _install_callback(self, agent: Any) -> None:
+        """Attach a _TokenCountingCallback to the executor's callbacks list."""
+        if id(agent) in self._callbacks:
+            return
         handler = _TokenCountingCallback()
         self._callbacks[id(agent)] = handler
-        inner = agent.agent
-        if inner is not None and hasattr(inner, "llm"):
-            llm = inner.llm
-            llm.callbacks = list(llm.callbacks or []) + [handler]
+        agent.callbacks = list(agent.callbacks or []) + [handler]
+
+    def get_invoke_fn(self, agent: Any) -> Callable:
+        self._install_callback(agent)
         return agent.invoke
 
     def register_with_proxy(
@@ -272,9 +271,11 @@ class LangChainAdapter(FrameworkAdapter):
     ) -> None:
         """Register a closure that rebuilds the LCEL chain on every model swap.
 
-        Extracts tools and prompt automatically from the executor — users
-        do not need to pass them manually.
+        Also installs token counting so custom invoke_fns that call
+        executor.invoke() directly still accumulate tokens.
         """
+        self._install_callback(agent)
+
         tools = agent.tools
         prompt = self._extract_prompt(agent)
         if prompt is None:

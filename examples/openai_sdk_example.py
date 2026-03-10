@@ -20,7 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -28,9 +28,7 @@ from agentopt.model_selection import (
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
 )
-from agentopt.model_proxy.framework_specific_implementation import (
-    build_openai_agents_model,
-)
+from agents.models.openai_provider import OpenAIProvider
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
@@ -128,12 +126,12 @@ def multillm_example():
         )
         fresh_researcher = Agent(
             name="researcher",
-            model=build_openai_agents_model(r_model),
+            model=OpenAIProvider().get_model(r_model),
             instructions="You are a research assistant. Analyze the question and provide relevant context and findings.",
         )
         fresh_coder = Agent(
             name="coder",
-            model=build_openai_agents_model(c_model),
+            model=OpenAIProvider().get_model(c_model),
             instructions="You are a coding assistant. Based on the provided context, give a concise final answer.",
         )
 

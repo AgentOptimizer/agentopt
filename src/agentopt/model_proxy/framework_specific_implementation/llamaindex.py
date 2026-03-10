@@ -10,7 +10,7 @@ import logging
 import os
 
 from ..adapter import FrameworkAdapter
-from typing import Any, Callable, List
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
 
@@ -134,6 +134,47 @@ class LlamaIndexAdapter(FrameworkAdapter):
 
     invoke_method_name = "run"
 
+    def __init__(self) -> None:
+        # Maps agent id → TokenCountingHandler installed at get_invoke_fn time.
+        self._token_handlers: Dict[int, Any] = {}
+
+    def _install_token_handler(self, agent: Any) -> Optional[Any]:
+        """Attach a TokenCountingHandler to the agent's callback manager."""
+        try:
+            from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+            import tiktoken
+        except ImportError:
+            return None
+
+        handler = TokenCountingHandler(
+            tokenizer=tiktoken.encoding_for_model("gpt-3.5-turbo").encode
+        )
+        cb_manager = getattr(agent, "callback_manager", None)
+        if cb_manager is None:
+            agent.callback_manager = CallbackManager([handler])
+        else:
+            cb_manager.add_handler(handler)
+
+        # For AgentWorkflow, also attach to each sub-agent.
+        if hasattr(agent, "agents"):
+            for sub in agent.agents.values():
+                sub_cb = getattr(sub, "callback_manager", None)
+                if sub_cb is None:
+                    sub.callback_manager = CallbackManager([handler])
+                else:
+                    sub_cb.add_handler(handler)
+
+        return handler
+
+    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
+        handler = self._token_handlers.get(id(agent))
+        if handler is None:
+            return (0, 0)
+        in_tok = getattr(handler, "prompt_llm_token_count", 0) or 0
+        out_tok = getattr(handler, "completion_llm_token_count", 0) or 0
+        handler.reset()
+        return (in_tok, out_tok)
+
     def _is_llamaindex_agent(self, agent: Any) -> bool:
         """Check if an agent is a LlamaIndex agent (FunctionAgent, AgentWorkflow, etc.)."""
         module = getattr(type(agent), "__module__", "") or ""
@@ -145,6 +186,8 @@ class LlamaIndexAdapter(FrameworkAdapter):
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() so that the WorkflowHandler is awaited correctly.
 
+        Also installs a TokenCountingHandler for token usage tracking.
+
         ``inspect.iscoroutinefunction(agent.run)`` returns False due to
         instrumentation decorators, so we use ``inspect.isawaitable()`` instead.
 
@@ -155,6 +198,10 @@ class LlamaIndexAdapter(FrameworkAdapter):
         import asyncio
         import inspect
         import threading
+
+        handler = self._install_token_handler(agent)
+        if handler is not None:
+            self._token_handlers[id(agent)] = handler
 
         method = agent.run
 

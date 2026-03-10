@@ -97,12 +97,16 @@ class BruteForceModelSelector(BaseModelSelector):
             for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
                 print(f"    proxy[{i}] → {self._get_model_name(model_obj)}")
             try:
-                accuracy, latency = self._evaluate(self.dataset, label=combo_name)
+                accuracy, latency, in_tok, out_tok = self._evaluate(
+                    self.dataset, label=combo_name
+                )
 
                 result = ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,
+                    input_tokens=in_tok,
+                    output_tokens=out_tok,
                     attribute="combination",
                     is_best=False,
                 )
@@ -132,6 +136,8 @@ class BruteForceModelSelector(BaseModelSelector):
                         model_name=combo_name,
                         accuracy=0.0,
                         latency_seconds=0.0,
+                        input_tokens=0,
+                        output_tokens=0,
                         attribute="combination",
                         is_best=False,
                     )
@@ -253,11 +259,13 @@ class BruteForceModelSelector(BaseModelSelector):
             for future in as_completed(future_to_info):
                 combo_name, combo = future_to_info[future]
                 try:
-                    accuracy, latency = future.result()
+                    accuracy, latency, in_tok, out_tok = future.result()
                     result = ModelResult(
                         model_name=combo_name,
                         accuracy=accuracy,
                         latency_seconds=latency,
+                        input_tokens=in_tok,
+                        output_tokens=out_tok,
                         attribute="combination",
                         is_best=False,
                     )
@@ -270,6 +278,8 @@ class BruteForceModelSelector(BaseModelSelector):
                             model_name=combo_name,
                             accuracy=0.0,
                             latency_seconds=0.0,
+                            input_tokens=0,
+                            output_tokens=0,
                             attribute="combination",
                             is_best=False,
                         )

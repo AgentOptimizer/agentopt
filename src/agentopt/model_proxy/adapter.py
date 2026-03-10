@@ -19,7 +19,7 @@ import chain).
 
 import copy
 from abc import ABC, abstractmethod
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 
 class FrameworkAdapter(ABC):
@@ -76,6 +76,18 @@ class FrameworkAdapter(ABC):
                 used for positional mapping (proxy i → sub-agent i).
         """
         pass
+
+    def get_token_usage(self, _agent: Any) -> Tuple[int, int]:
+        """Return ``(input_tokens, output_tokens)`` accumulated since the last call.
+
+        Counts are totalled across all samples evaluated since the previous
+        call (or since the adapter was set up).  Subclasses should reset their
+        counters after returning so each call reflects only the most recent
+        evaluation window.
+
+        Default: ``(0, 0)`` — override per framework.
+        """
+        return (0, 0)
 
     def clone_for_parallel(
         self,

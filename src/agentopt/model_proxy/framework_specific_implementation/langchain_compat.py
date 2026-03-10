@@ -1,7 +1,7 @@
 """LangChain-specific LLM builder, agent sync, and FrameworkAdapter."""
 
 import os
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..adapter import FrameworkAdapter
 from ..constants import detect_provider, no_key_error
@@ -159,10 +159,50 @@ def build_langchain_compatible_llm(model_name: str) -> Optional[Any]:
 # ---------------------------------------------------------------------------
 
 
+class _TokenCountingCallback:
+    """Minimal LangChain callback handler that accumulates token usage."""
+
+    def __init__(self) -> None:
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
+
+    # LangChain calls on_llm_end after each LLM call with an LLMResult.
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        usage = (getattr(response, "llm_output", None) or {}).get("token_usage", {})
+        self.input_tokens += usage.get("prompt_tokens", 0)
+        self.output_tokens += usage.get("completion_tokens", 0)
+
+    def reset(self) -> Tuple[int, int]:
+        in_tok, out_tok = self.input_tokens, self.output_tokens
+        self.input_tokens = 0
+        self.output_tokens = 0
+        return in_tok, out_tok
+
+    # Required no-op stubs so LangChain doesn't raise AttributeError.
+    def on_llm_start(self, *args: Any, **kwargs: Any) -> None: ...
+    def on_llm_error(self, *args: Any, **kwargs: Any) -> None: ...
+    def on_chain_start(self, *args: Any, **kwargs: Any) -> None: ...
+    def on_chain_end(self, *args: Any, **kwargs: Any) -> None: ...
+    def on_chain_error(self, *args: Any, **kwargs: Any) -> None: ...
+    def on_tool_start(self, *args: Any, **kwargs: Any) -> None: ...
+    def on_tool_end(self, *args: Any, **kwargs: Any) -> None: ...
+    def on_tool_error(self, *args: Any, **kwargs: Any) -> None: ...
+
+
 class LangChainAdapter(FrameworkAdapter):
     """Adapter for LangChain ``AgentExecutor`` agents."""
 
     invoke_method_name = "invoke"
+
+    def __init__(self) -> None:
+        # Maps agent id → callback handler (installed on first get_invoke_fn call).
+        self._callbacks: Dict[int, _TokenCountingCallback] = {}
+
+    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
+        handler = self._callbacks.get(id(agent))
+        if handler is None:
+            return (0, 0)
+        return handler.reset()
 
     def _extract_prompt(self, agent_executor: Any) -> Any:
         """Extract the ChatPromptTemplate from a LangChain AgentExecutor's chain."""
@@ -223,6 +263,13 @@ class LangChainAdapter(FrameworkAdapter):
         return self._is_langchain_executor(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
+        # Install a token-counting callback on the executor's LLM.
+        handler = _TokenCountingCallback()
+        self._callbacks[id(agent)] = handler
+        llm = getattr(getattr(agent, "agent", None), "llm", None)
+        if llm is not None:
+            existing = getattr(llm, "callbacks", None) or []
+            llm.callbacks = list(existing) + [handler]
         return agent.invoke
 
     def register_with_proxy(

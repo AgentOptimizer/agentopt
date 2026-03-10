@@ -19,7 +19,7 @@ import copy
 import os
 
 from ..adapter import FrameworkAdapter
-from typing import Any, Callable, List
+from typing import Any, Callable, Dict, List, Tuple
 
 
 def is_ag2_llm(llm: Any) -> bool:
@@ -74,6 +74,27 @@ class AG2Adapter(FrameworkAdapter):
     """Adapter for AG2 ``ConversableAgent`` objects."""
 
     invoke_method_name = "run"
+
+    def __init__(self) -> None:
+        # Maps agent id → last response, set by the invoke closure.
+        self._last_responses: Dict[int, Any] = {}
+
+    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
+        response = self._last_responses.pop(id(agent), None)
+        if response is None:
+            return (0, 0)
+        in_tok = out_tok = 0
+        # AG2 accumulates cost info in response.messages as usage dicts.
+        for msg in getattr(response, "messages", []):
+            usage = None
+            if isinstance(msg, dict):
+                usage = msg.get("usage")
+            else:
+                usage = getattr(msg, "usage", None)
+            if isinstance(usage, dict):
+                in_tok += usage.get("prompt_tokens", 0) or 0
+                out_tok += usage.get("completion_tokens", 0) or 0
+        return (in_tok, out_tok)
 
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
@@ -171,6 +192,7 @@ class AG2Adapter(FrameworkAdapter):
             else:
                 message = str(input_data)
             response = agent.run(message=message, max_turns=1, user_input=False)
+            self._last_responses[id(agent)] = response
             return _extract(response)
 
         return _invoke

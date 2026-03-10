@@ -1,7 +1,7 @@
 """OpenAI Agents SDK compatibility: ABC registration, model builder, and FrameworkAdapter."""
 
 import copy
-from typing import Any, Callable, List
+from typing import Any, Callable, Dict, List, Tuple
 
 from ..adapter import FrameworkAdapter
 from ..constants import MODEL_FIELDS
@@ -68,6 +68,22 @@ class OpenAISDKAdapter(FrameworkAdapter):
 
     invoke_method_name = None  # uses a custom wrapper, not a named method
 
+    def __init__(self) -> None:
+        # Maps agent id → last RunnerResult, set by the invoke closure.
+        self._last_results: Dict[int, Any] = {}
+
+    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
+        result = self._last_results.pop(id(agent), None)
+        if result is None:
+            return (0, 0)
+        in_tok = out_tok = 0
+        for resp in getattr(result, "raw_responses", []):
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
+                in_tok += getattr(usage, "input_tokens", 0) or 0
+                out_tok += getattr(usage, "output_tokens", 0) or 0
+        return (in_tok, out_tok)
+
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
         """Register *proxy_cls* as a virtual subclass of the OpenAI Agents SDK
@@ -93,6 +109,7 @@ class OpenAISDKAdapter(FrameworkAdapter):
             else:
                 prompt = str(input_data)
             result = Runner.run_sync(agent, prompt)
+            self._last_results[id(agent)] = result
             return (
                 result.final_output if hasattr(result, "final_output") else str(result)
             )

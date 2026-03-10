@@ -1,7 +1,7 @@
 """CrewAI-specific LLM builder, agent sync, and FrameworkAdapter."""
 
 import logging
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..adapter import FrameworkAdapter
 
@@ -33,6 +33,22 @@ class CrewAIAdapter(FrameworkAdapter):
     """Adapter for CrewAI ``Crew`` agents."""
 
     invoke_method_name = "kickoff"
+
+    def __init__(self) -> None:
+        # Maps agent id → (input_tokens_seen, output_tokens_seen) at last get_token_usage call.
+        self._token_baseline: Dict[int, Tuple[int, int]] = {}
+
+    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
+        """Return tokens consumed since the last call, via crew.usage_metrics."""
+        metrics = getattr(agent, "usage_metrics", None)
+        if metrics is None:
+            return (0, 0)
+        total_in = getattr(metrics, "prompt_tokens", 0) or 0
+        total_out = getattr(metrics, "completion_tokens", 0) or 0
+        key = id(agent)
+        prev_in, prev_out = self._token_baseline.get(key, (0, 0))
+        self._token_baseline[key] = (total_in, total_out)
+        return (total_in - prev_in, total_out - prev_out)
 
     def _is_crewai_crew(self, agent: Any) -> bool:
         """Check if an agent is a CrewAI Crew."""

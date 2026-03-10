@@ -25,11 +25,17 @@ class ModelResult(BaseModel):
     model_name: str
     accuracy: float
     latency_seconds: float
+    input_tokens: int
+    output_tokens: int
     attribute: str
     is_best: bool = False
 
     def __str__(self) -> str:
-        return f"{self.model_name} (accuracy: {self.accuracy:.2%}, latency: {self.latency_seconds:.2f}s)"
+        total_tokens = self.input_tokens + self.output_tokens
+        return (
+            f"{self.model_name} (accuracy: {self.accuracy:.2%}, "
+            f"latency: {self.latency_seconds:.2f}s, tokens: {total_tokens})"
+        )
 
 
 class SelectionResults(BaseModel):
@@ -66,6 +72,8 @@ class SelectionResults(BaseModel):
             "model_name",
             "accuracy",
             "latency_seconds",
+            "input_tokens",
+            "output_tokens",
             "attribute",
             "is_best",
         ]
@@ -98,27 +106,40 @@ class SelectionResults(BaseModel):
         def fmt_lat(v: float) -> str:
             return f"{v:.2f}s"
 
+        def fmt_tok(r: ModelResult) -> str:
+            return str(r.input_tokens + r.output_tokens)
+
         # Compute column widths.
-        rank_h, model_h, acc_h, lat_h = "Rank", "Model", "Accuracy", "Latency"
+        rank_h, model_h, acc_h, lat_h, tok_h = (
+            "Rank",
+            "Model",
+            "Accuracy",
+            "Latency",
+            "Tokens",
+        )
         rank_w = max(len(rank_h), len(str(len(unique))))
         model_w = max(len(model_h), *(len(r.model_name) for r in unique))
         acc_w = max(len(acc_h), *(len(fmt_acc(r.accuracy)) for r in unique))
         lat_w = max(len(lat_h), *(len(fmt_lat(r.latency_seconds)) for r in unique))
+        tok_w = max(len(tok_h), *(len(fmt_tok(r)) for r in unique))
 
         # Row builder.
         marker = ">>>"
         pad = " " * len(marker)
 
-        def row(rank_s: str, model_s: str, acc_s: str, lat_s: str, best: bool) -> str:
+        def row(
+            rank_s: str, model_s: str, acc_s: str, lat_s: str, tok_s: str, best: bool
+        ) -> str:
             prefix = marker if best else pad
             return (
                 f"{prefix} {rank_s:>{rank_w}}  "
                 f"{model_s:<{model_w}}  "
                 f"{acc_s:>{acc_w}}  "
-                f"{lat_s:>{lat_w}}"
+                f"{lat_s:>{lat_w}}  "
+                f"{tok_s:>{tok_w}}"
             )
 
-        header_row = row(rank_h, model_h, acc_h, lat_h, False)
+        header_row = row(rank_h, model_h, acc_h, lat_h, tok_h, False)
         sep = pad + " " + "-" * (len(header_row) - len(pad) - 1)
 
         lines: List[str] = []
@@ -135,6 +156,7 @@ class SelectionResults(BaseModel):
                     r.model_name,
                     fmt_acc(r.accuracy),
                     fmt_lat(r.latency_seconds),
+                    fmt_tok(r),
                     r.is_best,
                 )
             )
@@ -146,7 +168,8 @@ class SelectionResults(BaseModel):
             lines.append(
                 f"{pad} Best: {best_result.model_name} "
                 f"(accuracy: {best_result.accuracy:.2%}, "
-                f"latency: {best_result.latency_seconds:.2f}s)"
+                f"latency: {best_result.latency_seconds:.2f}s, "
+                f"tokens: {best_result.input_tokens + best_result.output_tokens})"
             )
         lines.append("")
 
@@ -212,6 +235,7 @@ class BaseModelSelector(ABC):
             self.invoke_fn = invoke_fn
             self.is_async = inspect.iscoroutinefunction(invoke_fn)
             self._invoke_method_name = None
+            self._adapter = None
         else:
             # Auto-detect framework via adapter registry.
             from ..model_proxy.adapter import get_adapter
@@ -226,6 +250,7 @@ class BaseModelSelector(ABC):
             self.invoke_fn = adapter.get_invoke_fn(agent)
             self.is_async = False  # all adapters wrap async internally
             self._invoke_method_name = getattr(adapter, "invoke_method_name", None)
+            self._adapter = adapter
 
             # Auto-register proxy ↔ agent sync for sequential evaluation.
             proxy_list = list(models.keys())
@@ -236,7 +261,7 @@ class BaseModelSelector(ABC):
         self,
         evaluation_tasks: Dataset,
         label: str = "",
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, int, int]:
         """
         Evaluate the current state of the agent against a list of tasks.
 
@@ -245,7 +270,7 @@ class BaseModelSelector(ABC):
             label: Display label for progress traces.
 
         Returns:
-            Tuple of (score, avg_latency_seconds)
+            Tuple of (score, avg_latency_seconds, total_input_tokens, total_output_tokens)
         """
         total_score = 0.0
         total = len(evaluation_tasks)
@@ -270,7 +295,13 @@ class BaseModelSelector(ABC):
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
 
-        return avg_score, avg_latency
+        in_tok, out_tok = (
+            self._adapter.get_token_usage(self.agent)
+            if self._adapter is not None
+            else (0, 0)
+        )
+
+        return avg_score, avg_latency, in_tok, out_tok
 
     def _get_model_name(self, model_obj: Any) -> str:
         """Extract model name from model object for display purposes."""
@@ -320,8 +351,10 @@ class BaseModelSelector(ABC):
         is_async: bool,
         eval_fn: EvalFn,
         dataset: Dataset,
+        adapter: Any = None,
+        agent: Any = None,
         label: str = "",
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, int, int]:
         """Evaluate an agent against the dataset. Thread-safe."""
         total_score = 0.0
         total = len(dataset)
@@ -343,7 +376,10 @@ class BaseModelSelector(ABC):
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
-        return avg_score, avg_latency
+        in_tok, out_tok = (
+            adapter.get_token_usage(agent) if adapter is not None else (0, 0)
+        )
+        return avg_score, avg_latency, in_tok, out_tok
 
     @staticmethod
     def _find_best(results: List[ModelResult]) -> Optional[Tuple[str, float]]:

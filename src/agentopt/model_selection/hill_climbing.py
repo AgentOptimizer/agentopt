@@ -217,17 +217,19 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             # Re-use cached result if this combination was already evaluated.
             if combo_name in self._eval_cache:
-                accuracy, latency = self._eval_cache[combo_name]
+                accuracy, latency, in_tok, out_tok = self._eval_cache[combo_name]
                 cached = True
             else:
-                accuracy, latency = self._evaluate(self.dataset)
-                self._eval_cache[combo_name] = (accuracy, latency)
+                accuracy, latency, in_tok, out_tok = self._evaluate(self.dataset)
+                self._eval_cache[combo_name] = (accuracy, latency, in_tok, out_tok)
                 cached = False
 
             result = ModelResult(
                 model_name=combo_name,
                 accuracy=accuracy,
                 latency_seconds=latency,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
                 attribute="combination",
                 is_best=False,
             )

@@ -154,11 +154,10 @@ class CrewAIAdapter(FrameworkAdapter):
         cloned_tasks = []
         for task in cloned.tasks:
             new_agent = task.agent
-            if hasattr(task, "agent"):
-                for old_ag, new_ag in zip(crew_agents, cloned_agents):
-                    if task.agent is old_ag:
-                        new_agent = new_ag
-                        break
+            for old_ag, new_ag in zip(crew_agents, cloned_agents):
+                if task.agent is old_ag:
+                    new_agent = new_ag
+                    break
             cloned_tasks.append(
                 task.model_copy(update={"agent": new_agent}, deep=False)
             )

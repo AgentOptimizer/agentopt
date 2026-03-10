@@ -78,7 +78,9 @@ class RandomSearchModelSelector(BaseModelSelector):
 
         return self._select_sequential()
 
-    def _get_sampled_combinations(self) -> Tuple[List[ModelProxy], List[tuple], List[tuple]]:
+    def _get_sampled_combinations(
+        self,
+    ) -> Tuple[List[ModelProxy], List[tuple], List[tuple]]:
         """Return proxies, full search space, and sampled combinations."""
         proxies = list(self._models.keys())
         candidate_lists = list(self._models.values())
@@ -102,7 +104,9 @@ class RandomSearchModelSelector(BaseModelSelector):
     # ------------------------------------------------------------------
 
     def _select_sequential(self) -> SelectionResults:
-        proxies, all_combinations, sampled_combinations = self._get_sampled_combinations()
+        proxies, all_combinations, sampled_combinations = (
+            self._get_sampled_combinations()
+        )
 
         all_results: List[ModelResult] = []
         best_combination = None
@@ -190,7 +194,9 @@ class RandomSearchModelSelector(BaseModelSelector):
         self,
         max_workers: Optional[int] = None,
     ) -> SelectionResults:
-        proxies, all_combinations, sampled_combinations = self._get_sampled_combinations()
+        proxies, all_combinations, sampled_combinations = (
+            self._get_sampled_combinations()
+        )
 
         if max_workers is None:
             max_workers = len(sampled_combinations)

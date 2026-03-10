@@ -1,7 +1,7 @@
 """CrewAI-specific LLM builder, agent sync, and FrameworkAdapter."""
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from ..adapter import FrameworkAdapter
 
@@ -10,8 +10,7 @@ logger = logging.getLogger(__name__)
 
 def is_crewai_llm(llm: Any) -> bool:
     """Check if an LLM object is from CrewAI."""
-    module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith("crewai")
+    return (type(llm).__module__ or "").startswith("crewai")
 
 
 def build_crewai_llm(model_name: str) -> Optional[Any]:
@@ -38,23 +37,6 @@ class CrewAIAdapter(FrameworkAdapter):
         # Maps agent id → (input_tokens_seen, output_tokens_seen) at last get_token_usage call.
         self._token_baseline: Dict[int, Tuple[int, int]] = {}
 
-    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        """Return tokens consumed since the last call, via crew.usage_metrics."""
-        metrics = getattr(agent, "usage_metrics", None)
-        if metrics is None:
-            return (0, 0)
-        total_in = getattr(metrics, "prompt_tokens", 0) or 0
-        total_out = getattr(metrics, "completion_tokens", 0) or 0
-        key = id(agent)
-        prev_in, prev_out = self._token_baseline.get(key, (0, 0))
-        self._token_baseline[key] = (total_in, total_out)
-        return (total_in - prev_in, total_out - prev_out)
-
-    def _is_crewai_crew(self, agent: Any) -> bool:
-        """Check if an agent is a CrewAI Crew."""
-        module = getattr(type(agent), "__module__", "") or ""
-        return module.startswith("crewai") and hasattr(agent, "agents")
-
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
         """Register *proxy_cls* as a virtual subclass of CrewAI's ``BaseLLM``
@@ -75,10 +57,24 @@ class CrewAIAdapter(FrameworkAdapter):
         proxy_cls.call = _crewai_call
 
     def detect(self, agent: Any) -> bool:
-        return self._is_crewai_crew(agent)
+        return (type(agent).__module__ or "").startswith("crewai") and hasattr(
+            agent, "agents"
+        )
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         return agent.kickoff
+
+    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
+        """Return tokens consumed since the last call, via crew.usage_metrics."""
+        metrics = agent.usage_metrics
+        if metrics is None:
+            return (0, 0)
+        total_in = metrics.prompt_tokens
+        total_out = metrics.completion_tokens
+        key = id(agent)
+        prev_in, prev_out = self._token_baseline.get(key, (0, 0))
+        self._token_baseline[key] = (total_in, total_out)
+        return (total_in - prev_in, total_out - prev_out)
 
     def clone_for_parallel(
         self,
@@ -105,7 +101,7 @@ class CrewAIAdapter(FrameworkAdapter):
         """
         cloned = agent.model_copy(deep=False)
 
-        assert self._is_crewai_crew(
+        assert self.detect(
             cloned
         ), f"clone_for_parallel called on non-Crew: {type(cloned).__name__}"
 

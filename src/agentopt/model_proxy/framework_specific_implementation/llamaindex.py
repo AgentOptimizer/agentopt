@@ -120,8 +120,7 @@ def build_llamaindex_llm(model_name: str) -> Any:
 
 def is_llamaindex_llm(llm: Any) -> bool:
     """Check if an LLM object is from LlamaIndex."""
-    module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith("llama_index")
+    return (type(llm).__module__ or "").startswith("llama_index")
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +148,7 @@ class LlamaIndexAdapter(FrameworkAdapter):
         handler = TokenCountingHandler(
             tokenizer=tiktoken.encoding_for_model("gpt-3.5-turbo").encode
         )
-        cb_manager = getattr(agent, "callback_manager", None)
+        cb_manager = agent.callback_manager
         if cb_manager is None:
             agent.callback_manager = CallbackManager([handler])
         else:
@@ -158,7 +157,7 @@ class LlamaIndexAdapter(FrameworkAdapter):
         # For AgentWorkflow, also attach to each sub-agent.
         if hasattr(agent, "agents"):
             for sub in agent.agents.values():
-                sub_cb = getattr(sub, "callback_manager", None)
+                sub_cb = sub.callback_manager
                 if sub_cb is None:
                     sub.callback_manager = CallbackManager([handler])
                 else:
@@ -170,18 +169,15 @@ class LlamaIndexAdapter(FrameworkAdapter):
         handler = self._token_handlers.get(id(agent))
         if handler is None:
             return (0, 0)
-        in_tok = getattr(handler, "prompt_llm_token_count", 0) or 0
-        out_tok = getattr(handler, "completion_llm_token_count", 0) or 0
+        in_tok = handler.prompt_llm_token_count
+        out_tok = handler.completion_llm_token_count
         handler.reset()
         return (in_tok, out_tok)
 
-    def _is_llamaindex_agent(self, agent: Any) -> bool:
-        """Check if an agent is a LlamaIndex agent (FunctionAgent, AgentWorkflow, etc.)."""
-        module = getattr(type(agent), "__module__", "") or ""
-        return module.startswith("llama_index") and hasattr(agent, "run")
-
     def detect(self, agent: Any) -> bool:
-        return self._is_llamaindex_agent(agent)
+        return (type(agent).__module__ or "").startswith("llama_index") and hasattr(
+            agent, "run"
+        )
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() so that the WorkflowHandler is awaited correctly.

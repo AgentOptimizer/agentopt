@@ -18,8 +18,7 @@ LANGCHAIN_COMPATIBLE_PREFIXES = (
 
 def is_langchain_compatible_llm(llm: Any) -> bool:
     """Check if an LLM object is from a LangChain-compatible package."""
-    module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith(LANGCHAIN_COMPATIBLE_PREFIXES)
+    return (type(llm).__module__ or "").startswith(LANGCHAIN_COMPATIBLE_PREFIXES)
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +167,11 @@ class _TokenCountingCallback:
 
     # LangChain calls on_llm_end after each LLM call with an LLMResult.
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
-        usage = (getattr(response, "llm_output", None) or {}).get("token_usage", {})
-        self.input_tokens += usage.get("prompt_tokens", 0)
-        self.output_tokens += usage.get("completion_tokens", 0)
+        llm_output = response.llm_output
+        if llm_output and "token_usage" in llm_output:
+            usage = llm_output["token_usage"]
+            self.input_tokens += usage["prompt_tokens"]
+            self.output_tokens += usage["completion_tokens"]
 
     def reset(self) -> Tuple[int, int]:
         in_tok, out_tok = self.input_tokens, self.output_tokens
@@ -206,7 +207,7 @@ class LangChainAdapter(FrameworkAdapter):
 
     def _extract_prompt(self, agent_executor: Any) -> Any:
         """Extract the ChatPromptTemplate from a LangChain AgentExecutor's chain."""
-        chain = getattr(agent_executor, "agent", None)
+        chain = agent_executor.agent
         if chain is None:
             return None
 
@@ -216,16 +217,15 @@ class LangChainAdapter(FrameworkAdapter):
 
         # Prefer .steps (canonical RunnableSequence attribute) then fall back to
         # the .first/.middle/.last split for older LangChain versions.
-        steps = getattr(chain, "steps", None)
-        if steps is not None:
-            for item in steps:
+        if hasattr(chain, "steps"):
+            for item in chain.steps:
                 if type(item).__name__ == "ChatPromptTemplate":
                     return item
 
         for attr in ("first", "middle", "last"):
-            obj = getattr(chain, attr, None)
-            if obj is None:
+            if not hasattr(chain, attr):
                 continue
+            obj = getattr(chain, attr)
             if isinstance(obj, (list, tuple)):
                 for item in obj:
                     if type(item).__name__ == "ChatPromptTemplate":
@@ -250,26 +250,21 @@ class LangChainAdapter(FrameworkAdapter):
         temp = AgentExecutor(agent=new_agent, tools=tools)
         executor.agent = temp.agent
 
-    def _is_langchain_executor(self, agent: Any) -> bool:
-        """Check if an agent is a LangChain AgentExecutor."""
-        module = getattr(type(agent), "__module__", "") or ""
+    def detect(self, agent: Any) -> bool:
         return (
-            module.startswith("langchain")
+            (type(agent).__module__ or "").startswith("langchain")
             and hasattr(agent, "agent")
             and hasattr(agent, "tools")
         )
-
-    def detect(self, agent: Any) -> bool:
-        return self._is_langchain_executor(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         # Install a token-counting callback on the executor's LLM.
         handler = _TokenCountingCallback()
         self._callbacks[id(agent)] = handler
-        llm = getattr(getattr(agent, "agent", None), "llm", None)
-        if llm is not None:
-            existing = getattr(llm, "callbacks", None) or []
-            llm.callbacks = list(existing) + [handler]
+        inner = agent.agent
+        if inner is not None and hasattr(inner, "llm"):
+            llm = inner.llm
+            llm.callbacks = list(llm.callbacks or []) + [handler]
         return agent.invoke
 
     def register_with_proxy(

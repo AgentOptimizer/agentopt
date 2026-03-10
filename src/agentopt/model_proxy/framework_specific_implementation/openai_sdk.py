@@ -77,11 +77,10 @@ class OpenAISDKAdapter(FrameworkAdapter):
         if result is None:
             return (0, 0)
         in_tok = out_tok = 0
-        for resp in getattr(result, "raw_responses", []):
-            usage = getattr(resp, "usage", None)
-            if usage is not None:
-                in_tok += getattr(usage, "input_tokens", 0) or 0
-                out_tok += getattr(usage, "output_tokens", 0) or 0
+        for resp in result.raw_responses:
+            if resp.usage is not None:
+                in_tok += resp.usage.input_tokens
+                out_tok += resp.usage.output_tokens
         return (in_tok, out_tok)
 
     @classmethod
@@ -96,8 +95,7 @@ class OpenAISDKAdapter(FrameworkAdapter):
         proxy_cls.stream_response = _stream_response
 
     def detect(self, agent: Any) -> bool:
-        module = getattr(type(agent), "__module__", "") or ""
-        return module.startswith("agents")
+        return (type(agent).__module__ or "").startswith("agents")
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Return a synchronous invoke callable that runs the agent via Runner."""

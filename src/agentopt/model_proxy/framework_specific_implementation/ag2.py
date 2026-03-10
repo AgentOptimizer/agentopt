@@ -85,15 +85,16 @@ class AG2Adapter(FrameworkAdapter):
             return (0, 0)
         in_tok = out_tok = 0
         # AG2 accumulates cost info in response.messages as usage dicts.
-        for msg in getattr(response, "messages", []):
-            usage = None
+        for msg in response.messages:
             if isinstance(msg, dict):
                 usage = msg.get("usage")
+            elif hasattr(msg, "usage"):
+                usage = msg.usage
             else:
-                usage = getattr(msg, "usage", None)
+                usage = None
             if isinstance(usage, dict):
-                in_tok += usage.get("prompt_tokens", 0) or 0
-                out_tok += usage.get("completion_tokens", 0) or 0
+                in_tok += usage["prompt_tokens"]
+                out_tok += usage["completion_tokens"]
         return (in_tok, out_tok)
 
     @classmethod
@@ -114,8 +115,9 @@ class AG2Adapter(FrameworkAdapter):
         @staticmethod
         def _is_ag2_llm_config(obj: Any) -> bool:
             """Check if an object is an AG2 LLMConfig."""
-            module = getattr(type(obj), "__module__", "") or ""
-            return module.startswith("autogen") and type(obj).__name__ == "LLMConfig"
+            return (type(obj).__module__ or "").startswith("autogen") and type(
+                obj
+            ).__name__ == "LLMConfig"
 
         # --- Patch ModelProxy.__init__ ---
         original_init = proxy_cls.__init__
@@ -166,8 +168,9 @@ class AG2Adapter(FrameworkAdapter):
 
     def detect(self, agent: Any) -> bool:
         """Check if an agent is an AG2 ConversableAgent."""
-        module = getattr(type(agent), "__module__", "") or ""
-        return module.startswith("autogen") and hasattr(agent, "run")
+        return (type(agent).__module__ or "").startswith("autogen") and hasattr(
+            agent, "run"
+        )
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() to handle input dict and extract content."""
@@ -183,7 +186,11 @@ class AG2Adapter(FrameworkAdapter):
                 return response.summary
             if response.messages:
                 last_msg = response.messages[-1]
-                return getattr(last_msg, "content", None) or str(last_msg)
+                if isinstance(last_msg, dict):
+                    return last_msg.get("content") or str(last_msg)
+                return (
+                    last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                )
             return ""
 
         def _invoke(input_data: Any) -> Any:

@@ -27,7 +27,7 @@ AgentOpt works in three steps:
 
 1. **Wrap** your LLM with `ModelProxy`
 2. **Build** your agent as usual (the proxy is transparent)
-3. **Run** `ModelSelector` to find the best model
+3. **Run** `ModelSelector` (default brute-force) to find the best model
 
 ### CrewAI
 
@@ -434,7 +434,7 @@ Each thread gets its own agent/invoke instance — no shared state, no conflicts
 
 ### Multi-Agent / Multi-LLM Optimization
 
-When your pipeline uses multiple LLMs (e.g., different agents with different models), create a separate `ModelProxy` for each and pass them all to `ModelSelector`. It evaluates the **Cartesian product** of all candidate combinations.
+When your pipeline uses multiple LLMs (e.g., different agents with different models), create a separate `ModelProxy` for each and pass them all to `ModelSelector` (or another selector). It evaluates the **Cartesian product** of all candidate combinations.
 
 ```python
 researcher_llm = ModelProxy(ChatOpenAI(model="gpt-4o-mini"))
@@ -548,7 +548,8 @@ agentopt/
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
 │       ├── brute_force.py       # BruteForceModelSelector (default ModelSelector)
 │       ├── hill_climbing.py     # HillClimbingModelSelector (experimental)
-│       ├── arm_elimination.py   # ArmEliminationModelSelector (successive elimination)
+│       ├── arm_elimination.py   # ArmEliminationModelSelector (experimental)
+│       ├── bayesian_optimization.py  # BayesianOptimizationModelSelector (experimental)
 │       └── utils.py             # Compat re-export of extract_prompt
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single, multi-agent, multi-LLM
@@ -625,7 +626,8 @@ from agentopt import (
     ModelSelector,           # Brute-force model selector (default)
     BruteForceModelSelector, # Explicit brute-force selector
     HillClimbingModelSelector, # Hill-climbing selector (experimental)
-    ArmEliminationModelSelector, # Arm-elimination selector (bandit-style successive elimination)
+    ArmEliminationModelSelector, # Arm-elimination selector (bandit-style successive elimination, experimental)
+    BayesianOptimizationModelSelector, # Bayesian optimization selector (experimental)
     BaseModelSelector,       # Abstract base for custom selectors
 
     # Results

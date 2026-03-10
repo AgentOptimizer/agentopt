@@ -15,12 +15,14 @@ from agentopt.model_selection import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    BayesianOptimizationModelSelector,
 )
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
 

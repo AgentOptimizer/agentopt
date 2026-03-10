@@ -2,8 +2,19 @@
 
 from .proxy import ModelProxy
 
-# crewai.py and langchain.py are already imported transitively via
-# proxy.py → builders.py, so their adapters self-register automatically.
+# CrewAI: register the ABC virtual subclass AND the adapter.
+try:
+    from .framework_specific_implementation.crewai import register_crewai_model
+
+    register_crewai_model(ModelProxy)
+    # CrewAIAdapter self-registers at the bottom of crewai.py,
+    # so no explicit register_adapter() call is needed here.
+except Exception:
+    # Swallow any optional-dep issues (crewai not installed).
+    pass
+
+# langchain is already imported transitively via
+# proxy.py → builders.py, so its adapter self-registers automatically.
 
 # llamaindex is an optional extra — import eagerly but swallow ImportError.
 try:

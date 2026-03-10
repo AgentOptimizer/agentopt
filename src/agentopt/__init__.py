@@ -3,7 +3,7 @@ Model selection and optimization for LLM-powered agents using `ModelProxy`.
 
 This package provides:
 - `ModelProxy` as a transparent proxy that wraps LLM objects and allows model swapping
-- model selection utilities (`ModelSelector`, `BaseModelSelector`) to choose among models
+- model selection utilities (`BruteForceModelSelector`, `HillClimbingModelSelector`, `ArmEliminationModelSelector`, `BayesianOptimizationModelSelector`) to choose among models
 """
 
 from .model_proxy import ModelProxy
@@ -13,6 +13,7 @@ from .model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    BayesianOptimizationModelSelector,
 )
 from .base_models import (
     Dataset,
@@ -33,6 +34,7 @@ __all__ = [
     "RandomSearchModelSelector",
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
+    "BayesianOptimizationModelSelector",
     "ModelSelector",
     "create_model_from_string",
     "normalize_models",

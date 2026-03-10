@@ -21,6 +21,7 @@ from agentopt.model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    BayesianOptimizationModelSelector,
 )
 
 SELECTORS = {
@@ -28,6 +29,7 @@ SELECTORS = {
     "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
 

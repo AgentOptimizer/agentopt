@@ -28,6 +28,7 @@ from agentopt.model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    BayesianOptimizationModelSelector,
 )
 from agentopt.model_proxy.framework_specific_implementation import (
     build_openai_agents_model,
@@ -38,6 +39,7 @@ SELECTORS = {
     "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
 

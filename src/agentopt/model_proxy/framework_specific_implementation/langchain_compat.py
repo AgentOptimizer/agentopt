@@ -1,8 +1,10 @@
 """LangChain-specific LLM builder, agent sync, and FrameworkAdapter."""
 
+import os
 from typing import Any, Callable, List, Optional
 
 from ..adapter import FrameworkAdapter
+from ..constants import detect_provider, no_key_error
 
 # Module prefixes that identify LangChain-compatible LLM objects.
 LANGCHAIN_COMPATIBLE_PREFIXES = (
@@ -14,94 +16,142 @@ LANGCHAIN_COMPATIBLE_PREFIXES = (
 )
 
 
-def is_langchain_executor(agent: Any) -> bool:
-    """Check if an agent is a LangChain AgentExecutor."""
-    module = getattr(type(agent), "__module__", "") or ""
-    return (
-        module.startswith("langchain")
-        and hasattr(agent, "agent")
-        and hasattr(agent, "tools")
-    )
-
-
 def is_langchain_compatible_llm(llm: Any) -> bool:
     """Check if an LLM object is from a LangChain-compatible package."""
     module = getattr(type(llm), "__module__", "") or ""
     return module.startswith(LANGCHAIN_COMPATIBLE_PREFIXES)
 
 
+# ---------------------------------------------------------------------------
+# LangChain LLM factory
+# ---------------------------------------------------------------------------
+
+
+def _openrouter_fallback(model_name: str) -> Any:
+    """Create a ChatOpenAI pointed at OpenRouter."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=model_name,
+        base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        api_key=api_key,
+    )
+
+
+def _litellm_fallback(model_name: str) -> Any:
+    """Create a ChatOpenAI pointed at a LiteLLM proxy server."""
+    api_key = os.getenv("LITELLM_API_KEY")
+    base_url = os.getenv("LITELLM_API_BASE")
+    if not api_key or not base_url:
+        return None
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=model_name,
+        base_url=base_url,
+        api_key=api_key,
+    )
+
+
+def _proxy_fallback(model_name: str) -> Any:
+    """Try LiteLLM first, then OpenRouter."""
+    return _litellm_fallback(model_name) or _openrouter_fallback(model_name)
+
+
+_PROVIDER_ENV = {
+    "bedrock": "AWS_ACCESS_KEY_ID + AWS_DEFAULT_REGION",
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "default": "OPENAI_API_KEY",
+}
+
+
+def _create_native_llm(provider: str, clean_name: str, api_key: str) -> Any:
+    """Create a native LangChain LLM for the given provider."""
+    if provider == "bedrock":
+        aws_region = os.getenv("AWS_DEFAULT_REGION", os.getenv("AWS_REGION"))
+        if not aws_region:
+            return None
+        try:
+            from langchain_aws import ChatBedrockConverse
+
+            return ChatBedrockConverse(model=clean_name, region_name=aws_region)
+        except ImportError:
+            return None
+
+    if provider == "openai" or provider == "default":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(model=clean_name, api_key=api_key)
+
+    if provider == "google":
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            return ChatGoogleGenerativeAI(model=clean_name, google_api_key=api_key)
+        except ImportError:
+            return None
+
+    if provider == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic
+
+            return ChatAnthropic(model=clean_name, api_key=api_key)
+        except ImportError:
+            return None
+
+    return None
+
+
+def create_model_from_string(model_name: str) -> Any:
+    """Create a LangChain model object from a string name.
+
+    Automatically detects provider based on prefix/name and falls back
+    to LiteLLM proxy → OpenRouter when native API keys are unavailable.
+
+    Args:
+        model_name: Model name string (e.g., "openai/gpt-4o", "claude-sonnet-4-20250514")
+
+    Returns:
+        LangChain model object
+    """
+    # --- LiteLLM explicit prefix (not handled by detect_provider) ---
+    if model_name.startswith("litellm/"):
+        clean_name = model_name.removeprefix("litellm/")
+        fallback = _litellm_fallback(clean_name)
+        if fallback:
+            return fallback
+        raise ValueError(
+            f"LiteLLM requested for '{model_name}' but LITELLM_API_KEY and "
+            "LITELLM_API_BASE are not both set."
+        )
+
+    provider, clean_name, api_key = detect_provider(model_name)
+
+    if api_key:
+        llm = _create_native_llm(provider, clean_name, api_key)
+        if llm is not None:
+            return llm
+
+    fallback = _proxy_fallback(model_name)
+    if fallback:
+        return fallback
+    raise no_key_error(_PROVIDER_ENV.get(provider, "OPENAI_API_KEY"), model_name)
+
+
 def build_langchain_compatible_llm(model_name: str) -> Optional[Any]:
     """Create a LangChain-compatible chat model from a model name string.
 
-    Works for both LangChain and LangGraph agents that use langchain LLM classes.
-    Delegates to :func:`agentopt.model_factory.create_model_from_string`.
     Returns a new model instance, or ``None`` on failure.
     """
     try:
-        from ...model_factory import create_model_from_string
-
         return create_model_from_string(model_name)
     except Exception:
         return None
-
-
-def sync_langchain_executor(
-    executor: Any, llm: Any, tools: List[Any], prompt: Any
-) -> None:
-    """Rebuild the LCEL agent chain inside an AgentExecutor with a new LLM."""
-    try:
-        from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
-    except ImportError:
-        from langchain.agents import AgentExecutor, create_tool_calling_agent
-
-    new_agent = create_tool_calling_agent(llm, tools, prompt)
-    # AgentExecutor.__init__ wraps a RunnableSequence in an adapter that
-    # provides .input_keys.  Assigning the raw sequence directly would skip
-    # that wrapping, so we let a temporary executor do it for us.
-    temp = AgentExecutor(agent=new_agent, tools=tools)
-    executor.agent = temp.agent
-
-
-def extract_prompt(agent_executor: Any) -> Any:
-    """Extract the ChatPromptTemplate from a LangChain AgentExecutor's chain.
-
-    Previously lived in ``model_selection/utils.py``; moved here to avoid a
-    circular import (``model_selection`` imports from ``model_proxy``, not the
-    other way around).
-
-    AgentExecutor wraps the raw RunnableSequence in a RunnableAgent adapter.
-    We unwrap one level via ``.runnable`` if present, then check ``.steps``
-    (the canonical list on RunnableSequence) as well as the legacy
-    ``.first`` / ``.middle`` / ``.last`` attributes.
-    """
-    chain = getattr(agent_executor, "agent", None)
-    if chain is None:
-        return None
-
-    # Unwrap RunnableAgent / RunnableMultiActionAgent → inner RunnableSequence.
-    if hasattr(chain, "runnable"):
-        chain = chain.runnable
-
-    # Prefer .steps (canonical RunnableSequence attribute) then fall back to
-    # the .first/.middle/.last split for older LangChain versions.
-    steps = getattr(chain, "steps", None)
-    if steps is not None:
-        for item in steps:
-            if type(item).__name__ == "ChatPromptTemplate":
-                return item
-
-    for attr in ("first", "middle", "last"):
-        obj = getattr(chain, attr, None)
-        if obj is None:
-            continue
-        if isinstance(obj, (list, tuple)):
-            for item in obj:
-                if type(item).__name__ == "ChatPromptTemplate":
-                    return item
-        elif type(obj).__name__ == "ChatPromptTemplate":
-            return obj
-
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +164,63 @@ class LangChainAdapter(FrameworkAdapter):
 
     invoke_method_name = "invoke"
 
+    def _extract_prompt(self, agent_executor: Any) -> Any:
+        """Extract the ChatPromptTemplate from a LangChain AgentExecutor's chain."""
+        chain = getattr(agent_executor, "agent", None)
+        if chain is None:
+            return None
+
+        # Unwrap RunnableAgent / RunnableMultiActionAgent → inner RunnableSequence.
+        if hasattr(chain, "runnable"):
+            chain = chain.runnable
+
+        # Prefer .steps (canonical RunnableSequence attribute) then fall back to
+        # the .first/.middle/.last split for older LangChain versions.
+        steps = getattr(chain, "steps", None)
+        if steps is not None:
+            for item in steps:
+                if type(item).__name__ == "ChatPromptTemplate":
+                    return item
+
+        for attr in ("first", "middle", "last"):
+            obj = getattr(chain, attr, None)
+            if obj is None:
+                continue
+            if isinstance(obj, (list, tuple)):
+                for item in obj:
+                    if type(item).__name__ == "ChatPromptTemplate":
+                        return item
+            elif type(obj).__name__ == "ChatPromptTemplate":
+                return obj
+
+        return None
+
+    @staticmethod
+    def _sync_executor(executor: Any, llm: Any, tools: List[Any], prompt: Any) -> None:
+        """Rebuild the LCEL agent chain inside an AgentExecutor with a new LLM."""
+        try:
+            from langchain_classic.agents import (
+                AgentExecutor,
+                create_tool_calling_agent,
+            )
+        except ImportError:
+            from langchain.agents import AgentExecutor, create_tool_calling_agent
+
+        new_agent = create_tool_calling_agent(llm, tools, prompt)
+        temp = AgentExecutor(agent=new_agent, tools=tools)
+        executor.agent = temp.agent
+
+    def _is_langchain_executor(self, agent: Any) -> bool:
+        """Check if an agent is a LangChain AgentExecutor."""
+        module = getattr(type(agent), "__module__", "") or ""
+        return (
+            module.startswith("langchain")
+            and hasattr(agent, "agent")
+            and hasattr(agent, "tools")
+        )
+
     def detect(self, agent: Any) -> bool:
-        return is_langchain_executor(agent)
+        return self._is_langchain_executor(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         return agent.invoke
@@ -129,7 +234,7 @@ class LangChainAdapter(FrameworkAdapter):
         do not need to pass them manually.
         """
         tools = agent.tools
-        prompt = extract_prompt(agent)
+        prompt = self._extract_prompt(agent)
         if prompt is None:
             return  # can't rebuild without the prompt template
 
@@ -139,7 +244,7 @@ class LangChainAdapter(FrameworkAdapter):
             _tools: list = tools,
             _prompt: Any = prompt,
         ) -> None:
-            sync_langchain_executor(_exec, new_llm, _tools, _prompt)
+            LangChainAdapter._sync_executor(_exec, new_llm, _tools, _prompt)
 
         proxy._add_sync(_sync)
 
@@ -169,7 +274,7 @@ class LangChainAdapter(FrameworkAdapter):
             from langchain.agents import AgentExecutor, create_tool_calling_agent
 
         tools = agent.tools
-        prompt = extract_prompt(agent)
+        prompt = self._extract_prompt(agent)
         if prompt is None:
             raise RuntimeError(
                 "LangChainAdapter.clone_for_parallel: no prompt found in executor — "

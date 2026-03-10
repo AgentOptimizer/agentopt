@@ -16,8 +16,8 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
-    BaseModelSelector,
     BruteForceModelSelector,
+    RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
@@ -25,6 +25,7 @@ from agentopt.model_selection import (
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
+    "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,

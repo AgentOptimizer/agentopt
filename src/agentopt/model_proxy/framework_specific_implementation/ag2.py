@@ -27,23 +27,6 @@ def is_ag2_llm(llm: Any) -> bool:
     return isinstance(llm, AG2ConfigWrapper)
 
 
-def _build_ag2_config(model: str) -> dict:
-    """Build an AG2 config_list entry with correct api_type and key for the model."""
-    bare = model.split("/", 1)[-1] if "/" in model else model
-    if bare.startswith("claude") or model.startswith("anthropic/"):
-        return {
-            "api_type": "anthropic",
-            "model": bare,
-            "api_key": os.getenv("ANTHROPIC_API_KEY"),
-        }
-    # Default to OpenAI-compatible
-    return {
-        "api_type": "openai",
-        "model": bare,
-        "api_key": os.getenv("OPENAI_API_KEY"),
-    }
-
-
 class AG2ConfigWrapper:
     """Mutable wrapper around AG2's config_list.
 
@@ -53,8 +36,25 @@ class AG2ConfigWrapper:
     propagate to the agent automatically.
     """
 
+    @staticmethod
+    def _build_config(model: str) -> dict:
+        """Build an AG2 config_list entry with correct api_type and key for the model."""
+        bare = model.split("/", 1)[-1] if "/" in model else model
+        if bare.startswith("claude") or model.startswith("anthropic/"):
+            return {
+                "api_type": "anthropic",
+                "model": bare,
+                "api_key": os.getenv("ANTHROPIC_API_KEY"),
+            }
+        # Default to OpenAI-compatible
+        return {
+            "api_type": "openai",
+            "model": bare,
+            "api_key": os.getenv("OPENAI_API_KEY"),
+        }
+
     def __init__(self, model: str) -> None:
-        self.config_list = [_build_ag2_config(model)]
+        self.config_list = [self._build_config(model)]
 
     @property
     def model(self) -> str:
@@ -62,30 +62,7 @@ class AG2ConfigWrapper:
 
     @model.setter
     def model(self, value: str) -> None:
-        self.config_list[0] = _build_ag2_config(value)
-
-
-def _is_ag2_llm_config(obj: Any) -> bool:
-    """Check if an object is an AG2 LLMConfig."""
-    module = getattr(type(obj), "__module__", "") or ""
-    return module.startswith("autogen") and type(obj).__name__ == "LLMConfig"
-
-
-def extract_ag2_content(response: Any) -> str:
-    """Extract text content from an AG2 agent response.
-
-    AG2's agent.run() returns a response object whose events must be consumed
-    before the summary/messages are available.
-    """
-    for _ in response.events:
-        pass
-    if hasattr(response, "summary") and response.summary:
-        return response.summary
-    if response.messages:
-        last_msg = response.messages[-1]
-        content = getattr(last_msg, "content", None) or str(last_msg)
-        return content
-    return ""
+        self.config_list[0] = self._build_config(value)
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +89,12 @@ class AG2Adapter(FrameworkAdapter):
            with the proxy for explicit sync on ``set_model()``.
         """
         from autogen import ConversableAgent, LLMConfig
+
+        @staticmethod
+        def _is_ag2_llm_config(obj: Any) -> bool:
+            """Check if an object is an AG2 LLMConfig."""
+            module = getattr(type(obj), "__module__", "") or ""
+            return module.startswith("autogen") and type(obj).__name__ == "LLMConfig"
 
         # --- Patch ModelProxy.__init__ ---
         original_init = proxy_cls.__init__
@@ -168,13 +151,27 @@ class AG2Adapter(FrameworkAdapter):
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() to handle input dict and extract content."""
 
+        def _extract(response: Any) -> str:
+            """Extract text from an AG2 response.
+
+            Events must be consumed before summary/messages are available.
+            """
+            for _ in response.events:
+                pass
+            if hasattr(response, "summary") and response.summary:
+                return response.summary
+            if response.messages:
+                last_msg = response.messages[-1]
+                return getattr(last_msg, "content", None) or str(last_msg)
+            return ""
+
         def _invoke(input_data: Any) -> Any:
             if isinstance(input_data, dict):
                 message = input_data.get("input", str(input_data))
             else:
                 message = str(input_data)
             response = agent.run(message=message, max_turns=1, user_input=False)
-            return extract_ag2_content(response)
+            return _extract(response)
 
         return _invoke
 
@@ -217,7 +214,7 @@ class AG2Adapter(FrameworkAdapter):
         model_name = (
             model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
         )
-        new_config = LLMConfig(_build_ag2_config(model_name))
+        new_config = LLMConfig(AG2ConfigWrapper._build_config(model_name))
         agent_copy = copy.copy(agent)
         agent_copy.llm_config = new_config
         agent_copy.client = agent_copy._create_client(new_config)

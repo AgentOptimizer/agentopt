@@ -8,7 +8,6 @@ Each supports both sequential and parallel model selection.
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +22,6 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
-    BaseModelSelector,
     BruteForceModelSelector,
     RandomSearchModelSelector,
     HillClimbingModelSelector,

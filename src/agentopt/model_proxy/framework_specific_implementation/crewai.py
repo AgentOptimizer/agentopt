@@ -8,12 +8,6 @@ from ..adapter import FrameworkAdapter
 logger = logging.getLogger(__name__)
 
 
-def is_crewai_crew(agent: Any) -> bool:
-    """Check if an agent is a CrewAI Crew."""
-    module = getattr(type(agent), "__module__", "") or ""
-    return module.startswith("crewai") and hasattr(agent, "agents")
-
-
 def is_crewai_llm(llm: Any) -> bool:
     """Check if an LLM object is from CrewAI."""
     module = getattr(type(llm), "__module__", "") or ""
@@ -40,6 +34,11 @@ class CrewAIAdapter(FrameworkAdapter):
 
     invoke_method_name = "kickoff"
 
+    def _is_crewai_crew(self, agent: Any) -> bool:
+        """Check if an agent is a CrewAI Crew."""
+        module = getattr(type(agent), "__module__", "") or ""
+        return module.startswith("crewai") and hasattr(agent, "agents")
+
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
         """Register *proxy_cls* as a virtual subclass of CrewAI's ``BaseLLM``
@@ -60,7 +59,7 @@ class CrewAIAdapter(FrameworkAdapter):
         proxy_cls.call = _crewai_call
 
     def detect(self, agent: Any) -> bool:
-        return is_crewai_crew(agent)
+        return self._is_crewai_crew(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         return agent.kickoff
@@ -90,7 +89,7 @@ class CrewAIAdapter(FrameworkAdapter):
         """
         cloned = agent.model_copy(deep=False)
 
-        assert is_crewai_crew(
+        assert self._is_crewai_crew(
             cloned
         ), f"clone_for_parallel called on non-Crew: {type(cloned).__name__}"
 

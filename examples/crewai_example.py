@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
-    BaseModelSelector,
     BruteForceModelSelector,
     RandomSearchModelSelector,
     HillClimbingModelSelector,

@@ -117,8 +117,10 @@ class OpenAISDKAdapter(FrameworkAdapter):
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]
     ) -> None:
-        # No-op: OpenAI SDK resolves the model via _get_response at call time.
-        pass
+        raise NotImplementedError(
+            "OpenAISDKAdapter does not use register_with_proxy: ModelProxy is registered "
+            "as a Model subclass and resolves via _get_response at call time."
+        )
 
     def clone_for_parallel(
         self,

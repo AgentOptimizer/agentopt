@@ -64,6 +64,14 @@ class CrewAIAdapter(FrameworkAdapter):
     def get_invoke_fn(self, agent: Any) -> Callable:
         return agent.kickoff
 
+    def register_with_proxy(
+        self, proxy: Any, agent: Any, all_proxies: List[Any]
+    ) -> None:
+        raise NotImplementedError(
+            "CrewAIAdapter does not use register_with_proxy: ModelProxy is registered "
+            "as a BaseLLM subclass and delegates to _optmodel at call time."
+        )
+
     def get_token_usage(self, agent: Any) -> Tuple[int, int]:
         """Return tokens consumed since the last call, via crew.usage_metrics."""
         metrics = agent.usage_metrics

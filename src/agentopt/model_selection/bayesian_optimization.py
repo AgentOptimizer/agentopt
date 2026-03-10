@@ -15,7 +15,6 @@ from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -98,9 +97,12 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         """
         import torch
         from botorch.acquisition.analytic import LogExpectedImprovement
-        from botorch.models.gp_regression_mixed import MixedSingleTaskGP
         from botorch.fit import fit_gpytorch_mll
+        from botorch.models.gp_regression_mixed import MixedSingleTaskGP
         from gpytorch.mlls import ExactMarginalLogLikelihood
+
+        assert parallel == False
+        assert max_workers is None or max_workers == 1
 
         proxies = list(self._models.keys())
         candidate_lists = list(self._models.values())
@@ -141,12 +143,11 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             set_proxies_from_combo(combo)
             return self._evaluate(self.dataset)
 
-        logger.info(
-            "Bayesian optimization: %d combinations, %d random + %d BO iterations",
-            total_combos,
-            n_initial_random,
-            n_iterations,
+        print(f"\n{'='*60}")
+        print(
+            f"Bayesian optimization (sequential): {total_combos} combinations, {n_initial_random} random + {n_iterations} BO iterations"
         )
+        print(f"{'='*60}\n")
 
         # 1) Initial random evaluations
         initial_pool = list(all_combinations)
@@ -161,23 +162,17 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
             try:
                 accuracy, latency = evaluate_combo(combo)
-                logger.info(
-                    "[init] [%s] Accuracy: %.3f, Latency: %.3fs",
-                    combo_name,
-                    accuracy,
-                    latency,
-                )
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
-                all_results.append(
-                    ModelResult(
-                        model_name=combo_name,
-                        accuracy=accuracy,
-                        latency_seconds=latency,
-                        attribute="combination",
-                        is_best=False,
-                    )
+                result = ModelResult(
+                    model_name=combo_name,
+                    accuracy=accuracy,
+                    latency_seconds=latency,
+                    attribute="combination",
+                    is_best=False,
                 )
+                all_results.append(result)
+                print(f"  {result}")
             except Exception as e:
                 logger.warning("[init] [%s] failed: %s", combo_name, e)
                 all_results.append(
@@ -204,23 +199,17 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 )
                 try:
                     accuracy, latency = evaluate_combo(combo)
-                    logger.info(
-                        "[random] [%s] Accuracy: %.3f, Latency: %.3fs",
-                        combo_name,
-                        accuracy,
-                        latency,
-                    )
                     X_list.append(list(combo))
                     Y_list.append(accuracy)
-                    all_results.append(
-                        ModelResult(
-                            model_name=combo_name,
-                            accuracy=accuracy,
-                            latency_seconds=latency,
-                            attribute="combination",
-                            is_best=False,
-                        )
+                    result = ModelResult(
+                        model_name=combo_name,
+                        accuracy=accuracy,
+                        latency_seconds=latency,
+                        attribute="combination",
+                        is_best=False,
                     )
+                    all_results.append(result)
+                    print(f"  {result}")
                 except Exception as e:
                     logger.warning("[random] [%s] failed: %s", combo_name, e)
                 continue
@@ -264,25 +253,17 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
             try:
                 accuracy, latency = evaluate_combo(combo)
-                logger.info(
-                    "[BO %d/%d] [%s] Accuracy: %.3f, Latency: %.3fs",
-                    it + 1,
-                    n_iterations,
-                    combo_name,
-                    accuracy,
-                    latency,
-                )
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
-                all_results.append(
-                    ModelResult(
-                        model_name=combo_name,
-                        accuracy=accuracy,
-                        latency_seconds=latency,
-                        attribute="combination",
-                        is_best=False,
-                    )
+                result = ModelResult(
+                    model_name=combo_name,
+                    accuracy=accuracy,
+                    latency_seconds=latency,
+                    attribute="combination",
+                    is_best=False,
                 )
+                all_results.append(result)
+                print(f"  [BO {it+1}/{n_iterations}] {result}")
             except Exception as e:
                 logger.warning("[BO] [%s] failed: %s", combo_name, e)
 
@@ -317,13 +298,9 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 if name == best_combination:
                     set_proxies_from_combo(combo)
                     break
-            logger.info(
-                "Best combination: %s (accuracy=%.3f, latency=%.3fs)",
-                best_combination,
-                best_accuracy,
-                best_latency,
-            )
         else:
             logger.warning("No successful evaluations.")
 
-        return SelectionResults(results=all_results)
+        results = SelectionResults(results=all_results)
+        print(results)
+        return results

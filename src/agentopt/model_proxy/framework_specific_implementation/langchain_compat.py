@@ -2,6 +2,8 @@
 
 from typing import Any, Callable, List, Optional
 
+from ..adapter import FrameworkAdapter
+
 # Module prefixes that identify LangChain-compatible LLM objects.
 LANGCHAIN_COMPATIBLE_PREFIXES = (
     "langchain_openai",
@@ -107,7 +109,7 @@ def extract_prompt(agent_executor: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-class LangChainAdapter:
+class LangChainAdapter(FrameworkAdapter):
     """Adapter for LangChain ``AgentExecutor`` agents."""
 
     invoke_method_name = "invoke"

@@ -8,6 +8,8 @@ a real LLM and ``register_llamaindex_agent()`` ensures that
 
 import logging
 import os
+
+from ..adapter import FrameworkAdapter
 from typing import Any, Callable, List
 
 from pydantic import BaseModel
@@ -308,7 +310,7 @@ def sync_llamaindex_workflow_agents(
 # ---------------------------------------------------------------------------
 
 
-class LlamaIndexAdapter:
+class LlamaIndexAdapter(FrameworkAdapter):
     """Adapter for LlamaIndex ``FunctionAgent`` and ``AgentWorkflow`` agents."""
 
     invoke_method_name = "run"

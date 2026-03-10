@@ -24,6 +24,7 @@ from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
     BaseModelSelector,
     BruteForceModelSelector,
+    RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
@@ -35,6 +36,7 @@ from agentopt.model_proxy.framework_specific_implementation.ag2 import (
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
+    "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,
@@ -260,6 +262,7 @@ def run_model_selection(
     clone_fn=None,
     parallel: bool = False,
     selector_name: str = "brute_force",
+    sample_fraction: float = 0.25,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -275,6 +278,9 @@ def run_model_selection(
             kwargs["clone_fn"] = clone_fn
     else:
         kwargs = {"agent": agent_or_invoke_fn}
+
+    if selector_name == "random_search":
+        kwargs["sample_fraction"] = sample_fraction
 
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
@@ -338,6 +344,12 @@ if __name__ == "__main__":
         default="brute_force",
         help="Model selector to use (default: brute_force)",
     )
+    parser.add_argument(
+        "--sample-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of combinations to evaluate when --selector=random_search",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -362,6 +374,7 @@ if __name__ == "__main__":
         clone_fn=clone_fn,
         parallel=args.parallel,
         selector_name=args.selector,
+        sample_fraction=args.sample_fraction,
     )
 
     if not args.no_plot:

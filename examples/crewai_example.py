@@ -13,6 +13,7 @@ from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
     BaseModelSelector,
     BruteForceModelSelector,
+    RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
@@ -20,6 +21,7 @@ from agentopt.model_selection import (
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
+    "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,
@@ -222,6 +224,7 @@ def run_model_selection(
     parallel: bool = False,
     dataset_file=None,
     selector_name: str = "brute_force",
+    sample_fraction: float = 0.25,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -230,6 +233,9 @@ def run_model_selection(
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
     SelectorCls = SELECTORS[selector_name]
+    selector_kwargs = {}
+    if selector_name == "random_search":
+        selector_kwargs["sample_fraction"] = sample_fraction
     selector = SelectorCls(
         models={
             llm_proxy: [
@@ -242,6 +248,7 @@ def run_model_selection(
         eval_fn=eval_fn,
         dataset=dataset,
         agent=crew,
+        **selector_kwargs,
     )
 
     results = selector.select_best(parallel=parallel)
@@ -303,6 +310,12 @@ if __name__ == "__main__":
         default="brute_force",
         help="Model selector to use (default: brute_force)",
     )
+    parser.add_argument(
+        "--sample-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of combinations to evaluate when --selector=random_search",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -328,6 +341,7 @@ if __name__ == "__main__":
         parallel=args.parallel,
         dataset_file=args.dataset,
         selector_name=args.selector,
+        sample_fraction=args.sample_fraction,
     )
 
     print("\n[3] Saving results plot...")

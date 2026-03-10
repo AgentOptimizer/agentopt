@@ -10,6 +10,7 @@ from .model_proxy import ModelProxy
 from .model_factory import create_model_from_string, normalize_models
 from .model_selection import (
     BruteForceModelSelector,
+    RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
@@ -30,6 +31,7 @@ __all__ = [
     "ModelProxy",
     "BaseModelSelector",
     "BruteForceModelSelector",
+    "RandomSearchModelSelector",
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
     "BayesianOptimizationModelSelector",

@@ -5,38 +5,7 @@ from typing import Any, Callable, List, Optional
 
 from ..adapter import FrameworkAdapter
 
-
-def register_crewai_model(proxy_cls: type) -> None:
-    """Register *proxy_cls* as a virtual subclass of CrewAI's ``BaseLLM`` ABC
-    and patch the ``call()`` method with delegation.
-
-    1. ``BaseLLM.register(proxy_cls)`` — makes ``isinstance(proxy, BaseLLM)``
-       return ``True``, so CrewAI's ``create_llm()`` returns the proxy as-is
-       instead of discarding it and constructing a fresh ``crewai.LLM``.
-    2. Attaches ``call`` so CrewAI's agent executor routes through the proxy.
-    """
-    from crewai.llms.base_llm import BaseLLM  # type: ignore[import-untyped]
-
-    BaseLLM.register(proxy_cls)
-
-    def _crewai_call(self: Any, *args: Any, **kwargs: Any) -> Any:
-        """CrewAI ``BaseLLM.call()`` implementation for ModelProxy.
-
-        Delegates to the wrapped ``crewai.LLM``.
-        """
-        model = object.__getattribute__(self, "_optmodel")
-        return model.call(*args, **kwargs)
-
-    proxy_cls.call = _crewai_call
-
-
 logger = logging.getLogger(__name__)
-
-
-def is_crewai_crew(agent: Any) -> bool:
-    """Check if an agent is a CrewAI Crew."""
-    module = getattr(type(agent), "__module__", "") or ""
-    return module.startswith("crewai") and hasattr(agent, "agents")
 
 
 def is_crewai_llm(llm: Any) -> bool:
@@ -65,8 +34,32 @@ class CrewAIAdapter(FrameworkAdapter):
 
     invoke_method_name = "kickoff"
 
+    def _is_crewai_crew(self, agent: Any) -> bool:
+        """Check if an agent is a CrewAI Crew."""
+        module = getattr(type(agent), "__module__", "") or ""
+        return module.startswith("crewai") and hasattr(agent, "agents")
+
+    @classmethod
+    def patch_proxy_class(cls, proxy_cls: type) -> None:
+        """Register *proxy_cls* as a virtual subclass of CrewAI's ``BaseLLM``
+        and patch ``call()`` to delegate to the wrapped model.
+
+        1. ``BaseLLM.register(proxy_cls)`` — makes ``isinstance(proxy, BaseLLM)``
+           return ``True``, so CrewAI's ``create_llm()`` returns the proxy as-is.
+        2. Attaches ``call`` so CrewAI's agent executor routes through the proxy.
+        """
+        from crewai.llms.base_llm import BaseLLM  # type: ignore[import-untyped]
+
+        BaseLLM.register(proxy_cls)
+
+        def _crewai_call(self: Any, *args: Any, **kwargs: Any) -> Any:
+            model = object.__getattribute__(self, "_optmodel")
+            return model.call(*args, **kwargs)
+
+        proxy_cls.call = _crewai_call
+
     def detect(self, agent: Any) -> bool:
-        return is_crewai_crew(agent)
+        return self._is_crewai_crew(agent)
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         return agent.kickoff
@@ -96,7 +89,7 @@ class CrewAIAdapter(FrameworkAdapter):
         """
         cloned = agent.model_copy(deep=False)
 
-        assert is_crewai_crew(
+        assert self._is_crewai_crew(
             cloned
         ), f"clone_for_parallel called on non-Crew: {type(cloned).__name__}"
 

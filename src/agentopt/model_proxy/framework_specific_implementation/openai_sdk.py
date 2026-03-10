@@ -3,6 +3,7 @@
 import copy
 from typing import Any, Callable, List
 
+from ..adapter import FrameworkAdapter
 from ..constants import MODEL_FIELDS
 
 
@@ -51,38 +52,32 @@ def _stream_response(self: Any, *args: Any, **kwargs: Any) -> Any:
     return resolved.stream_response(*args, **kwargs)
 
 
-def register_openai_agents_model(proxy_cls: type) -> None:
-    """Register *proxy_cls* as a virtual subclass of the OpenAI Agents SDK
-    ``Model`` ABC and patch the required interface methods onto it.
-
-    1. ``Model.register(proxy_cls)`` — makes ``isinstance(proxy, Model)``
-       return ``True``.
-    2. Attaches ``get_response`` and ``stream_response`` so the SDK can
-       invoke them at runtime.
-    """
-    from agents.models.interface import Model
-
-    Model.register(proxy_cls)
-    proxy_cls.get_response = _get_response
-    proxy_cls.stream_response = _stream_response
-
-
 # ---------------------------------------------------------------------------
 # FrameworkAdapter
 # ---------------------------------------------------------------------------
 
 
-class OpenAISDKAdapter:
+class OpenAISDKAdapter(FrameworkAdapter):
     """Adapter for OpenAI Agents SDK ``Agent`` objects.
 
-    The ABC registration and method patching happen at the class level in
-    ``register_openai_agents_model`` (called from ``model_proxy/__init__.py``),
-    so no per-instance sync is needed.  ``_get_response`` / ``_stream_response``
-    delegate to the proxy at call time, meaning model swaps take effect
-    immediately without any explicit sync callbacks.
+    ``patch_proxy_class`` registers ModelProxy as a virtual subclass of the
+    SDK's ``Model`` ABC and patches ``get_response`` / ``stream_response``.
+    These delegate to the proxy at call time, meaning model swaps take
+    effect immediately without any explicit sync callbacks.
     """
 
     invoke_method_name = None  # uses a custom wrapper, not a named method
+
+    @classmethod
+    def patch_proxy_class(cls, proxy_cls: type) -> None:
+        """Register *proxy_cls* as a virtual subclass of the OpenAI Agents SDK
+        ``Model`` ABC and patch the required interface methods.
+        """
+        from agents.models.interface import Model
+
+        Model.register(proxy_cls)
+        proxy_cls.get_response = _get_response
+        proxy_cls.stream_response = _stream_response
 
     def detect(self, agent: Any) -> bool:
         module = getattr(type(agent), "__module__", "") or ""

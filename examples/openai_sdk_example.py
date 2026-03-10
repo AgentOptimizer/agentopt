@@ -8,7 +8,6 @@ Each supports both sequential and parallel model selection.
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +22,6 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
-    BaseModelSelector,
     BruteForceModelSelector,
     RandomSearchModelSelector,
     HillClimbingModelSelector,
@@ -103,7 +101,6 @@ def multillm_example():
         question = input_data["input"]
         r_model = researcher_proxy.get_model().model
         c_model = coder_proxy.get_model().model
-        print(f"  [invoke] researcher={r_model}, coder={c_model} | q: {question[:60]}")
         research_result = Runner.run_sync(researcher, question)
         research_output = (
             research_result.final_output

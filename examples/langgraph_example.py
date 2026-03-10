@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, convert_to_mess
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 
-from agentopt.model_factory import create_model_from_string
+from agentopt import create_model_from_string
 
 import matplotlib
 
@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 
 from agentopt import ModelProxy, BruteForceModelSelector
 from agentopt.model_selection import (
-    BaseModelSelector,
     BruteForceModelSelector,
     RandomSearchModelSelector,
     HillClimbingModelSelector,

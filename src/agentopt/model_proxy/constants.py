@@ -28,7 +28,47 @@ PROVIDER_API_KEYS: Dict[str, str] = {
 }
 
 
-def check_api_key(model_name: str) -> Optional[str]:
+def detect_provider(model_name: str) -> Tuple[str, str, Optional[str]]:
+    """Detect provider from model name, strip prefix, resolve API key.
+
+    Returns (provider, clean_name, api_key).
+    Provider is one of: "bedrock", "openai", "google", "anthropic", "default".
+    """
+    if model_name.startswith("bedrock/"):
+        return (
+            "bedrock",
+            model_name.removeprefix("bedrock/"),
+            os.getenv("AWS_ACCESS_KEY_ID"),
+        )
+
+    if model_name.startswith("openai/") or any(
+        model_name.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-")
+    ):
+        return "openai", model_name.removeprefix("openai/"), os.getenv("OPENAI_API_KEY")
+
+    if model_name.startswith("google/") or "gemini" in model_name.lower():
+        return "google", model_name.removeprefix("google/"), os.getenv("GOOGLE_API_KEY")
+
+    if model_name.startswith("anthropic/") or "claude" in model_name.lower():
+        return (
+            "anthropic",
+            model_name.removeprefix("anthropic/"),
+            os.getenv("ANTHROPIC_API_KEY"),
+        )
+
+    # Default — try OpenAI key
+    return "default", model_name, os.getenv("OPENAI_API_KEY")
+
+
+def no_key_error(provider_env: str, model_name: str) -> ValueError:
+    """Standard error when no API key or proxy is available."""
+    return ValueError(
+        f"No API key found for '{model_name}'. "
+        f"Set {provider_env} or OPENROUTER_API_KEY."
+    )
+
+
+def _check_api_key(model_name: str) -> Optional[str]:
     """Check if the required API key for a model is set in the environment.
 
     Args:
@@ -77,7 +117,7 @@ def validate_model_candidates(
                 continue
             seen.add(name)
 
-            msg = check_api_key(name)
+            msg = _check_api_key(name)
             if msg is not None:
                 warnings.append(msg)
 

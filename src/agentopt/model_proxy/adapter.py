@@ -35,6 +35,18 @@ class FrameworkAdapter(ABC):
     # the method after cloning.  ``None`` means the adapter wraps it itself.
     invoke_method_name: Optional[str] = None
 
+    @classmethod
+    def patch_proxy_class(cls, proxy_cls: type) -> None:
+        """One-time class-level patching to make ModelProxy compatible.
+
+        Default: no-op.  Override for frameworks that require ABC registration
+        or method patching (e.g. CrewAI ``BaseLLM``, OpenAI SDK ``Model``).
+
+        Called once per adapter from ``model_proxy/__init__.py`` after all
+        adapters have been imported.
+        """
+        pass
+
     @abstractmethod
     def detect(self, agent: Any) -> bool:
         """Return True if this adapter can handle *agent*."""

@@ -155,7 +155,6 @@ def multiagent_example():
         question = input_data["input"]
         r_model = researcher_llm.get_model().model_name
         c_model = coder_llm.get_model().model_name
-        print(f"  [invoke] researcher={r_model}, coder={c_model} | q: {question[:50]}")
         research_result = researcher_executor.invoke({"input": question})
         research_output = research_result.get("output", "")
         coder_result = coder_executor.invoke(
@@ -179,7 +178,6 @@ def run_model_selection(
     model_candidates = [
         "openai/gpt-4o-mini",
         "openai/gpt-4o",
-        "anthropic/claude-sonnet-4-20250514",
     ]
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
@@ -189,7 +187,6 @@ def run_model_selection(
             llm: [
                 "openai/gpt-4o-mini",
                 "openai/gpt-4o",
-                "anthropic/claude-sonnet-4-20250514",
             ]
             for llm in llm_proxies
         },

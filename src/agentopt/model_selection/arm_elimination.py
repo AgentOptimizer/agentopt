@@ -172,6 +172,14 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 combo_latencies[idx].extend(latencies)
                 if self._adapter is not None:
                     new_in, new_out = self._adapter.get_token_usage(self.agent)
+                    if (
+                        new_in == 0
+                        and new_out == 0
+                        and self._invoke_token_tracker is not None
+                    ):
+                        new_in, new_out = self._adapter.get_token_usage(
+                            self._invoke_token_tracker
+                        )
                     prev_in, prev_out = combo_tokens[idx]
                     combo_tokens[idx] = (prev_in + new_in, prev_out + new_out)
 

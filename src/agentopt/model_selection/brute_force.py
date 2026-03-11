@@ -181,10 +181,11 @@ class BruteForceModelSelector(BaseModelSelector):
                 "custom multi-agent chains."
             )
 
-        # Resolve the adapter once for agent-based cloning (None for clone_fn path).
+        # Resolve the adapter once for agent-based cloning; fall back to
+        # self._adapter (set in __init__) for the clone_fn token-tracking path.
         from ..model_proxy.adapter import get_adapter
 
-        adapter = get_adapter(self.agent) if self.agent is not None else None
+        adapter = get_adapter(self.agent) if self.agent is not None else self._adapter
 
         print(f"\n{'='*60}")
         print(
@@ -208,7 +209,15 @@ class BruteForceModelSelector(BaseModelSelector):
                     # User-supplied factory for invoke_fn-based multi-agent chains.
                     model_map = dict(zip(proxies, combo))
                     fresh_invoke = self.clone_fn(model_map)
-                    tasks.append((combo_name, combo, fresh_invoke, self.is_async, None))
+                    # Wrap for token tracking if an adapter is available.
+                    token_tracker = None
+                    if adapter is not None:
+                        token_tracker, fresh_invoke = (
+                            adapter.wrap_invoke_fn_for_parallel(fresh_invoke)
+                        )
+                    tasks.append(
+                        (combo_name, combo, fresh_invoke, self.is_async, token_tracker)
+                    )
                 else:
                     # Adapter-based cloning for recognized framework agents.
                     if adapter is not None:
@@ -291,7 +300,7 @@ class BruteForceModelSelector(BaseModelSelector):
         best_info = self._find_best(all_results)
         if best_info is not None:
             best_name, _ = best_info
-            for combo_name, combo, _, _ in tasks:
+            for combo_name, combo, _, _, _ in tasks:
                 if combo_name == best_name:
                     for proxy, model_obj in zip(proxies, combo):
                         proxy.set_model(model_obj)

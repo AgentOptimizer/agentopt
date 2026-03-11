@@ -159,8 +159,10 @@ class MultiAgentWorkflow:
         graph.add_edge("finalize", END)
         return graph.compile()
 
-    def invoke(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
-        return self.graph.invoke(input_state)
+    def invoke(
+        self, input_state: Dict[str, Any], config=None, **kwargs
+    ) -> Dict[str, Any]:
+        return self.graph.invoke(input_state, config, **kwargs)
 
 
 def multiagent_example():
@@ -185,11 +187,12 @@ def multiagent_example():
         Both solver and reviewer share the same model since there is one proxy.
         """
         model_name = model_map[proxy]
+        bare_name = model_name.split("/", 1)[-1] if "/" in model_name else model_name
         print(f"  [clone_fn] building fresh workflow (model: {model_name})")
         fresh_llm = (
-            ChatAnthropic(model=model_name)
+            ChatAnthropic(model=bare_name)
             if "claude" in model_name
-            else ChatOpenAI(model=model_name)
+            else ChatOpenAI(model=bare_name)
         )
         fresh_wf = MultiAgentWorkflow(solver_model=fresh_llm, reviewer_model=fresh_llm)
         return fresh_wf.invoke
@@ -225,18 +228,20 @@ def multiagent_multillm_example():
         """
         s_model = model_map[solver_proxy]
         r_model = model_map[reviewer_proxy]
+        s_bare = s_model.split("/", 1)[-1] if "/" in s_model else s_model
+        r_bare = r_model.split("/", 1)[-1] if "/" in r_model else r_model
         print(
             f"  [clone_fn] building fresh workflow (solver: {s_model}, reviewer: {r_model})"
         )
         fresh_solver = (
-            ChatAnthropic(model=s_model)
+            ChatAnthropic(model=s_bare)
             if "claude" in s_model
-            else ChatOpenAI(model=s_model)
+            else ChatOpenAI(model=s_bare)
         )
         fresh_reviewer = (
-            ChatAnthropic(model=r_model)
+            ChatAnthropic(model=r_bare)
             if "claude" in r_model
-            else ChatOpenAI(model=r_model)
+            else ChatOpenAI(model=r_bare)
         )
         fresh_wf = MultiAgentWorkflow(
             solver_model=fresh_solver, reviewer_model=fresh_reviewer

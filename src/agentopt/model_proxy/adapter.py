@@ -77,6 +77,25 @@ class FrameworkAdapter(ABC):
         """
         pass
 
+    def detect_model(self, model: Any) -> bool:
+        """Return True if this adapter's framework owns this LLM model object.
+
+        Used to detect the adapter for token tracking on the ``invoke_fn=`` path,
+        where there is no top-level agent — only proxy-wrapped model objects.
+        Default: False (opt in per framework).
+        """
+        return False
+
+    def wrap_invoke_fn_for_parallel(self, invoke_fn: Callable) -> Tuple[Any, Callable]:
+        """Wrap invoke_fn to inject token tracking for the parallel clone_fn path.
+
+        Returns (token_tracker, wrapped_invoke_fn).
+        token_tracker is stored as `agent_copy` in tasks and passed as `agent`
+        to _evaluate_single so get_token_usage(token_tracker) returns counts.
+        Default: no-op — returns (None, invoke_fn).
+        """
+        return None, invoke_fn
+
     def get_token_usage(self, _agent: Any) -> Tuple[int, int]:
         """Return ``(input_tokens, output_tokens)`` accumulated since the last call.
 
@@ -137,5 +156,18 @@ def get_adapter(agent: Any) -> Optional[FrameworkAdapter]:
     """Return the first adapter whose ``detect(agent)`` returns True."""
     for adapter in _REGISTRY:
         if adapter.detect(agent):
+            return adapter
+    return None
+
+
+def get_adapter_for_model(model: Any) -> Optional[FrameworkAdapter]:
+    """Return the first adapter whose ``detect_model(model)`` returns True.
+
+    Used to find the adapter for a raw LLM model object (not a top-level agent),
+    for example when the ``invoke_fn=`` path is used and we need to detect the
+    framework from the proxy's underlying model to enable token tracking.
+    """
+    for adapter in _REGISTRY:
+        if adapter.detect_model(model):
             return adapter
     return None

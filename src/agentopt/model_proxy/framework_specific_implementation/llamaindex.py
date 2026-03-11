@@ -138,9 +138,10 @@ class LlamaIndexAdapter(FrameworkAdapter):
         self._token_handlers: Dict[int, Any] = {}
 
     def _install_token_handler(self, agent: Any) -> Optional[Any]:
-        """Attach a TokenCountingHandler to the agent's callback manager."""
+        """Attach a TokenCountingHandler via the global Settings callback manager."""
         try:
-            from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+            from llama_index.core.callbacks import TokenCountingHandler
+            from llama_index.core import Settings
             import tiktoken
         except ImportError:
             return None
@@ -148,21 +149,9 @@ class LlamaIndexAdapter(FrameworkAdapter):
         handler = TokenCountingHandler(
             tokenizer=tiktoken.encoding_for_model("gpt-3.5-turbo").encode
         )
-        cb_manager = agent.callback_manager
-        if cb_manager is None:
-            agent.callback_manager = CallbackManager([handler])
-        else:
-            cb_manager.add_handler(handler)
-
-        # For AgentWorkflow, also attach to each sub-agent.
-        if hasattr(agent, "agents"):
-            for sub in agent.agents.values():
-                sub_cb = sub.callback_manager
-                if sub_cb is None:
-                    sub.callback_manager = CallbackManager([handler])
-                else:
-                    sub_cb.add_handler(handler)
-
+        # AgentWorkflow and FunctionAgent have no per-instance callback_manager.
+        # The global Settings.callback_manager applies to all workflows/agents.
+        Settings.callback_manager.add_handler(handler)
         return handler
 
     def get_token_usage(self, agent: Any) -> Tuple[int, int]:
@@ -171,7 +160,7 @@ class LlamaIndexAdapter(FrameworkAdapter):
             return (0, 0)
         in_tok = handler.prompt_llm_token_count
         out_tok = handler.completion_llm_token_count
-        handler.reset()
+        handler.reset_counts()
         return (in_tok, out_tok)
 
     def detect(self, agent: Any) -> bool:

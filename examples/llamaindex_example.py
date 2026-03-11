@@ -157,8 +157,8 @@ def multi_agent_multi_llm_example():
     issues in LlamaIndex AgentWorkflow (OpenAI and Anthropic use different
     tool_call serialization formats in conversation history).
     """
-    math_llm = LlamaAnthropic(model="claude-sonnet-4-20250514")
-    reviewer_llm = LlamaAnthropic(model="claude-sonnet-4-20250514")
+    math_llm = LlamaAnthropic(model="gpt-4o")
+    reviewer_llm = LlamaAnthropic(model="gpt-4o")
     math_proxy = ModelProxy(math_llm)
     reviewer_proxy = ModelProxy(reviewer_llm)
 
@@ -207,7 +207,7 @@ def run_model_selection(
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     if model_candidates is None:
-        model_candidates = ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-20250514"]
+        model_candidates = ["gpt-4o-mini", "gpt-4o", "gpt-4o"]
 
     SelectorCls = SELECTORS[selector_name]
     selector = SelectorCls(
@@ -293,7 +293,7 @@ if __name__ == "__main__":
     # Multi-LLM uses Anthropic-only candidates to avoid cross-provider
     # tool format issues in LlamaIndex AgentWorkflow.
     candidates = (
-        ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+        ["gpt-4o", "gpt-5.1", "gpt-4o-mini"]
         if args.example == "multi-llm"
         else None  # default mixed candidates
     )

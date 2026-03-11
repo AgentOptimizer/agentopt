@@ -284,7 +284,7 @@ def run_model_selection(
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
-    model_candidates = ["gpt-4o-mini", "anthropic/claude-sonnet-4-20250514"]
+    model_candidates = ["gpt-4o-mini", "gpt-5.1", "gpt-4o"]
 
     models = {p: model_candidates for p in llm_proxies}
 

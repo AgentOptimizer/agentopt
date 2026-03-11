@@ -3,7 +3,7 @@
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..adapter import FrameworkAdapter
+from ..adapter import FrameworkAdapter, register_adapter
 from ..constants import detect_provider, no_key_error
 
 # Module prefixes that identify LangChain-compatible LLM objects.
@@ -174,11 +174,21 @@ class _TokenCountingCallback(_BaseCallbackHandler):
         self.output_tokens: int = 0
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
-        llm_output = response.llm_output
-        if llm_output and "token_usage" in llm_output:
-            usage = llm_output["token_usage"]
-            self.input_tokens += usage["prompt_tokens"]
-            self.output_tokens += usage["completion_tokens"]
+        llm_output = getattr(response, "llm_output", None) or {}
+        usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
+        if usage:
+            self.input_tokens += usage.get("prompt_tokens", 0)
+            self.output_tokens += usage.get("completion_tokens", 0)
+            return
+        # Fallback: per-generation usage_metadata (newer LangChain / Anthropic)
+        for gens in getattr(response, "generations", []):
+            for gen in gens:
+                msg = getattr(gen, "message", None)
+                if msg is None:
+                    continue
+                meta = getattr(msg, "usage_metadata", None) or {}
+                self.input_tokens += meta.get("input_tokens", 0)
+                self.output_tokens += meta.get("output_tokens", 0)
 
     def reset(self) -> Tuple[int, int]:
         in_tok, out_tok = self.input_tokens, self.output_tokens
@@ -254,6 +264,9 @@ class LangChainAdapter(FrameworkAdapter):
             and hasattr(agent, "tools")
         )
 
+    def detect_model(self, model: Any) -> bool:
+        return is_langchain_compatible_llm(model)
+
     def _install_callback(self, agent: Any) -> None:
         """Attach a _TokenCountingCallback to the executor's callbacks list."""
         if id(agent) in self._callbacks:
@@ -263,19 +276,35 @@ class LangChainAdapter(FrameworkAdapter):
         agent.callbacks = list(agent.callbacks or []) + [handler]
 
     def get_invoke_fn(self, agent: Any) -> Callable:
-        self._install_callback(agent)
         return agent.invoke
 
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]
     ) -> None:
-        """Register a closure that rebuilds the LCEL chain on every model swap.
+        """Register token counting and (for agent= path) LCEL chain rebuild sync.
 
-        Also installs token counting so custom invoke_fns that call
-        executor.invoke() directly still accumulate tokens.
+        Token tracking is installed on the LLM object itself for both paths —
+        executor-level callbacks are not reliably propagated to on_llm_end in
+        newer LangChain (0.3+) with LCEL-based AgentExecutor.
         """
-        self._install_callback(agent)
+        # Always install token tracking on the LLM itself.
+        if id(proxy) not in self._callbacks:
+            handler = _TokenCountingCallback()
+            self._callbacks[id(proxy)] = handler
 
+            def _reinstall(new_llm: Any, _h: _TokenCountingCallback = handler) -> None:
+                new_llm.callbacks = list(getattr(new_llm, "callbacks", None) or []) + [
+                    _h
+                ]
+
+            underlying = object.__getattribute__(proxy, "_optmodel")
+            _reinstall(underlying)
+            proxy._add_sync(_reinstall)
+
+        if agent is None:
+            return  # invoke_fn path: done
+
+        # agent= path: also install LCEL chain rebuild sync.
         tools = agent.tools
         prompt = self._extract_prompt(agent)
         if prompt is None:
@@ -290,6 +319,25 @@ class LangChainAdapter(FrameworkAdapter):
             LangChainAdapter._sync_executor(_exec, new_llm, _tools, _prompt)
 
         proxy._add_sync(_sync)
+
+    def wrap_invoke_fn_for_parallel(self, invoke_fn: Any) -> Any:
+        """Wrap invoke_fn to inject a token-counting callback via RunnableConfig.
+
+        The returned token_tracker is a _TokenCountingCallback whose counts
+        are accessible via get_token_usage(token_tracker).
+        LangGraph propagates RunnableConfig callbacks to all child runnables,
+        so on_llm_end fires on the fresh LLMs created by clone_fn.
+        """
+        from langchain_core.runnables import RunnableConfig
+
+        handler = _TokenCountingCallback()
+        self._callbacks[id(handler)] = handler
+        config = RunnableConfig(callbacks=[handler])
+
+        def wrapped(input_data):
+            return invoke_fn(input_data, config=config)
+
+        return handler, wrapped
 
     def clone_for_parallel(
         self,
@@ -342,6 +390,4 @@ class LangChainAdapter(FrameworkAdapter):
 
 
 # Self-register — runs when this module is first imported.
-from ..adapter import register_adapter  # noqa: E402
-
 register_adapter(LangChainAdapter())

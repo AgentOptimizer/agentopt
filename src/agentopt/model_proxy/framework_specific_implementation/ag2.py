@@ -17,9 +17,66 @@ from __future__ import annotations
 
 import copy
 import os
+import threading
 
 from ..adapter import FrameworkAdapter
 from typing import Any, Callable, Dict, List, Tuple
+
+# ---------------------------------------------------------------------------
+# Thread-local token tracking for parallel clone_fn path
+# ---------------------------------------------------------------------------
+
+_token_tracking_local = threading.local()
+
+
+def _read_total_tokens(agent: Any) -> Tuple[int, int]:
+    """Read cumulative prompt/completion tokens from agent.client.total_usage_summary."""
+    summary = getattr(getattr(agent, "client", None), "total_usage_summary", None)
+    if not isinstance(summary, dict):
+        return (0, 0)
+    in_tok = out_tok = 0
+    for key, val in summary.items():
+        if key == "total_cost" or not isinstance(val, dict):
+            continue
+        in_tok += val.get("prompt_tokens", 0)
+        out_tok += val.get("completion_tokens", 0)
+    return (in_tok, out_tok)
+
+
+class _TrackedResponse:
+    """Wraps an AG2 response to accumulate token usage after events are consumed.
+
+    AG2 stores token usage in ``agent.client.total_usage_summary``, not in
+    conversation messages.  This wrapper intercepts ``events`` iteration and
+    records the delta in the accumulator after the generator is exhausted.
+    """
+
+    def __init__(
+        self, response: Any, agent: Any, before: Tuple[int, int], acc: Any
+    ) -> None:
+        self._response = response
+        # Store as an instance attribute so it shadows any class-level property.
+        self.events = self._build_tracked_events(response, agent, before, acc)
+
+    @staticmethod
+    def _build_tracked_events(response: Any, agent: Any, before: Tuple[int, int], acc: Any):  # type: ignore[override]
+        for event in response.events:
+            yield event
+        # Events exhausted — compute token delta from agent's usage summary.
+        after_in, after_out = _read_total_tokens(agent)
+        acc.input_tokens += after_in - before[0]
+        acc.output_tokens += after_out - before[1]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+
+class _AG2TokenAccumulator:
+    """Accumulates token counts across multiple ConversableAgent.run() calls."""
+
+    def __init__(self) -> None:
+        self.input_tokens = 0
+        self.output_tokens = 0
 
 
 def is_ag2_llm(llm: Any) -> bool:
@@ -78,23 +135,69 @@ class AG2Adapter(FrameworkAdapter):
         # Maps agent id → last response, set by the invoke closure.
         self._last_responses: Dict[int, Any] = {}
 
+    def detect_model(self, model: Any) -> bool:
+        return is_ag2_llm(model)
+
     def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        response = self._last_responses.pop(id(agent), None)
-        if response is None:
+        stored = self._last_responses.pop(id(agent), None)
+        if stored is None:
             return (0, 0)
-        in_tok = out_tok = 0
-        # AG2 accumulates cost info in response.messages as usage dicts.
-        for msg in response.messages:
-            if isinstance(msg, dict):
-                usage = msg.get("usage")
-            elif hasattr(msg, "usage"):
-                usage = msg.usage
-            else:
-                usage = None
-            if isinstance(usage, dict):
-                in_tok += usage["prompt_tokens"]
-                out_tok += usage["completion_tokens"]
-        return (in_tok, out_tok)
+        if isinstance(stored, _AG2TokenAccumulator):
+            result = (stored.input_tokens, stored.output_tokens)
+            stored.input_tokens = 0
+            stored.output_tokens = 0
+            return result
+        return (0, 0)
+
+    def wrap_invoke_fn_for_parallel(self, invoke_fn: Any) -> Any:
+        """Wrap invoke_fn to capture token usage from any ConversableAgent.run() calls.
+
+        Introspects invoke_fn.__closure__ to find ConversableAgent instances and
+        patches their run() at the instance level (takes precedence over class method).
+        Uses thread-local storage so each parallel task tracks its own tokens
+        without cross-thread contamination.
+        """
+        fresh_agents = []
+        try:
+            from autogen import ConversableAgent as _CA
+
+            if hasattr(invoke_fn, "__closure__") and invoke_fn.__closure__:
+                for cell in invoke_fn.__closure__:
+                    try:
+                        val = cell.cell_contents
+                        if isinstance(val, _CA):
+                            fresh_agents.append(val)
+                    except ValueError:
+                        pass
+        except ImportError:
+            pass
+
+        acc = _AG2TokenAccumulator()
+        self._last_responses[id(acc)] = acc
+
+        for agent in fresh_agents:
+            _orig_run = agent.run
+
+            def _instance_patched_run(
+                *args: Any, _orig: Any = _orig_run, _agent: Any = agent, **kwargs: Any
+            ) -> Any:
+                before = _read_total_tokens(_agent)
+                response = _orig(*args, **kwargs)
+                _acc = getattr(_token_tracking_local, "accumulator", None)
+                if _acc is not None:
+                    return _TrackedResponse(response, _agent, before, _acc)
+                return response
+
+            agent.run = _instance_patched_run
+
+        def wrapped(input_data: Any) -> Any:
+            _token_tracking_local.accumulator = acc
+            try:
+                return invoke_fn(input_data)
+            finally:
+                _token_tracking_local.accumulator = None
+
+        return acc, wrapped
 
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
@@ -173,14 +276,16 @@ class AG2Adapter(FrameworkAdapter):
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() to handle input dict and extract content."""
+        acc = _AG2TokenAccumulator()
+        self._last_responses[id(agent)] = acc
 
         def _invoke(input_data: Any) -> Any:
             if isinstance(input_data, dict):
                 message = input_data.get("input", str(input_data))
             else:
                 message = str(input_data)
+            before = _read_total_tokens(agent)
             response = agent.run(message=message, max_turns=1, user_input=False)
-            self._last_responses[id(agent)] = response
 
             def _extract(r: Any) -> str:
                 for _ in r.events:
@@ -194,7 +299,11 @@ class AG2Adapter(FrameworkAdapter):
                     return last.content if hasattr(last, "content") else str(last)
                 return ""
 
-            return _extract(response)
+            result = _extract(response)
+            after_in, after_out = _read_total_tokens(agent)
+            acc.input_tokens += after_in - before[0]
+            acc.output_tokens += after_out - before[1]
+            return result
 
         return _invoke
 
@@ -207,6 +316,9 @@ class AG2Adapter(FrameworkAdapter):
         except AttributeError:
             ag2_agents: list = []
             object.__setattr__(proxy, "_ag2_agents", ag2_agents)
+
+        if agent is None:
+            return  # invoke_fn path: no agent sync needed
 
         if agent not in ag2_agents:
             ag2_agents.append(agent)

@@ -225,17 +225,42 @@ class BaseModelSelector(ABC):
         self.dataset = dataset
         self._models = models
         self.clone_fn = clone_fn
+        self._proxies = list(models.keys())
 
         # Validate API keys for all candidate models.
         warnings, _ = validate_model_candidates(models)
         for warning in warnings:
             raise ValueError(warning)
 
+        self._invoke_token_tracker = None
         if invoke_fn is not None:
             self.invoke_fn = invoke_fn
             self.is_async = inspect.iscoroutinefunction(invoke_fn)
             self._invoke_method_name = None
             self._adapter = None
+            # Detect adapter from proxy's underlying model for token tracking.
+            from ..model_proxy.adapter import get_adapter_for_model
+
+            for proxy in self._proxies:
+                # Try the proxy itself first (e.g. OpenAI SDK proxies registered
+                # as Model ABC virtual subclasses via patch_proxy_class).
+                adapter = get_adapter_for_model(proxy)
+                if adapter is None:
+                    try:
+                        underlying = object.__getattribute__(proxy, "_optmodel")
+                        adapter = get_adapter_for_model(underlying)
+                    except AttributeError:
+                        pass
+                if adapter is not None:
+                    self._adapter = adapter
+                    for p in self._proxies:
+                        adapter.register_with_proxy(p, None, self._proxies)
+                    # Wrap invoke_fn for sequential token tracking.
+                    tracker, self.invoke_fn = adapter.wrap_invoke_fn_for_parallel(
+                        self.invoke_fn
+                    )
+                    self._invoke_token_tracker = tracker
+                    break
         else:
             # Auto-detect framework via adapter registry.
             from ..model_proxy.adapter import get_adapter
@@ -253,9 +278,8 @@ class BaseModelSelector(ABC):
             self._adapter = adapter
 
             # Auto-register proxy ↔ agent sync for sequential evaluation.
-            proxy_list = list(models.keys())
-            for proxy in proxy_list:
-                adapter.register_with_proxy(proxy, agent, proxy_list)
+            for proxy in self._proxies:
+                adapter.register_with_proxy(proxy, agent, self._proxies)
 
     def _evaluate(
         self,
@@ -295,11 +319,21 @@ class BaseModelSelector(ABC):
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
 
-        in_tok, out_tok = (
-            self._adapter.get_token_usage(self.agent)
-            if self._adapter is not None
-            else (0, 0)
-        )
+        in_tok, out_tok = 0, 0
+        if self._adapter is not None:
+            for proxy in self._proxies:
+                pi, po = self._adapter.get_token_usage(proxy)
+                in_tok += pi
+                out_tok += po
+            # Fall back to agent-level tracking for non-LangChain frameworks
+            # (CrewAI, LlamaIndex, AG2) that track at agent level, not LLM level.
+            if in_tok == 0 and out_tok == 0 and self.agent is not None:
+                in_tok, out_tok = self._adapter.get_token_usage(self.agent)
+            # Fall back to wrapped invoke_fn tracker (multi-LLM invoke_fn= path).
+            if in_tok == 0 and out_tok == 0 and self._invoke_token_tracker is not None:
+                in_tok, out_tok = self._adapter.get_token_usage(
+                    self._invoke_token_tracker
+                )
 
         return avg_score, avg_latency, in_tok, out_tok
 

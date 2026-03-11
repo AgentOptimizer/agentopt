@@ -1,10 +1,50 @@
 """OpenAI Agents SDK compatibility: ABC registration, model builder, and FrameworkAdapter."""
 
 import copy
+import threading
 from typing import Any, Callable, Dict, List, Tuple
 
 from ..adapter import FrameworkAdapter
 from ..constants import MODEL_FIELDS
+
+# ---------------------------------------------------------------------------
+# Runner.run_sync interception for token tracking
+# ---------------------------------------------------------------------------
+
+_thread_local = threading.local()
+_run_sync_patched = False
+
+
+def _ensure_run_sync_patch() -> None:
+    """Patch Runner.run_sync once to accumulate usage into thread-local storage."""
+    global _run_sync_patched
+    if _run_sync_patched:
+        return
+    from agents import Runner
+
+    _orig = Runner.run_sync
+
+    def _patched(agent: Any, input_data: Any, **kwargs: Any) -> Any:
+        result = _orig(agent, input_data, **kwargs)
+        accum = getattr(_thread_local, "accum", None)
+        if accum is not None:
+            for resp in getattr(result, "raw_responses", []):
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    accum["in_tok"] += getattr(usage, "input_tokens", 0)
+                    accum["out_tok"] += getattr(usage, "output_tokens", 0)
+        return result
+
+    Runner.run_sync = _patched
+    _run_sync_patched = True
+
+
+class _UsageTracker:
+    """Accumulates token counts for the clone_fn parallel path."""
+
+    def __init__(self) -> None:
+        self.in_tok = 0
+        self.out_tok = 0
 
 
 def build_openai_agents_model(model_name: str) -> Any:
@@ -73,6 +113,13 @@ class OpenAISDKAdapter(FrameworkAdapter):
         self._last_results: Dict[int, Any] = {}
 
     def get_token_usage(self, agent: Any) -> Tuple[int, int]:
+        # clone_fn parallel path: agent is a _UsageTracker
+        if isinstance(agent, _UsageTracker):
+            in_tok, out_tok = agent.in_tok, agent.out_tok
+            agent.in_tok = 0
+            agent.out_tok = 0
+            return (in_tok, out_tok)
+        # agent= path: RunResult stored by id after each invoke
         result = self._last_results.pop(id(agent), None)
         if result is None:
             return (0, 0)
@@ -97,6 +144,15 @@ class OpenAISDKAdapter(FrameworkAdapter):
     def detect(self, agent: Any) -> bool:
         return (type(agent).__module__ or "").startswith("agents")
 
+    def detect_model(self, model: Any) -> bool:
+        """Detect ModelProxy instances registered as OpenAI SDK Model virtual subclasses."""
+        try:
+            from agents.models.interface import Model
+
+            return isinstance(model, Model)
+        except ImportError:
+            return False
+
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Return a synchronous invoke callable that runs the agent via Runner."""
         from agents import Runner
@@ -113,6 +169,24 @@ class OpenAISDKAdapter(FrameworkAdapter):
             )
 
         return _invoke
+
+    def wrap_invoke_fn_for_parallel(self, invoke_fn: Callable) -> Tuple[Any, Callable]:
+        """Wrap a clone_fn-produced invoke_fn to capture token usage via Runner.run_sync."""
+        _ensure_run_sync_patch()
+        tracker = _UsageTracker()
+
+        def _wrapped(input_data: Any) -> Any:
+            accum: Dict[str, int] = {"in_tok": 0, "out_tok": 0}
+            _thread_local.accum = accum
+            try:
+                result = invoke_fn(input_data)
+            finally:
+                _thread_local.accum = None
+            tracker.in_tok += accum["in_tok"]
+            tracker.out_tok += accum["out_tok"]
+            return result
+
+        return tracker, _wrapped
 
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]

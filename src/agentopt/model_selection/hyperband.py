@@ -131,9 +131,8 @@ class HyperbandModelSelector(BaseModelSelector):
         total_configs = len(all_combinations)
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
-        combo_latencies: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
-        combo_tokens: Dict[int, Tuple[int, int]] = {
-            i: (0, 0) for i in range(total_configs)
+        combo_latencies: Dict[int, List[float]] = {
+            i: [] for i in range(total_configs)
         }
 
         print(f"\n{'='*60}")
@@ -204,11 +203,6 @@ class HyperbandModelSelector(BaseModelSelector):
                     combo_scores[idx].extend(scores)
                     combo_latencies[idx].extend(latencies)
 
-                    if self._adapter is not None:
-                        new_in, new_out = self._adapter.get_token_usage(self.agent)
-                        prev_in, prev_out = combo_tokens[idx]
-                        combo_tokens[idx] = (prev_in + new_in, prev_out + new_out)
-
                     mu = (
                         sum(combo_scores[idx]) / len(combo_scores[idx])
                         if combo_scores[idx]
@@ -259,14 +253,13 @@ class HyperbandModelSelector(BaseModelSelector):
                 avg_latency = sum(latencies) / len(latencies)
             else:
                 accuracy, avg_latency = 0.0, 0.0
-            in_tok, out_tok = combo_tokens[idx]
             all_results.append(
                 ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
+                    input_tokens={},
+                    output_tokens={},
                     attribute="combination",
                     is_best=False,
                 )

@@ -411,6 +411,7 @@ from agentopt import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    HyperbandModelSelector,
 )
 
 # Brute force (tests all combinations)
@@ -430,6 +431,15 @@ selector = HillClimbingModelSelector(models=models, eval_fn=eval_fn, dataset=dat
 
 # Arm elimination (bandit-style successive elimination)
 selector = ArmEliminationModelSelector(models=models, eval_fn=eval_fn, dataset=dataset, agent=agent)
+
+# Hyperband (multi-bracket successive halving over dataset samples)
+selector = HyperbandModelSelector(
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    agent=agent,
+    reduction_factor=3.0,
+)
 ```
 
 `RandomSearchModelSelector` samples without replacement from the full search space. Set `sample_fraction` to a value in `(0, 1]`; for example, `0.25` evaluates 25% of all combinations.
@@ -438,6 +448,9 @@ Example CLI usage:
 
 ```bash
 python examples/ag2_example.py single --selector random_search --sample-fraction 0.25
+
+# Hyperband with custom reduction factor
+python examples/ag2_example.py single --selector hyperband --reduction-factor 3.0
 ```
 
 ### How Parallel Evaluation Works
@@ -575,6 +588,7 @@ agentopt/
 │       ├── random_search.py     # RandomSearchModelSelector (sampled brute-force)
 │       ├── hill_climbing.py     # HillClimbingModelSelector (experimental)
 │       ├── arm_elimination.py   # ArmEliminationModelSelector (experimental)
+│       ├── hyperband.py         # HyperbandModelSelector (experimental)
 │       ├── bayesian_optimization.py  # BayesianOptimizationModelSelector (experimental)
 │       └── utils.py             # Compat re-export of extract_prompt
 ├── examples/

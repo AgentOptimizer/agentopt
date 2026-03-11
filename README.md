@@ -86,12 +86,11 @@ results = selector.select_best()
 
 ### LangGraph
 
-LangGraph graphs are compiled state machines — use `invoke_fn` and `clone_fn` instead of `agent=`:
+LangGraph graphs are compiled state machines — use `invoke_fn` instead of `agent=`:
 
 ```python
 from langchain_openai import ChatOpenAI
 from agentopt import ModelProxy, ModelSelector
-from agentopt.model_factory import create_model_from_string
 
 # 1. Wrap the LLM
 llm = ChatOpenAI(model="gpt-4o-mini")
@@ -103,19 +102,12 @@ graph = build_my_graph(proxy)  # your compiled StateGraph
 def invoke_fn(input_data):
     return graph.invoke(input_data)
 
-# 3. clone_fn for parallel — rebuilds graph with fresh LLMs per combo
-def clone_fn(model_map):
-    fresh_llm = create_model_from_string(model_map[proxy])
-    fresh_graph = build_my_graph(fresh_llm)
-    return fresh_graph.invoke
-
-# 4. Run optimization
+# 3. Run optimization — parallel mode uses thread-local model overrides automatically
 selector = ModelSelector(
     models={proxy: ["gpt-4o-mini", "gpt-4o"]},
     eval_fn=my_eval_fn,
     dataset=dataset,
     invoke_fn=invoke_fn,
-    clone_fn=clone_fn,  # required for parallel=True with invoke_fn
 )
 results = selector.select_best(parallel=True)
 ```
@@ -175,7 +167,7 @@ results = selector.select_best()
 
 ### Claude Agent SDK
 
-The Claude SDK is functional (no persistent agent object), so use `invoke_fn` and `clone_fn`:
+The Claude SDK is functional (no persistent agent object), so use `invoke_fn`:
 
 ```python
 import asyncio
@@ -194,18 +186,11 @@ async def _query_async(prompt, options):
 def invoke_fn(input_data):
     return asyncio.run(_query_async(input_data["input"], proxy))
 
-def clone_fn(model_map):
-    fresh_options = ClaudeAgentOptions(model=model_map[proxy])
-    def fresh_invoke(input_data):
-        return asyncio.run(_query_async(input_data["input"], fresh_options))
-    return fresh_invoke
-
 selector = ModelSelector(
     models={proxy: ["haiku", "sonnet"]},  # Claude SDK uses short aliases
     eval_fn=my_eval_fn,
     dataset=dataset,
     invoke_fn=invoke_fn,
-    clone_fn=clone_fn,
 )
 results = selector.select_best(parallel=True)
 ```
@@ -383,7 +368,6 @@ results = selector.select_best(parallel=True)
 | `dataset` | `list[tuple[Any, str]]` | List of `(input_data, expected_answer)` tuples. `input_data` is passed directly to the agent's invoke method |
 | `agent` | `Any` | Agent object (CrewAI Crew, LangChain AgentExecutor, LlamaIndex AgentWorkflow, OpenAI SDK Agent, AG2 ConversableAgent). Mutually exclusive with `invoke_fn` |
 | `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Use for LangGraph, Claude SDK, or custom pipelines. Mutually exclusive with `agent` |
-| `clone_fn` | `callable` | Factory `(model_map) -> invoke_fn` for parallel mode with `invoke_fn`. Required when using `invoke_fn` + `parallel=True` |
 
 **`select_best()` parameters:**
 
@@ -405,6 +389,8 @@ AgentOpt includes several model selection strategies:
 - **`ArmEliminationModelSelector`** — Bandit-style successive elimination strategy that evaluates combinations in rounds with growing batch sizes and drops statistically dominated arms using confidence bounds. Often reduces total API calls versus brute force.
 
 - **`HyperbandModelSelector`** — Bandit-style full Hyperband algorithm over the dataset, treating the number of samples as resource and running multiple successive-halving brackets with different starting budgets. The key hyperparameter is the reduction factor `η` (`reduction_factor`).
+
+- **`BayesianOptimizationModelSelector`** — Gaussian process-based optimization that models the accuracy surface over model combinations and uses an acquisition function to select the most promising combination to evaluate next. Efficient for large search spaces.
 
 ```python
 from agentopt import (
@@ -467,12 +453,12 @@ When `parallel=True`, `select_best()`:
 3. Evaluates all copies concurrently using `ThreadPoolExecutor`
 4. Sets the original proxies to the winning combination
 
-**With `invoke_fn=` + `clone_fn=`:**
-1. Calls `clone_fn(model_map)` once per combination to get an independent `invoke_fn`
-2. Each clone gets its own LLM instances — no shared mutable state
-3. Evaluates all clones concurrently
+**With `invoke_fn=`:**
+1. Each thread sets per-thread model overrides on the `ModelProxy` objects captured in the closure
+2. The proxy's `_get_effective_model()` returns the thread-local model, so each thread sees its own model
+3. Evaluates all combinations concurrently using `ThreadPoolExecutor`
 
-Each thread gets its own agent/invoke instance — no shared state, no conflicts.
+Each thread gets its own model instances via thread-local storage — no shared state, no conflicts.
 
 ### Multi-Agent / Multi-LLM Optimization
 
@@ -492,7 +478,6 @@ selector = ModelSelector(
     eval_fn=eval_fn,
     dataset=dataset,
     invoke_fn=my_pipeline,
-    clone_fn=my_clone_fn,
 )
 # Tests all 4 combinations: (mini,mini), (mini,4o), (4o,mini), (4o,4o)
 results = selector.select_best(parallel=True)
@@ -519,6 +504,8 @@ Each `ModelResult` contains:
 | `model_name` | `str` | Name of the model or combination |
 | `accuracy` | `float` | Average score across the dataset |
 | `latency_seconds` | `float` | Average latency per evaluation |
+| `input_tokens` | `int` | Total input tokens consumed |
+| `output_tokens` | `int` | Total output tokens consumed |
 | `attribute` | `str` | Grouping label (e.g., `"combination"`) |
 | `is_best` | `bool` | Whether this was the best result |
 
@@ -527,15 +514,14 @@ Each `ModelResult` contains:
 | Framework | Proxy works directly? | Invoke method | Cross-provider? | Multi-agent | Parallel |
 |-----------|----------------------|---------------|-----------------|-------------|----------|
 | CrewAI | Yes (duck typing) | `.kickoff()` | Yes | Yes | Yes (adapter) |
-| LangChain | Yes (duck typing) | `.invoke()` | Yes | Yes (multi-llm) | Sequential only |
-| LangGraph | N/A (uses `invoke_fn`) | graph `.invoke()` | Yes | Yes | Yes (via `clone_fn`) |
+| LangChain | Yes (duck typing) | `.invoke()` | Yes | Yes (multi-llm) | Yes (adapter) |
+| LangGraph | N/A (uses `invoke_fn`) | graph `.invoke()` | Yes | Yes | Yes (thread-local) |
 | LlamaIndex | No (Pydantic strict) | `.run()` (async) | Yes | Yes | Yes (adapter) |
-| OpenAI SDK | Yes (ABC virtual subclass) | `Runner.run_sync()` | OpenAI only | Yes (multi-llm) | Yes (via `clone_fn`) |
-| Claude SDK | N/A (uses `invoke_fn`) | `query()` (async) | Claude only | Yes | Yes (via `clone_fn`) |
-| AG2 | No (patched validation) | `.run()` | OpenAI + Anthropic | Yes | Yes (via `clone_fn`) |
+| OpenAI SDK | Yes (ABC virtual subclass) | `Runner.run_sync()` | OpenAI only | Yes (multi-llm) | Yes (adapter / thread-local) |
+| Claude SDK | N/A (uses `invoke_fn`) | `query()` (async) | Claude only | Yes | Yes (thread-local) |
+| AG2 | No (patched validation) | `.run()` | OpenAI + Anthropic | Yes | Yes (adapter / thread-local) |
 
 **Known limitations:**
-- **LangChain multi-agent parallel** does not work (sequential only)
 - **OpenAI SDK** only supports OpenAI models natively
 - **Claude SDK** only supports Claude models (uses short aliases: `"haiku"`, `"sonnet"`, `"opus"`)
 - **AG2** supports OpenAI and Anthropic models natively; other providers not yet supported
@@ -579,13 +565,14 @@ agentopt/
 │   │   ├── proxy.py             # ModelProxy — transparent proxy, set_model(), register()
 │   │   ├── adapter.py           # FrameworkAdapter ABC + registry (get_adapter, register_adapter)
 │   │   ├── constants.py         # Framework detection helpers + MODEL_FIELDS
+│   │   ├── token_tracking.py    # TokenAccumulator + extract_usage()
 │   │   ├── builders.py          # Generic LLM rebuild helpers
 │   │   └── framework_specific_implementation/
 │   │       ├── crewai.py        # CrewAI support + CrewAIAdapter
 │   │       ├── langchain_compat.py  # LangChain support + LangChainAdapter
 │   │       ├── llamaindex.py    # LlamaIndex support + LlamaIndexAdapter + build_llamaindex_llm
 │   │       ├── openai_sdk.py    # OpenAI Agents SDK support + OpenAISDKAdapter
-│   │       └── ag2.py           # AG2 support + AG2Adapter + _build_ag2_config
+│   │       └── ag2.py           # AG2 support + AG2Adapter + ProxyAwareWrapper
 │   └── model_selection/
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
 │       ├── brute_force.py       # BruteForceModelSelector (default ModelSelector)
@@ -618,8 +605,8 @@ uv run python examples/crewai_example.py single
 uv run python examples/crewai_example.py multi-llm --parallel
 
 # LangChain
-uv run python examples/langchain_example.py single
-uv run python examples/langchain_example.py multi-llm
+uv run python examples/langchain_example.py
+uv run python examples/langchain_example.py --parallel
 
 # LangGraph
 uv run python examples/langgraph_example.py multi

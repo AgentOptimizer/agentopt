@@ -139,7 +139,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             for proxy, model_obj in zip(proxies, combo_to_models(combo)):
                 proxy.set_model(model_obj)
 
-        def evaluate_combo(combo: Tuple[int, ...]) -> Tuple[float, float, int, int]:
+        def evaluate_combo(combo: Tuple[int, ...]) -> Tuple[float, float, Dict]:
             set_proxies_from_combo(combo)
             return self._evaluate(self.dataset)
 
@@ -161,15 +161,16 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 self._get_model_name(m) for m in combo_to_models(combo)
             )
             try:
-                accuracy, latency, in_tok, out_tok = evaluate_combo(combo)
+                accuracy, latency, tokens = evaluate_combo(combo)
+                in_tokens, out_tokens = self._split_tokens(tokens)
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
                 result = ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
                     attribute="combination",
                     is_best=False,
                 )
@@ -182,8 +183,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                         model_name=combo_name,
                         accuracy=0.0,
                         latency_seconds=0.0,
-                        input_tokens=0,
-                        output_tokens=0,
+                        input_tokens={},
+                        output_tokens={},
                         attribute="combination",
                         is_best=False,
                     )
@@ -202,15 +203,16 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     self._get_model_name(m) for m in combo_to_models(combo)
                 )
                 try:
-                    accuracy, latency, in_tok, out_tok = evaluate_combo(combo)
+                    accuracy, latency, tokens = evaluate_combo(combo)
+                    in_tokens, out_tokens = self._split_tokens(tokens)
                     X_list.append(list(combo))
                     Y_list.append(accuracy)
                     result = ModelResult(
                         model_name=combo_name,
                         accuracy=accuracy,
                         latency_seconds=latency,
-                        input_tokens=in_tok,
-                        output_tokens=out_tok,
+                        input_tokens=in_tokens,
+                        output_tokens=out_tokens,
                         attribute="combination",
                         is_best=False,
                     )
@@ -258,15 +260,16 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 self._get_model_name(m) for m in combo_to_models(combo)
             )
             try:
-                accuracy, latency, in_tok, out_tok = evaluate_combo(combo)
+                accuracy, latency, tokens = evaluate_combo(combo)
+                in_tokens, out_tokens = self._split_tokens(tokens)
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
                 result = ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
                     attribute="combination",
                     is_best=False,
                 )

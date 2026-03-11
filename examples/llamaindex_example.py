@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -17,7 +17,8 @@ from agentopt.model_selection import (
     HyperbandModelSelector,
     BayesianOptimizationModelSelector,
 )
-from agentopt.model_proxy.framework_specific_implementation import build_llamaindex_llm
+from llama_index.llms.openai import OpenAI as LlamaOpenAI
+from llama_index.llms.anthropic import Anthropic as LlamaAnthropic
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
@@ -80,7 +81,7 @@ def single_agent_example():
     be passed as llm= directly. Instead we create the agent with a real LLM.
     The selector auto-registers agents for sync on model swap.
     """
-    initial_llm = build_llamaindex_llm("gpt-4o-mini")
+    initial_llm = LlamaOpenAI(model="gpt-4o-mini")
     llm_proxy = ModelProxy(initial_llm)
 
     agent = FunctionAgent(
@@ -111,7 +112,7 @@ def multi_agent_example():
 
     Shared LLM proxy so both agents are optimized together.
     """
-    initial_llm = build_llamaindex_llm("gpt-4o-mini")
+    initial_llm = LlamaOpenAI(model="gpt-4o-mini")
     llm_proxy = ModelProxy(initial_llm)
 
     math_agent = FunctionAgent(
@@ -158,8 +159,8 @@ def multi_agent_multi_llm_example():
     issues in LlamaIndex AgentWorkflow (OpenAI and Anthropic use different
     tool_call serialization formats in conversation history).
     """
-    math_llm = build_llamaindex_llm("claude-sonnet-4-20250514")
-    reviewer_llm = build_llamaindex_llm("claude-sonnet-4-20250514")
+    math_llm = LlamaAnthropic(model="gpt-4o")
+    reviewer_llm = LlamaAnthropic(model="gpt-4o")
     math_proxy = ModelProxy(math_llm)
     reviewer_proxy = ModelProxy(reviewer_llm)
 
@@ -209,7 +210,7 @@ def run_model_selection(
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     if model_candidates is None:
-        model_candidates = ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-20250514"]
+        model_candidates = ["gpt-4o-mini", "gpt-4o", "gpt-4o"]
 
     SelectorCls = SELECTORS[selector_name]
     base_kwargs = {
@@ -304,7 +305,7 @@ if __name__ == "__main__":
     # Multi-LLM uses Anthropic-only candidates to avoid cross-provider
     # tool format issues in LlamaIndex AgentWorkflow.
     candidates = (
-        ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+        ["gpt-4o", "gpt-5.1", "gpt-4o-mini"]
         if args.example == "multi-llm"
         else None  # default mixed candidates
     )

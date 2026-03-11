@@ -1,11 +1,15 @@
 """Core model selection functionality."""
 
+import functools
+import inspect
+import threading
 from typing import Any, Callable
 
 from pydantic import BaseModel
 
 from .builders import build_llm
 from .constants import MODEL_FIELDS
+from .token_tracking import TokenAccumulator, extract_usage
 
 
 class ModelProxy:
@@ -29,6 +33,79 @@ class ModelProxy:
         object.__setattr__(self, "_optmodel_class", type(initial_model))
         # List of (new_llm: Any) -> None callables, populated by adapters.
         object.__setattr__(self, "_sync_callbacks", [])
+        # Token tracker for proxy-level response interception.
+        object.__setattr__(self, "_token_tracker", None)
+        # Thread-local storage for per-thread model/tracker overrides (parallel eval).
+        object.__setattr__(self, "_thread_local", threading.local())
+
+    # ------------------------------------------------------------------
+    # Thread-local model/tracker overrides (for parallel evaluation)
+    # ------------------------------------------------------------------
+
+    def _get_effective_model(self) -> Any:
+        """Return thread-local model if set, otherwise the default."""
+        tl = object.__getattribute__(self, "_thread_local")
+        model = getattr(tl, "model", None)
+        if model is not None:
+            return model
+        return object.__getattribute__(self, "_optmodel")
+
+    def _get_effective_tracker(self) -> Any:
+        """Return thread-local tracker if set, otherwise the default."""
+        tl = object.__getattribute__(self, "_thread_local")
+        tracker = getattr(tl, "tracker", None)
+        if tracker is not None:
+            return tracker
+        return object.__getattribute__(self, "_token_tracker")
+
+    def _set_thread_model(self, model: Any, tracker: TokenAccumulator) -> None:
+        """Set per-thread model and tracker override.
+
+        For AG2 agents, acquires a per-proxy lock first to serialize access
+        to the shared ProxyAwareWrapper instances (AG2 spawns internal threads
+        for LLM calls, making pure thread-local insufficient).
+        """
+        self._acquire_ag2_lock()
+        tl = object.__getattribute__(self, "_thread_local")
+        tl.model = model
+        tl.tracker = tracker
+        self._propagate_ag2_override(model, tracker)
+
+    def _clear_thread_model(self) -> None:
+        """Clear per-thread model/tracker overrides and release AG2 lock."""
+        tl = object.__getattribute__(self, "_thread_local")
+        tl.model = None
+        tl.tracker = None
+        self._propagate_ag2_override(None, None)
+        self._release_ag2_lock()
+
+    def _acquire_ag2_lock(self) -> None:
+        """Acquire the AG2 eval lock if present (serializes parallel evals)."""
+        try:
+            lock = object.__getattribute__(self, "_ag2_eval_lock")
+            lock.acquire()
+        except AttributeError:
+            pass
+
+    def _release_ag2_lock(self) -> None:
+        """Release the AG2 eval lock if present."""
+        try:
+            lock = object.__getattribute__(self, "_ag2_eval_lock")
+            lock.release()
+        except AttributeError:
+            pass
+
+    def _propagate_ag2_override(self, model: Any, tracker: Any) -> None:
+        """If this proxy has AG2 agents, set/clear override on their wrappers."""
+        try:
+            ag2_agents = object.__getattribute__(self, "_ag2_agents")
+        except AttributeError:
+            return
+        for agent in ag2_agents:
+            client = getattr(agent, "client", None)
+            if client is not None and hasattr(client, "_override_model"):
+                client._override_model = model
+                client._override_tracker = tracker
 
     # ------------------------------------------------------------------
     # Internal sync machinery (called by FrameworkAdapters)
@@ -123,35 +200,96 @@ class ModelProxy:
         self._sync_registered_frameworks()
 
     def get_model(self) -> Any:
-        """Get the underlying model."""
-        return object.__getattribute__(self, "_optmodel")
+        """Get the underlying model (respects thread-local overrides)."""
+        return self._get_effective_model()
+
+    def get_model_name(self) -> str:
+        """Return the current model name string (respects thread-local overrides)."""
+        model = self._get_effective_model()
+        if model is None:
+            return "unknown"
+        for field in MODEL_FIELDS:
+            val = getattr(model, field, None)
+            if val is not None:
+                return str(val)
+        return type(model).__name__
 
     # ------------------------------------------------------------------
     # Proxy protocol
     # ------------------------------------------------------------------
 
     def __getattr__(self, name: str) -> Any:
-        model = object.__getattribute__(self, "_optmodel")
+        model = self._get_effective_model()
         if model is None:
             raise AttributeError("No model set")
-        return getattr(model, name)
+        attr = getattr(model, name)
+        tracker = self._get_effective_tracker()
+        if tracker is not None and callable(attr):
+            return self._wrap_for_usage(attr, tracker, self.get_model_name())
+        return attr
+
+    @staticmethod
+    def _wrap_for_usage(
+        method: Callable, tracker: TokenAccumulator, model_name: str
+    ) -> Callable:
+        """Wrap a callable to extract token usage from its return value."""
+        if inspect.iscoroutinefunction(method):
+
+            @functools.wraps(method)
+            async def _async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                result = await method(*args, **kwargs)
+                in_tok, out_tok = extract_usage(result)
+                if in_tok or out_tok:
+                    tracker.add(in_tok, out_tok, model_name=model_name)
+                return result
+
+            return _async_wrapper
+
+        @functools.wraps(method)
+        def _sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = method(*args, **kwargs)
+            in_tok, out_tok = extract_usage(result)
+            if in_tok or out_tok:
+                tracker.add(in_tok, out_tok, model_name=model_name)
+            return result
+
+        return _sync_wrapper
+
+    def _set_token_tracker(self, tracker: TokenAccumulator) -> None:
+        """Attach a token tracker for proxy-level response interception."""
+        object.__setattr__(self, "_token_tracker", tracker)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("_optmodel", "_optmodel_class", "_sync_callbacks", "_ag2_agents"):
+        if name in (
+            "_optmodel",
+            "_optmodel_class",
+            "_sync_callbacks",
+            "_ag2_agents",
+            "_ag2_eval_lock",
+            "_token_tracker",
+            "_thread_local",
+        ):
             object.__setattr__(self, name, value)
         else:
-            model = object.__getattribute__(self, "_optmodel")
+            model = self._get_effective_model()
             if model is None:
                 raise AttributeError("No model set")
             setattr(model, name, value)
 
-    def __call__(self, *args, **kwargs):
-        """Forward calls to the underlying model."""
-        model = object.__getattribute__(self, "_optmodel")
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Forward calls to the underlying model, intercepting for token usage."""
+        model = self._get_effective_model()
         if model is None:
             raise AttributeError("No model set")
+        tracker = self._get_effective_tracker()
+        if tracker is not None:
+            result = model(*args, **kwargs)
+            in_tok, out_tok = extract_usage(result)
+            if in_tok or out_tok:
+                tracker.add(in_tok, out_tok, model_name=self.get_model_name())
+            return result
         return model(*args, **kwargs)
 
     def __repr__(self) -> str:
-        model = object.__getattribute__(self, "_optmodel")
+        model = self._get_effective_model()
         return f"ModelProxy({model!r})"

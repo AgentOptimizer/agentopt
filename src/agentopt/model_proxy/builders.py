@@ -12,6 +12,10 @@ from .framework_specific_implementation.llamaindex import (
     is_llamaindex_llm,
     build_llamaindex_llm,
 )
+from .framework_specific_implementation.openai_sdk import (
+    is_openai_sdk_model,
+    build_openai_agents_model,
+)
 
 
 def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
@@ -39,5 +43,8 @@ def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
 
     if is_ag2_llm(current_llm):
         return AG2ConfigWrapper(model_name)
+
+    if is_openai_sdk_model(current_llm):
+        return build_openai_agents_model(model_name)
 
     return None

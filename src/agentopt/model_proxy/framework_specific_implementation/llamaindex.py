@@ -10,7 +10,8 @@ import logging
 import os
 
 from ..adapter import FrameworkAdapter
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from ..token_tracking import TokenAccumulator
+from typing import Any, Callable, List, Optional
 
 from pydantic import BaseModel
 
@@ -120,8 +121,7 @@ def build_llamaindex_llm(model_name: str) -> Any:
 
 def is_llamaindex_llm(llm: Any) -> bool:
     """Check if an LLM object is from LlamaIndex."""
-    module = getattr(type(llm), "__module__", "") or ""
-    return module.startswith("llama_index")
+    return (type(llm).__module__ or "").startswith("llama_index")
 
 
 # ---------------------------------------------------------------------------
@@ -134,14 +134,14 @@ class LlamaIndexAdapter(FrameworkAdapter):
 
     invoke_method_name = "run"
 
-    def __init__(self) -> None:
-        # Maps agent id → TokenCountingHandler installed at get_invoke_fn time.
-        self._token_handlers: Dict[int, Any] = {}
+    def _install_token_handler(self, tracker: TokenAccumulator) -> Optional[Any]:
+        """Attach a TokenCountingHandler via the global Settings callback manager.
 
-    def _install_token_handler(self, agent: Any) -> Optional[Any]:
-        """Attach a TokenCountingHandler to the agent's callback manager."""
+        The handler feeds token counts into *tracker* after each LLM call.
+        """
         try:
-            from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+            from llama_index.core.callbacks import TokenCountingHandler
+            from llama_index.core import Settings
             import tiktoken
         except ImportError:
             return None
@@ -149,44 +149,25 @@ class LlamaIndexAdapter(FrameworkAdapter):
         handler = TokenCountingHandler(
             tokenizer=tiktoken.encoding_for_model("gpt-3.5-turbo").encode
         )
-        cb_manager = getattr(agent, "callback_manager", None)
-        if cb_manager is None:
-            agent.callback_manager = CallbackManager([handler])
-        else:
-            cb_manager.add_handler(handler)
-
-        # For AgentWorkflow, also attach to each sub-agent.
-        if hasattr(agent, "agents"):
-            for sub in agent.agents.values():
-                sub_cb = getattr(sub, "callback_manager", None)
-                if sub_cb is None:
-                    sub.callback_manager = CallbackManager([handler])
-                else:
-                    sub_cb.add_handler(handler)
-
+        Settings.callback_manager.add_handler(handler)
         return handler
 
-    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        handler = self._token_handlers.get(id(agent))
-        if handler is None:
-            return (0, 0)
-        in_tok = getattr(handler, "prompt_llm_token_count", 0) or 0
-        out_tok = getattr(handler, "completion_llm_token_count", 0) or 0
-        handler.reset()
-        return (in_tok, out_tok)
-
-    def _is_llamaindex_agent(self, agent: Any) -> bool:
-        """Check if an agent is a LlamaIndex agent (FunctionAgent, AgentWorkflow, etc.)."""
-        module = getattr(type(agent), "__module__", "") or ""
-        return module.startswith("llama_index") and hasattr(agent, "run")
+    def create_token_tracker(self, agent: Any = None) -> TokenAccumulator:
+        """Create a TokenAccumulator backed by LlamaIndex's TokenCountingHandler."""
+        tracker = TokenAccumulator()
+        handler = self._install_token_handler(tracker)
+        if handler is not None:
+            self._handler = handler
+            self._tracker = tracker
+        return tracker
 
     def detect(self, agent: Any) -> bool:
-        return self._is_llamaindex_agent(agent)
+        return (type(agent).__module__ or "").startswith("llama_index") and hasattr(
+            agent, "run"
+        )
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() so that the WorkflowHandler is awaited correctly.
-
-        Also installs a TokenCountingHandler for token usage tracking.
 
         ``inspect.iscoroutinefunction(agent.run)`` returns False due to
         instrumentation decorators, so we use ``inspect.isawaitable()`` instead.
@@ -199,9 +180,8 @@ class LlamaIndexAdapter(FrameworkAdapter):
         import inspect
         import threading
 
-        handler = self._install_token_handler(agent)
-        if handler is not None:
-            self._token_handlers[id(agent)] = handler
+        handler = getattr(self, "_handler", None)
+        tracker = getattr(self, "_tracker", None)
 
         method = agent.run
 
@@ -223,7 +203,25 @@ class LlamaIndexAdapter(FrameworkAdapter):
                 return result
 
             future = asyncio.run_coroutine_threadsafe(_async_run(), _loop)
-            return future.result()
+            result = future.result()
+            # Flush handler counts into the shared tracker.
+            if handler is not None and tracker is not None:
+                # Resolve model name from agent's LLM.
+                mname = "unknown"
+                llm = getattr(agent, "llm", None)
+                if llm is not None:
+                    mname = (
+                        getattr(llm, "model", None)
+                        or getattr(llm, "model_name", None)
+                        or "unknown"
+                    )
+                tracker.add(
+                    handler.prompt_llm_token_count,
+                    handler.completion_llm_token_count,
+                    model_name=str(mname),
+                )
+                handler.reset_counts()
+            return result
 
         return _invoke
 
@@ -316,7 +314,6 @@ class LlamaIndexAdapter(FrameworkAdapter):
                 cloned_agents[name] = ag.model_copy(
                     update={"llm": fresh_llm}, deep=False
                 )
-                print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
         elif n_proxies == n_agents:
             for (name, ag), model_spec in zip(agents_dict.items(), combo):
                 model_name = (
@@ -328,7 +325,6 @@ class LlamaIndexAdapter(FrameworkAdapter):
                 cloned_agents[name] = ag.model_copy(
                     update={"llm": fresh_llm}, deep=False
                 )
-                print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
         else:
             logger.warning(
                 "Cannot map %d proxies to %d agents for parallel clone.",

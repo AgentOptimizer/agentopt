@@ -9,7 +9,7 @@ from crewai_tools import (  # noqa: F401 — available for tool-based examples
 )
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,

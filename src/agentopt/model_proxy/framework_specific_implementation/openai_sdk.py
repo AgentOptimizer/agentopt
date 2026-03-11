@@ -59,7 +59,8 @@ async def _get_response(self: Any, *args: Any, **kwargs: Any) -> Any:
     if tracker is not None:
         in_tok, out_tok = extract_usage(result)
         if in_tok or out_tok:
-            tracker.add(in_tok, out_tok)
+            name = _get_model_name(self)
+            tracker.add(in_tok, out_tok, model_name=name)
     return result
 
 

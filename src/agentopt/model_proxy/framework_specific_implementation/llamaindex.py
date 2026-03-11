@@ -206,9 +206,19 @@ class LlamaIndexAdapter(FrameworkAdapter):
             result = future.result()
             # Flush handler counts into the shared tracker.
             if handler is not None and tracker is not None:
+                # Resolve model name from agent's LLM.
+                mname = "unknown"
+                llm = getattr(agent, "llm", None)
+                if llm is not None:
+                    mname = (
+                        getattr(llm, "model", None)
+                        or getattr(llm, "model_name", None)
+                        or "unknown"
+                    )
                 tracker.add(
                     handler.prompt_llm_token_count,
                     handler.completion_llm_token_count,
+                    model_name=str(mname),
                 )
                 handler.reset_counts()
             return result

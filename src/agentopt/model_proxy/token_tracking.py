@@ -1,7 +1,7 @@
 """Shared token accumulator and usage extraction for all framework adapters."""
 
 import threading
-from typing import Any, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 def extract_usage(response: Any) -> Tuple[int, int]:
@@ -45,27 +45,33 @@ def extract_usage(response: Any) -> Tuple[int, int]:
 
 
 class TokenAccumulator:
-    """Thread-safe, resettable token counter.
+    """Thread-safe, resettable token counter keyed by model name.
 
     All framework adapters write into this via ``add()``, and consumers
-    read + reset via ``reset()``.  Replaces per-adapter accumulator classes.
+    read + reset via ``reset()``.  Token counts are accumulated per
+    model name so that multi-model evaluations can report per-model usage.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.input_tokens: int = 0
-        self.output_tokens: int = 0
+        self._counts: Dict[str, List[int]] = {}  # model_name -> [in, out]
 
-    def add(self, input_tokens: int, output_tokens: int) -> None:
-        """Accumulate token counts (thread-safe)."""
+    def add(
+        self, input_tokens: int, output_tokens: int, model_name: str = "unknown"
+    ) -> None:
+        """Accumulate token counts for *model_name* (thread-safe)."""
         with self._lock:
-            self.input_tokens += input_tokens
-            self.output_tokens += output_tokens
+            if model_name not in self._counts:
+                self._counts[model_name] = [0, 0]
+            self._counts[model_name][0] += input_tokens
+            self._counts[model_name][1] += output_tokens
 
-    def reset(self) -> Tuple[int, int]:
-        """Return accumulated counts and reset to zero."""
+    def reset(self) -> Dict[str, Tuple[int, int]]:
+        """Return accumulated per-model counts and reset to zero.
+
+        Returns a dict mapping model name to ``(input_tokens, output_tokens)``.
+        """
         with self._lock:
-            result = (self.input_tokens, self.output_tokens)
-            self.input_tokens = 0
-            self.output_tokens = 0
+            result = {k: (v[0], v[1]) for k, v in self._counts.items()}
+            self._counts.clear()
             return result

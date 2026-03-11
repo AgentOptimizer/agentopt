@@ -13,11 +13,17 @@ from ..constants import detect_provider, no_key_error
 class _TokenTrackingCallback(BaseCallbackHandler):
     """LangChain callback that feeds on_llm_end token counts into a TokenAccumulator."""
 
-    def __init__(self, tracker: Any) -> None:
+    def __init__(self, tracker: Any, model_name: str = "unknown") -> None:
         super().__init__()
         self._tracker = tracker
+        self.model_name = model_name
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        # Try to get model name from response metadata, fall back to stored name.
+        mname = self.model_name
+        llm_output = getattr(response, "llm_output", None)
+        if isinstance(llm_output, dict):
+            mname = llm_output.get("model_name", mname)
         for gen_list in response.generations:
             for gen in gen_list:
                 if isinstance(gen, ChatGeneration):
@@ -26,6 +32,7 @@ class _TokenTrackingCallback(BaseCallbackHandler):
                         self._tracker.add(
                             meta.get("input_tokens", 0),
                             meta.get("output_tokens", 0),
+                            model_name=mname,
                         )
 
 

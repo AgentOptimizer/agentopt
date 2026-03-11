@@ -4,6 +4,7 @@ import logging
 from typing import Any, Callable, List, Optional
 
 from ..adapter import FrameworkAdapter
+from ..constants import MODEL_FIELDS
 from ..token_tracking import TokenAccumulator
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,13 @@ class CrewAIAdapter(FrameworkAdapter):
             model = self._get_effective_model()
             tracker = self._get_effective_tracker()
             if tracker is not None:
+                # Resolve model name for per-model token tracking.
+                mname = "unknown"
+                for field in MODEL_FIELDS:
+                    val = getattr(model, field, None)
+                    if val is not None:
+                        mname = str(val)
+                        break
                 try:
                     before = model.get_token_usage_summary()
                     b_in = getattr(before, "prompt_tokens", 0)
@@ -67,6 +75,7 @@ class CrewAIAdapter(FrameworkAdapter):
                     tracker.add(
                         getattr(after, "prompt_tokens", 0) - b_in,
                         getattr(after, "completion_tokens", 0) - b_out,
+                        model_name=mname,
                     )
                 except Exception:
                     pass

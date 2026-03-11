@@ -95,16 +95,17 @@ class BruteForceModelSelector(BaseModelSelector):
             for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
                 print(f"    proxy[{i}] → {self._get_model_name(model_obj)}")
             try:
-                accuracy, latency, in_tok, out_tok = self._evaluate(
+                accuracy, latency, tokens = self._evaluate(
                     self.dataset, label=combo_name
                 )
+                in_tokens, out_tokens = self._split_tokens(tokens)
 
                 result = ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
                     attribute="combination",
                     is_best=False,
                 )
@@ -134,8 +135,8 @@ class BruteForceModelSelector(BaseModelSelector):
                         model_name=combo_name,
                         accuracy=0.0,
                         latency_seconds=0.0,
-                        input_tokens=0,
-                        output_tokens=0,
+                        input_tokens={},
+                        output_tokens={},
                         attribute="combination",
                         is_best=False,
                     )
@@ -248,13 +249,14 @@ class BruteForceModelSelector(BaseModelSelector):
                 for future in as_completed(future_to_info):
                     combo_name, combo = future_to_info[future]
                     try:
-                        accuracy, latency, in_tok, out_tok = future.result()
+                        accuracy, latency, tokens = future.result()
+                        in_tokens, out_tokens = self._split_tokens(tokens)
                         result = ModelResult(
                             model_name=combo_name,
                             accuracy=accuracy,
                             latency_seconds=latency,
-                            input_tokens=in_tok,
-                            output_tokens=out_tok,
+                            input_tokens=in_tokens,
+                            output_tokens=out_tokens,
                             attribute="combination",
                             is_best=False,
                         )
@@ -267,8 +269,8 @@ class BruteForceModelSelector(BaseModelSelector):
                                 model_name=combo_name,
                                 accuracy=0.0,
                                 latency_seconds=0.0,
-                                input_tokens=0,
-                                output_tokens=0,
+                                input_tokens={},
+                                output_tokens={},
                                 attribute="combination",
                                 is_best=False,
                             )
@@ -300,7 +302,7 @@ class BruteForceModelSelector(BaseModelSelector):
                 dataset: Any,
                 get_model_name: Any,
                 label: str,
-            ) -> Tuple[float, float, int, int]:
+            ) -> Tuple[float, float, Dict]:
                 """Set thread-local models, evaluate, then clean up."""
                 tracker = TokenAccumulator()
                 for proxy, model_spec in zip(proxies, combo):
@@ -344,13 +346,14 @@ class BruteForceModelSelector(BaseModelSelector):
                 for future in as_completed(future_to_info):
                     combo_name, combo = future_to_info[future]
                     try:
-                        accuracy, latency, in_tok, out_tok = future.result()
+                        accuracy, latency, tokens = future.result()
+                        in_tokens, out_tokens = self._split_tokens(tokens)
                         result = ModelResult(
                             model_name=combo_name,
                             accuracy=accuracy,
                             latency_seconds=latency,
-                            input_tokens=in_tok,
-                            output_tokens=out_tok,
+                            input_tokens=in_tokens,
+                            output_tokens=out_tokens,
                             attribute="combination",
                             is_best=False,
                         )
@@ -363,8 +366,8 @@ class BruteForceModelSelector(BaseModelSelector):
                                 model_name=combo_name,
                                 accuracy=0.0,
                                 latency_seconds=0.0,
-                                input_tokens=0,
-                                output_tokens=0,
+                                input_tokens={},
+                                output_tokens={},
                                 attribute="combination",
                                 is_best=False,
                             )

@@ -24,16 +24,30 @@ class ModelResult(BaseModel):
     model_name: str
     accuracy: float
     latency_seconds: float
-    input_tokens: int
-    output_tokens: int
+    input_tokens: Dict[str, int] = Field(default_factory=dict)
+    output_tokens: Dict[str, int] = Field(default_factory=dict)
     attribute: str
     is_best: bool = False
 
+    @property
+    def total_input_tokens(self) -> int:
+        return sum(self.input_tokens.values())
+
+    @property
+    def total_output_tokens(self) -> int:
+        return sum(self.output_tokens.values())
+
     def __str__(self) -> str:
+        tok_parts = []
+        for model in sorted(set(self.input_tokens) | set(self.output_tokens)):
+            i = self.input_tokens.get(model, 0)
+            o = self.output_tokens.get(model, 0)
+            tok_parts.append(f"{model}: {i}/{o}")
+        tok_str = ", ".join(tok_parts) if tok_parts else "0/0"
         return (
             f"{self.model_name} (accuracy: {self.accuracy:.2%}, "
             f"latency: {self.latency_seconds:.2f}s, "
-            f"in_tokens: {self.input_tokens}, out_tokens: {self.output_tokens})"
+            f"tokens: {{{tok_str}}})"
         )
 
 
@@ -63,6 +77,7 @@ class SelectionResults(BaseModel):
     def to_csv(self, path: str) -> None:
         """Save results to CSV file."""
         import csv
+        import json
 
         if not self.results:
             return
@@ -80,7 +95,10 @@ class SelectionResults(BaseModel):
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for result in self.results:
-                writer.writerow(result.model_dump())
+                row = result.model_dump()
+                row["input_tokens"] = json.dumps(row["input_tokens"])
+                row["output_tokens"] = json.dumps(row["output_tokens"])
+                writer.writerow(row)
 
     def __str__(self) -> str:
         if not self.results:
@@ -106,7 +124,7 @@ class SelectionResults(BaseModel):
             return f"{v:.2f}s"
 
         def fmt_tok(r: ModelResult) -> str:
-            return f"{r.input_tokens}/{r.output_tokens}"
+            return f"{r.total_input_tokens}/{r.total_output_tokens}"
 
         # Compute column widths.
         rank_h, model_h, acc_h, lat_h, tok_h = (
@@ -168,7 +186,7 @@ class SelectionResults(BaseModel):
                 f"{pad} Best: {best_result.model_name} "
                 f"(accuracy: {best_result.accuracy:.2%}, "
                 f"latency: {best_result.latency_seconds:.2f}s, "
-                f"in_tokens: {best_result.input_tokens}, out_tokens: {best_result.output_tokens})"
+                f"tokens: {fmt_tok(best_result)})"
             )
         lines.append("")
 
@@ -283,7 +301,7 @@ class BaseModelSelector(ABC):
         self,
         evaluation_tasks: Dataset,
         label: str = "",
-    ) -> Tuple[float, float, int, int]:
+    ) -> Tuple[float, float, Dict[str, Tuple[int, int]]]:
         """
         Evaluate the current state of the agent against a list of tasks.
 
@@ -292,7 +310,8 @@ class BaseModelSelector(ABC):
             label: Display label for progress traces.
 
         Returns:
-            Tuple of (score, avg_latency_seconds, total_input_tokens, total_output_tokens)
+            Tuple of (score, avg_latency_seconds, tokens_by_model) where
+            tokens_by_model maps model name to (input_tokens, output_tokens).
         """
         total_score = 0.0
         total = len(evaluation_tasks)
@@ -317,9 +336,9 @@ class BaseModelSelector(ABC):
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
 
-        in_tok, out_tok = self._token_tracker.reset() if self._token_tracker else (0, 0)
+        tokens = self._token_tracker.reset() if self._token_tracker else {}
 
-        return avg_score, avg_latency, in_tok, out_tok
+        return avg_score, avg_latency, tokens
 
     def _get_model_name(self, model_obj: Any) -> str:
         """Extract model name from model object for display purposes."""
@@ -371,7 +390,7 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         token_tracker: Any = None,
         label: str = "",
-    ) -> Tuple[float, float, int, int]:
+    ) -> Tuple[float, float, Dict[str, Tuple[int, int]]]:
         """Evaluate an agent against the dataset. Thread-safe."""
         total_score = 0.0
         total = len(dataset)
@@ -393,8 +412,18 @@ class BaseModelSelector(ABC):
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
-        in_tok, out_tok = token_tracker.reset() if token_tracker is not None else (0, 0)
-        return avg_score, avg_latency, in_tok, out_tok
+        tokens = token_tracker.reset() if token_tracker is not None else {}
+        return avg_score, avg_latency, tokens
+
+    @staticmethod
+    def _split_tokens(
+        tokens: Dict[str, Tuple[int, int]],
+    ) -> Tuple[Dict[str, int], Dict[str, int]]:
+        """Split a per-model tokens dict into separate input/output dicts."""
+        return (
+            {k: v[0] for k, v in tokens.items()},
+            {k: v[1] for k, v in tokens.items()},
+        )
 
     @staticmethod
     def _find_best(results: List[ModelResult]) -> Optional[Tuple[str, float]]:

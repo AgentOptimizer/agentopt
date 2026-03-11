@@ -186,18 +186,18 @@ def multiagent_example():
 def multiagent_multillm_example():
     """Multi-agent (separate LLMs) — independent proxy per node.
 
-    Solver uses OpenAI, reviewer uses Anthropic (Claude).
+    Solver uses OpenAI, reviewer uses Anthropic ().
     """
     solver_llm = ChatOpenAI(model="gpt-4o-mini")
-    reviewer_llm = ChatAnthropic(model="claude-sonnet-4-20250514")
+    reviewer_llm = ChatAnthropic(model="got-4.1")
     solver_proxy = ModelProxy(solver_llm)
     print("  [setup] solver_proxy created (initial model: gpt-4o-mini)")
     reviewer_proxy = ModelProxy(reviewer_llm)
-    print("  [setup] reviewer_proxy created (initial model: claude-sonnet-4-20250514)")
+    print("  [setup] reviewer_proxy created (initial model: gpt-4.1)")
 
     agent = MultiAgentWorkflow(solver_model=solver_proxy, reviewer_model=reviewer_proxy)
     print(
-        "  [setup] LangGraph workflow compiled: add_system -> call_solver (OpenAI) -> call_reviewer (Claude) -> finalize"
+        "  [setup] LangGraph workflow compiled: add_system -> call_solver (OpenAI) -> call_reviewer () -> finalize"
     )
 
     def invoke_fn(input_data):
@@ -329,10 +329,10 @@ if __name__ == "__main__":
         llm_proxies = [llm_proxy]
 
     # Per-proxy candidates for multi-llm: both proxies search the same 2 models
-    # → 4 combos: (gpt-4o, gpt-4o), (gpt-4o, claude-haiku), (claude-haiku, gpt-4o), (claude-haiku, claude-haiku)
+    # → 4 combos: (gpt-4o, gpt-4o), (gpt-4o, -haiku), (-haiku, gpt-4o), (-haiku, -haiku)
     per_proxy_candidates = None
     if args.example == "multi-llm" and len(llm_proxies) == 2:
-        candidates = ["gpt-4o", "claude-haiku-4-5-20251001"]
+        candidates = ["gpt-4o", "gpt-4.1"]
         per_proxy_candidates = {p: candidates for p in llm_proxies}
 
     print("\n[2] Running model selection...")

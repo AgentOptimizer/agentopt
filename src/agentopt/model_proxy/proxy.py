@@ -203,6 +203,17 @@ class ModelProxy:
         """Get the underlying model (respects thread-local overrides)."""
         return self._get_effective_model()
 
+    def get_model_name(self) -> str:
+        """Return the current model name string (respects thread-local overrides)."""
+        model = self._get_effective_model()
+        if model is None:
+            return "unknown"
+        for field in MODEL_FIELDS:
+            val = getattr(model, field, None)
+            if val is not None:
+                return str(val)
+        return type(model).__name__
+
     # ------------------------------------------------------------------
     # Proxy protocol
     # ------------------------------------------------------------------
@@ -214,11 +225,13 @@ class ModelProxy:
         attr = getattr(model, name)
         tracker = self._get_effective_tracker()
         if tracker is not None and callable(attr):
-            return self._wrap_for_usage(attr, tracker)
+            return self._wrap_for_usage(attr, tracker, self.get_model_name())
         return attr
 
     @staticmethod
-    def _wrap_for_usage(method: Callable, tracker: TokenAccumulator) -> Callable:
+    def _wrap_for_usage(
+        method: Callable, tracker: TokenAccumulator, model_name: str
+    ) -> Callable:
         """Wrap a callable to extract token usage from its return value."""
         if inspect.iscoroutinefunction(method):
 
@@ -227,7 +240,7 @@ class ModelProxy:
                 result = await method(*args, **kwargs)
                 in_tok, out_tok = extract_usage(result)
                 if in_tok or out_tok:
-                    tracker.add(in_tok, out_tok)
+                    tracker.add(in_tok, out_tok, model_name=model_name)
                 return result
 
             return _async_wrapper
@@ -237,7 +250,7 @@ class ModelProxy:
             result = method(*args, **kwargs)
             in_tok, out_tok = extract_usage(result)
             if in_tok or out_tok:
-                tracker.add(in_tok, out_tok)
+                tracker.add(in_tok, out_tok, model_name=model_name)
             return result
 
         return _sync_wrapper
@@ -273,7 +286,7 @@ class ModelProxy:
             result = model(*args, **kwargs)
             in_tok, out_tok = extract_usage(result)
             if in_tok or out_tok:
-                tracker.add(in_tok, out_tok)
+                tracker.add(in_tok, out_tok, model_name=self.get_model_name())
             return result
         return model(*args, **kwargs)
 

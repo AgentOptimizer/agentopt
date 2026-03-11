@@ -152,7 +152,7 @@ class ProxyAwareWrapper:
         if tracker is not None and self._inner.actual_usage_summary:
             in_tok, out_tok = _read_usage_summary(self._inner.actual_usage_summary)
             if in_tok or out_tok:
-                tracker.add(in_tok, out_tok)
+                tracker.add(in_tok, out_tok, model_name=model or "unknown")
 
         return response
 
@@ -174,16 +174,19 @@ class _TrackingClientWrapper:
     needs its usage reported to a TokenAccumulator.
     """
 
-    def __init__(self, inner: Any, tracker: TokenAccumulator) -> None:
+    def __init__(
+        self, inner: Any, tracker: TokenAccumulator, model_name: str = "unknown"
+    ) -> None:
         self._inner = inner
         self._tracker = tracker
+        self._model_name = model_name
 
     def create(self, **kwargs: Any) -> Any:
         response = self._inner.create(**kwargs)
         if self._inner.actual_usage_summary:
             in_tok, out_tok = _read_usage_summary(self._inner.actual_usage_summary)
             if in_tok or out_tok:
-                self._tracker.add(in_tok, out_tok)
+                self._tracker.add(in_tok, out_tok, model_name=self._model_name)
         return response
 
     def __getattr__(self, name: str) -> Any:
@@ -214,7 +217,18 @@ class AG2Adapter(FrameworkAdapter):
         if agent is not None and hasattr(agent, "client"):
             client = agent.client
             if not isinstance(client, ProxyAwareWrapper):
-                agent.client = _TrackingClientWrapper(client, tracker)
+                # Extract model name from agent's llm_config for tracking.
+                mname = "unknown"
+                cfg = getattr(agent, "llm_config", None)
+                if cfg is not None:
+                    cl = getattr(cfg, "config_list", None) or []
+                    if cl:
+                        mname = (
+                            cl[0].get("model", "unknown")
+                            if isinstance(cl[0], dict)
+                            else "unknown"
+                        )
+                agent.client = _TrackingClientWrapper(client, tracker, model_name=mname)
         return tracker
 
     def wrap_invoke_fn_with_tracker(

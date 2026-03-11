@@ -445,6 +445,14 @@ python examples/ag2_example.py single --selector hyperband --reduction-factor 3.
 
 When `parallel=True`, `select_best()`:
 
+**Current selector support**
+
+- **Supports `parallel=True` (actually parallel):**
+  - `BruteForceModelSelector`
+  - `RandomSearchModelSelector`
+  - `ArmEliminationModelSelector`
+  - `HyperbandModelSelector`
+
 > **Experimental note:** `HillClimbingModelSelector`, `ArmEliminationModelSelector`, `HyperbandModelSelector`, and `BayesianOptimizationModelSelector` are currently experimental and their parallel behavior and APIs may change in future releases.
 
 **With `agent=`:**

@@ -394,15 +394,17 @@ results = selector.select_best(parallel=True)
 
 ### Selection Strategies
 
-AgentOpt includes four model selection strategies:
+AgentOpt includes several model selection strategies:
 
-- **`BruteForceModelSelector`** (default, aliased as `ModelSelector`) — Evaluates the Cartesian product of all candidate model combinations. Thorough but scales as O(n^k) where n is models per proxy and k is the number of proxies.
+- **`BruteForceModelSelector`** (default, aliased as `ModelSelector`) — Grid search over the full Cartesian product of all candidate model combinations. Thorough but scales as O(n^k) where n is models per proxy and k is the number of proxies.
 
-- **`RandomSearchModelSelector`** — Samples a random fraction of the full Cartesian product and evaluates only that subset. Useful when brute force is too expensive but you still want broad coverage. Supports the same sequential and parallel modes as brute force via `select_best(parallel=...)`.
+- **`RandomSearchModelSelector`** — Random subset search over the Cartesian product: samples a fraction of all combinations and evaluates only that subset. Useful when brute force is too expensive but you still want broad coverage. Supports the same sequential and parallel modes as brute force via `select_best(parallel=...)`.
 
-- **`HillClimbingModelSelector`** — Neighbor-based search using model quality/speed rankings. Starts from an initial combination and iteratively swaps one model at a time, keeping improvements. Much faster for large search spaces.
+- **`HillClimbingModelSelector`** — Local-search / hill-climbing strategy using model quality/speed rankings. Starts from an initial combination and iteratively swaps one model at a time, keeping improvements. Much faster for large search spaces.
 
-- **`ArmEliminationModelSelector`** — Successive elimination strategy that evaluates combinations in rounds with growing batch sizes and drops statistically dominated arms using confidence bounds. Often reduces total API calls versus brute force.
+- **`ArmEliminationModelSelector`** — Bandit-style successive elimination strategy that evaluates combinations in rounds with growing batch sizes and drops statistically dominated arms using confidence bounds. Often reduces total API calls versus brute force.
+
+- **`HyperbandModelSelector`** — Bandit-style full Hyperband algorithm over the dataset, treating the number of samples as resource and running multiple successive-halving brackets with different starting budgets. The key hyperparameter is the reduction factor `η` (`reduction_factor`).
 
 ```python
 from agentopt import (
@@ -456,6 +458,8 @@ python examples/ag2_example.py single --selector hyperband --reduction-factor 3.
 ### How Parallel Evaluation Works
 
 When `parallel=True`, `select_best()`:
+
+> **Experimental note:** `HillClimbingModelSelector`, `ArmEliminationModelSelector`, `HyperbandModelSelector`, and `BayesianOptimizationModelSelector` are currently experimental and their parallel behavior and APIs may change in future releases.
 
 **With `agent=`:**
 1. Detects the framework via the adapter registry
@@ -664,11 +668,12 @@ from agentopt import (
     # Core
     ModelProxy,              # Transparent LLM proxy with auto-framework-detection
     ModelSelector,           # Brute-force model selector (default)
-    BruteForceModelSelector, # Explicit brute-force selector
+    BruteForceModelSelector, # Explicit brute-force selector (grid search over all combinations)
     RandomSearchModelSelector, # Random subset search over model combinations
-    HillClimbingModelSelector, # Hill-climbing selector (experimental)
-    ArmEliminationModelSelector, # Arm-elimination selector (bandit-style successive elimination, experimental)
-    BayesianOptimizationModelSelector, # Bayesian optimization selector (experimental)
+    HillClimbingModelSelector, # Hill-climbing selector (local search over combinations)
+    ArmEliminationModelSelector, # Arm-elimination selector (bandit-style successive elimination)
+    HyperbandModelSelector,  # Hyperband selector (bandit-style, multi-bracket successive halving over dataset samples)
+    BayesianOptimizationModelSelector, # Bayesian optimization selector (Bayesian search over combinations)
     BaseModelSelector,       # Abstract base for custom selectors
 
     # Results

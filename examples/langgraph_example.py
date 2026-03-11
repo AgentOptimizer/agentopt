@@ -5,16 +5,15 @@ from typing import Any, Dict, List, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, convert_to_messages
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langgraph.graph import END, StateGraph
-
-from agentopt import create_model_from_string
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy, BruteForceModelSelector
+from agentopt import ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -160,8 +159,10 @@ class MultiAgentWorkflow:
         graph.add_edge("finalize", END)
         return graph.compile()
 
-    def invoke(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
-        return self.graph.invoke(input_state)
+    def invoke(
+        self, input_state: Dict[str, Any], config=None, **kwargs
+    ) -> Dict[str, Any]:
+        return self.graph.invoke(input_state, config, **kwargs)
 
 
 def multiagent_example():
@@ -179,67 +180,36 @@ def multiagent_example():
     def invoke_fn(input_data):
         return workflow.invoke(input_data)
 
-    def clone_fn(model_map):
-        """Build a fresh workflow for parallel evaluation.
-
-        model_map: {proxy -> model_name_string} for this combination.
-        Both solver and reviewer share the same model since there is one proxy.
-        """
-        model_name = model_map[proxy]
-        print(f"  [clone_fn] building fresh workflow (model: {model_name})")
-        fresh_llm = create_model_from_string(model_name)
-        fresh_wf = MultiAgentWorkflow(solver_model=fresh_llm, reviewer_model=fresh_llm)
-        return fresh_wf.invoke
-
-    return proxy, invoke_fn, clone_fn
+    return proxy, invoke_fn, None
 
 
 def multiagent_multillm_example():
     """Multi-agent (separate LLMs) — independent proxy per node.
 
-    Solver uses OpenAI, reviewer uses Anthropic (Claude).
+    Solver uses OpenAI, reviewer uses Anthropic ().
     """
-    solver_llm = create_model_from_string("gpt-4o-mini")
-    reviewer_llm = create_model_from_string("claude-sonnet-4-20250514")
+    solver_llm = ChatOpenAI(model="gpt-4o-mini")
+    reviewer_llm = ChatAnthropic(model="got-4.1")
     solver_proxy = ModelProxy(solver_llm)
     print("  [setup] solver_proxy created (initial model: gpt-4o-mini)")
     reviewer_proxy = ModelProxy(reviewer_llm)
-    print("  [setup] reviewer_proxy created (initial model: claude-sonnet-4-20250514)")
+    print("  [setup] reviewer_proxy created (initial model: gpt-4.1)")
 
     agent = MultiAgentWorkflow(solver_model=solver_proxy, reviewer_model=reviewer_proxy)
     print(
-        "  [setup] LangGraph workflow compiled: add_system -> call_solver (OpenAI) -> call_reviewer (Claude) -> finalize"
+        "  [setup] LangGraph workflow compiled: add_system -> call_solver (OpenAI) -> call_reviewer () -> finalize"
     )
 
     def invoke_fn(input_data):
         return agent.invoke(input_data)
 
-    def clone_fn(model_map):
-        """Build a fresh workflow for parallel evaluation.
-
-        model_map: {solver_proxy -> model_name, reviewer_proxy -> model_name}.
-        Each proxy maps to its own model candidate for this combination.
-        """
-        s_model = model_map[solver_proxy]
-        r_model = model_map[reviewer_proxy]
-        print(
-            f"  [clone_fn] building fresh workflow (solver: {s_model}, reviewer: {r_model})"
-        )
-        fresh_solver = create_model_from_string(s_model)
-        fresh_reviewer = create_model_from_string(r_model)
-        fresh_wf = MultiAgentWorkflow(
-            solver_model=fresh_solver, reviewer_model=fresh_reviewer
-        )
-        return fresh_wf.invoke
-
-    return (solver_proxy, reviewer_proxy), invoke_fn, clone_fn
+    return (solver_proxy, reviewer_proxy), invoke_fn, None
 
 
 def run_model_selection(
     agent_or_invoke_fn,
     llm_proxies,
     dataset_file=None,
-    clone_fn=None,
     parallel=False,
     model_candidates=None,
     selector_name: str = "brute_force",
@@ -258,16 +228,12 @@ def run_model_selection(
 
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "invoke"):
         kwargs = {"invoke_fn": agent_or_invoke_fn}
-        if clone_fn is not None:
-            kwargs["clone_fn"] = clone_fn
     else:
         kwargs = {"agent": agent_or_invoke_fn}
 
     if selector_name == "random_search":
         kwargs["sample_fraction"] = sample_fraction
 
-    mode = "parallel" if parallel else "sequential"
-    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
     SelectorCls = SELECTORS[selector_name]
     selector = SelectorCls(
         models=models,
@@ -325,7 +291,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--parallel",
         action="store_true",
-        help="Evaluate model combinations in parallel (requires clone_fn)",
+        help="Evaluate model combinations in parallel",
     )
     parser.add_argument(
         "--no-plot",
@@ -355,18 +321,18 @@ if __name__ == "__main__":
     print("\n[1] Setting up agents...")
     result = setup_fn()
 
-    # All setup functions now return (proxy_or_proxies, invoke_fn, clone_fn).
+    # All setup functions return (proxy_or_proxies, invoke_fn, _).
     if isinstance(result[0], tuple):
-        llm_proxies, agent_or_invoke, clone_fn = result
+        llm_proxies, agent_or_invoke, _ = result
     else:
-        llm_proxy, agent_or_invoke, clone_fn = result
+        llm_proxy, agent_or_invoke, _ = result
         llm_proxies = [llm_proxy]
 
     # Per-proxy candidates for multi-llm: both proxies search the same 2 models
-    # → 4 combos: (gpt-4o, gpt-4o), (gpt-4o, claude-haiku), (claude-haiku, gpt-4o), (claude-haiku, claude-haiku)
+    # → 4 combos: (gpt-4o, gpt-4o), (gpt-4o, -haiku), (-haiku, gpt-4o), (-haiku, -haiku)
     per_proxy_candidates = None
     if args.example == "multi-llm" and len(llm_proxies) == 2:
-        candidates = ["gpt-4o", "claude-haiku-4-5-20251001"]
+        candidates = ["gpt-4o", "gpt-4.1"]
         per_proxy_candidates = {p: candidates for p in llm_proxies}
 
     print("\n[2] Running model selection...")
@@ -374,7 +340,6 @@ if __name__ == "__main__":
         agent_or_invoke,
         llm_proxies,
         dataset_file=args.dataset,
-        clone_fn=clone_fn,
         parallel=args.parallel,
         model_candidates=per_proxy_candidates,
         selector_name=args.selector,

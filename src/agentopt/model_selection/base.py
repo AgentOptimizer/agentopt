@@ -7,14 +7,13 @@ import inspect
 import logging
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
 from ..base_models import Dataset, EvalFn, validate_dataset
 from ..model_proxy import ModelProxy
-from ..model_proxy.constants import MODEL_FIELDS, validate_model_candidates
+from ..model_proxy.constants import validate_model_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +24,30 @@ class ModelResult(BaseModel):
     model_name: str
     accuracy: float
     latency_seconds: float
-    input_tokens: int
-    output_tokens: int
+    input_tokens: Dict[str, int] = Field(default_factory=dict)
+    output_tokens: Dict[str, int] = Field(default_factory=dict)
     attribute: str
     is_best: bool = False
 
+    @property
+    def total_input_tokens(self) -> int:
+        return sum(self.input_tokens.values())
+
+    @property
+    def total_output_tokens(self) -> int:
+        return sum(self.output_tokens.values())
+
     def __str__(self) -> str:
-        total_tokens = self.input_tokens + self.output_tokens
+        tok_parts = []
+        for model in sorted(set(self.input_tokens) | set(self.output_tokens)):
+            i = self.input_tokens.get(model, 0)
+            o = self.output_tokens.get(model, 0)
+            tok_parts.append(f"{model}: {i}/{o}")
+        tok_str = ", ".join(tok_parts) if tok_parts else "0/0"
         return (
             f"{self.model_name} (accuracy: {self.accuracy:.2%}, "
-            f"latency: {self.latency_seconds:.2f}s, tokens: {total_tokens})"
+            f"latency: {self.latency_seconds:.2f}s, "
+            f"tokens: {{{tok_str}}})"
         )
 
 
@@ -64,6 +77,7 @@ class SelectionResults(BaseModel):
     def to_csv(self, path: str) -> None:
         """Save results to CSV file."""
         import csv
+        import json
 
         if not self.results:
             return
@@ -81,7 +95,10 @@ class SelectionResults(BaseModel):
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for result in self.results:
-                writer.writerow(result.model_dump())
+                row = result.model_dump()
+                row["input_tokens"] = json.dumps(row["input_tokens"])
+                row["output_tokens"] = json.dumps(row["output_tokens"])
+                writer.writerow(row)
 
     def __str__(self) -> str:
         if not self.results:
@@ -107,7 +124,7 @@ class SelectionResults(BaseModel):
             return f"{v:.2f}s"
 
         def fmt_tok(r: ModelResult) -> str:
-            return str(r.input_tokens + r.output_tokens)
+            return f"{r.total_input_tokens}/{r.total_output_tokens}"
 
         # Compute column widths.
         rank_h, model_h, acc_h, lat_h, tok_h = (
@@ -115,7 +132,7 @@ class SelectionResults(BaseModel):
             "Model",
             "Accuracy",
             "Latency",
-            "Tokens",
+            "Tokens (in/out)",
         )
         rank_w = max(len(rank_h), len(str(len(unique))))
         model_w = max(len(model_h), *(len(r.model_name) for r in unique))
@@ -169,7 +186,7 @@ class SelectionResults(BaseModel):
                 f"{pad} Best: {best_result.model_name} "
                 f"(accuracy: {best_result.accuracy:.2%}, "
                 f"latency: {best_result.latency_seconds:.2f}s, "
-                f"tokens: {best_result.input_tokens + best_result.output_tokens})"
+                f"tokens: {fmt_tok(best_result)})"
             )
         lines.append("")
 
@@ -190,7 +207,6 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
-        clone_fn: Optional[Callable] = None,
     ) -> None:
         """
         Initialize the model selector.
@@ -205,12 +221,6 @@ class BaseModelSelector(ABC):
                 LlamaIndex, OpenAI SDK).  Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent or multi-agent chain.
                 Mutually exclusive with *agent*.
-            clone_fn: Optional factory for parallel evaluation when *invoke_fn*
-                is used.  Called once per model combination with a
-                ``{proxy: model_name}`` dict; must return a fresh callable
-                (same signature as *invoke_fn*) that is independent of any
-                shared state.  Required for ``select_best(parallel=True)``
-                when *invoke_fn* is provided instead of *agent*.
         """
         if agent is None and invoke_fn is None:
             raise ValueError("Either 'agent' or 'invoke_fn' must be provided")
@@ -224,18 +234,46 @@ class BaseModelSelector(ABC):
         self.eval_fn = eval_fn
         self.dataset = dataset
         self._models = models
-        self.clone_fn = clone_fn
+        self._proxies = list(models.keys())
 
         # Validate API keys for all candidate models.
         warnings, _ = validate_model_candidates(models)
         for warning in warnings:
             raise ValueError(warning)
 
+        self._token_tracker = None
         if invoke_fn is not None:
             self.invoke_fn = invoke_fn
             self.is_async = inspect.iscoroutinefunction(invoke_fn)
             self._invoke_method_name = None
             self._adapter = None
+            # Detect adapter from proxy's underlying model for token tracking.
+            from ..model_proxy.adapter import get_adapter_for_model
+
+            for proxy in self._proxies:
+                # Check the underlying model first for a more specific match,
+                # then fall back to the proxy itself.  This prevents the OpenAI
+                # SDK adapter (which registers ModelProxy as a virtual subclass
+                # of Model) from shadowing framework-specific adapters.
+                adapter = None
+                try:
+                    underlying = object.__getattribute__(proxy, "_optmodel")
+                    adapter = get_adapter_for_model(underlying)
+                except AttributeError:
+                    pass
+                if adapter is None:
+                    adapter = get_adapter_for_model(proxy)
+                if adapter is not None:
+                    self._adapter = adapter
+                    tracker = adapter.create_token_tracker()
+                    self._token_tracker = tracker
+                    for p in self._proxies:
+                        p._set_token_tracker(tracker)
+                        adapter.register_with_proxy(p, None, self._proxies)
+                    self.invoke_fn = adapter.wrap_invoke_fn_with_tracker(
+                        self.invoke_fn, tracker
+                    )
+                    break
         else:
             # Auto-detect framework via adapter registry.
             from ..model_proxy.adapter import get_adapter
@@ -247,21 +285,23 @@ class BaseModelSelector(ABC):
                     "Pass 'invoke_fn' directly instead."
                 )
 
+            self._adapter = adapter
+            tracker = adapter.create_token_tracker(agent)
+            self._token_tracker = tracker
             self.invoke_fn = adapter.get_invoke_fn(agent)
             self.is_async = False  # all adapters wrap async internally
             self._invoke_method_name = getattr(adapter, "invoke_method_name", None)
-            self._adapter = adapter
 
             # Auto-register proxy ↔ agent sync for sequential evaluation.
-            proxy_list = list(models.keys())
-            for proxy in proxy_list:
-                adapter.register_with_proxy(proxy, agent, proxy_list)
+            for proxy in self._proxies:
+                proxy._set_token_tracker(tracker)
+                adapter.register_with_proxy(proxy, agent, self._proxies)
 
     def _evaluate(
         self,
         evaluation_tasks: Dataset,
         label: str = "",
-    ) -> Tuple[float, float, int, int]:
+    ) -> Tuple[float, float, Dict[str, Tuple[int, int]]]:
         """
         Evaluate the current state of the agent against a list of tasks.
 
@@ -270,7 +310,8 @@ class BaseModelSelector(ABC):
             label: Display label for progress traces.
 
         Returns:
-            Tuple of (score, avg_latency_seconds, total_input_tokens, total_output_tokens)
+            Tuple of (score, avg_latency_seconds, tokens_by_model) where
+            tokens_by_model maps model name to (input_tokens, output_tokens).
         """
         total_score = 0.0
         total = len(evaluation_tasks)
@@ -295,13 +336,9 @@ class BaseModelSelector(ABC):
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
 
-        in_tok, out_tok = (
-            self._adapter.get_token_usage(self.agent)
-            if self._adapter is not None
-            else (0, 0)
-        )
+        tokens = self._token_tracker.reset() if self._token_tracker else {}
 
-        return avg_score, avg_latency, in_tok, out_tok
+        return avg_score, avg_latency, tokens
 
     def _get_model_name(self, model_obj: Any) -> str:
         """Extract model name from model object for display purposes."""
@@ -351,10 +388,9 @@ class BaseModelSelector(ABC):
         is_async: bool,
         eval_fn: EvalFn,
         dataset: Dataset,
-        adapter: Any = None,
-        agent: Any = None,
+        token_tracker: Any = None,
         label: str = "",
-    ) -> Tuple[float, float, int, int]:
+    ) -> Tuple[float, float, Dict[str, Tuple[int, int]]]:
         """Evaluate an agent against the dataset. Thread-safe."""
         total_score = 0.0
         total = len(dataset)
@@ -376,10 +412,18 @@ class BaseModelSelector(ABC):
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
-        in_tok, out_tok = (
-            adapter.get_token_usage(agent) if adapter is not None else (0, 0)
+        tokens = token_tracker.reset() if token_tracker is not None else {}
+        return avg_score, avg_latency, tokens
+
+    @staticmethod
+    def _split_tokens(
+        tokens: Dict[str, Tuple[int, int]],
+    ) -> Tuple[Dict[str, int], Dict[str, int]]:
+        """Split a per-model tokens dict into separate input/output dicts."""
+        return (
+            {k: v[0] for k, v in tokens.items()},
+            {k: v[1] for k, v in tokens.items()},
         )
-        return avg_score, avg_latency, in_tok, out_tok
 
     @staticmethod
     def _find_best(results: List[ModelResult]) -> Optional[Tuple[str, float]]:

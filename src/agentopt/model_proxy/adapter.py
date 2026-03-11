@@ -21,6 +21,8 @@ import copy
 from abc import ABC, abstractmethod
 from typing import Any, Callable, List, Optional, Tuple
 
+from .token_tracking import TokenAccumulator
+
 
 class FrameworkAdapter(ABC):
     """Abstract base for all framework adapters.
@@ -77,17 +79,38 @@ class FrameworkAdapter(ABC):
         """
         pass
 
-    def get_token_usage(self, _agent: Any) -> Tuple[int, int]:
-        """Return ``(input_tokens, output_tokens)`` accumulated since the last call.
+    def detect_model(self, model: Any) -> bool:
+        """Return True if this adapter's framework owns this LLM model object.
 
-        Counts are totalled across all samples evaluated since the previous
-        call (or since the adapter was set up).  Subclasses should reset their
-        counters after returning so each call reflects only the most recent
-        evaluation window.
-
-        Default: ``(0, 0)`` — override per framework.
+        Used to detect the adapter for token tracking on the ``invoke_fn=`` path,
+        where there is no top-level agent — only proxy-wrapped model objects.
+        Default: False (opt in per framework).
         """
-        return (0, 0)
+        return False
+
+    def create_token_tracker(self, agent: Any = None) -> TokenAccumulator:
+        """Set up framework-specific token tracking hooks and return an accumulator.
+
+        Subclasses install whatever framework-specific hooks are needed
+        (callbacks, patches, etc.) that feed into the returned accumulator.
+        The consumer reads tokens via ``tracker.reset()``.
+
+        Args:
+            agent: The agent object (for agent= path) or None (for invoke_fn= path).
+
+        Default: returns a bare ``TokenAccumulator`` with no hooks.
+        """
+        return TokenAccumulator()
+
+    def wrap_invoke_fn_with_tracker(
+        self, invoke_fn: Callable, tracker: TokenAccumulator
+    ) -> Callable:
+        """Wrap invoke_fn so that each call feeds token counts into *tracker*.
+
+        Used for the sequential invoke_fn= path.
+        Default: no-op — returns invoke_fn unchanged.
+        """
+        return invoke_fn
 
     def clone_for_parallel(
         self,
@@ -137,5 +160,18 @@ def get_adapter(agent: Any) -> Optional[FrameworkAdapter]:
     """Return the first adapter whose ``detect(agent)`` returns True."""
     for adapter in _REGISTRY:
         if adapter.detect(agent):
+            return adapter
+    return None
+
+
+def get_adapter_for_model(model: Any) -> Optional[FrameworkAdapter]:
+    """Return the first adapter whose ``detect_model(model)`` returns True.
+
+    Used to find the adapter for a raw LLM model object (not a top-level agent),
+    for example when the ``invoke_fn=`` path is used and we need to detect the
+    framework from the proxy's underlying model to enable token tracking.
+    """
+    for adapter in _REGISTRY:
+        if adapter.detect_model(model):
             return adapter
     return None

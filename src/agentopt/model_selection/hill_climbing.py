@@ -46,7 +46,6 @@ class HillClimbingModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[callable] = None,
-        clone_fn: Optional[callable] = None,
         max_iterations: int = 20,
         num_restarts: int = 3,
         patience: int = 3,
@@ -63,8 +62,6 @@ class HillClimbingModelSelector(BaseModelSelector):
                 Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent.
                 Mutually exclusive with *agent*.
-            clone_fn: Optional factory for parallel evaluation with invoke_fn.
-                See BaseModelSelector for full documentation.
             max_iterations: Maximum iterations per restart before stopping.
             num_restarts: Number of random restarts.
             patience: Stop a restart after this many consecutive iterations
@@ -76,7 +73,6 @@ class HillClimbingModelSelector(BaseModelSelector):
             eval_fn=eval_fn,
             agent=agent,
             invoke_fn=invoke_fn,
-            clone_fn=clone_fn,
             dataset=dataset,
         )
         self.max_iterations = max_iterations
@@ -217,19 +213,20 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             # Re-use cached result if this combination was already evaluated.
             if combo_name in self._eval_cache:
-                accuracy, latency, in_tok, out_tok = self._eval_cache[combo_name]
+                accuracy, latency, tokens = self._eval_cache[combo_name]
                 cached = True
             else:
-                accuracy, latency, in_tok, out_tok = self._evaluate(self.dataset)
-                self._eval_cache[combo_name] = (accuracy, latency, in_tok, out_tok)
+                accuracy, latency, tokens = self._evaluate(self.dataset)
+                self._eval_cache[combo_name] = (accuracy, latency, tokens)
                 cached = False
 
+            in_tokens, out_tokens = self._split_tokens(tokens)
             result = ModelResult(
                 model_name=combo_name,
                 accuracy=accuracy,
                 latency_seconds=latency,
-                input_tokens=in_tok,
-                output_tokens=out_tok,
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
                 attribute="combination",
                 is_best=False,
             )

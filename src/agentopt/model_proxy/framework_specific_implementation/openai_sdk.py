@@ -1,10 +1,22 @@
 """OpenAI Agents SDK compatibility: ABC registration, model builder, and FrameworkAdapter."""
 
 import copy
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, List
 
 from ..adapter import FrameworkAdapter
 from ..constants import MODEL_FIELDS
+from ..token_tracking import extract_usage
+
+
+def is_openai_sdk_model(obj: Any) -> bool:
+    """Return True if *obj* is an OpenAI Agents SDK Model or a SimpleNamespace placeholder."""
+    mod = type(obj).__module__ or ""
+    if mod.startswith("agents"):
+        return True
+    # SimpleNamespace with a 'model' attribute is the convention for the OpenAI SDK examples.
+    if type(obj).__name__ == "SimpleNamespace" and hasattr(obj, "model"):
+        return True
+    return False
 
 
 def build_openai_agents_model(model_name: str) -> Any:
@@ -35,17 +47,26 @@ async def _get_response(self: Any, *args: Any, **kwargs: Any) -> Any:
 
     Delegates to the wrapped model if it implements ``get_response``,
     otherwise resolves a real SDK ``Model`` from the current model name.
+    Extracts token usage from the response and feeds into the proxy's tracker.
     """
-    model = object.__getattribute__(self, "_optmodel")
+    model = self._get_effective_model()
     if hasattr(model, "get_response"):
-        return await model.get_response(*args, **kwargs)
-    resolved = build_openai_agents_model(_get_model_name(self))
-    return await resolved.get_response(*args, **kwargs)
+        result = await model.get_response(*args, **kwargs)
+    else:
+        resolved = build_openai_agents_model(_get_model_name(self))
+        result = await resolved.get_response(*args, **kwargs)
+    tracker = self._get_effective_tracker()
+    if tracker is not None:
+        in_tok, out_tok = extract_usage(result)
+        if in_tok or out_tok:
+            name = _get_model_name(self)
+            tracker.add(in_tok, out_tok, model_name=name)
+    return result
 
 
 def _stream_response(self: Any, *args: Any, **kwargs: Any) -> Any:
     """OpenAI Agents SDK ``Model`` interface — streaming variant."""
-    model = object.__getattribute__(self, "_optmodel")
+    model = self._get_effective_model()
     if hasattr(model, "stream_response"):
         return model.stream_response(*args, **kwargs)
     resolved = build_openai_agents_model(_get_model_name(self))
@@ -69,20 +90,8 @@ class OpenAISDKAdapter(FrameworkAdapter):
     invoke_method_name = None  # uses a custom wrapper, not a named method
 
     def __init__(self) -> None:
-        # Maps agent id → last RunnerResult, set by the invoke closure.
-        self._last_results: Dict[int, Any] = {}
-
-    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        result = self._last_results.pop(id(agent), None)
-        if result is None:
-            return (0, 0)
-        in_tok = out_tok = 0
-        for resp in getattr(result, "raw_responses", []):
-            usage = getattr(resp, "usage", None)
-            if usage is not None:
-                in_tok += getattr(usage, "input_tokens", 0) or 0
-                out_tok += getattr(usage, "output_tokens", 0) or 0
-        return (in_tok, out_tok)
+        # Maps id(agent_copy) → TokenAccumulator for parallel clones.
+        self._clone_trackers: dict = {}
 
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
@@ -96,8 +105,16 @@ class OpenAISDKAdapter(FrameworkAdapter):
         proxy_cls.stream_response = _stream_response
 
     def detect(self, agent: Any) -> bool:
-        module = getattr(type(agent), "__module__", "") or ""
-        return module.startswith("agents")
+        return (type(agent).__module__ or "").startswith("agents")
+
+    def detect_model(self, model: Any) -> bool:
+        """Detect ModelProxy instances registered as OpenAI SDK Model virtual subclasses."""
+        try:
+            from agents.models.interface import Model
+
+            return isinstance(model, Model)
+        except ImportError:
+            return False
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Return a synchronous invoke callable that runs the agent via Runner."""
@@ -109,7 +126,6 @@ class OpenAISDKAdapter(FrameworkAdapter):
             else:
                 prompt = str(input_data)
             result = Runner.run_sync(agent, prompt)
-            self._last_results[id(agent)] = result
             return (
                 result.final_output if hasattr(result, "final_output") else str(result)
             )
@@ -119,8 +135,47 @@ class OpenAISDKAdapter(FrameworkAdapter):
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]
     ) -> None:
-        # No-op: OpenAI SDK resolves the model via _get_response at call time.
-        pass
+        pass  # Model swapping is handled transparently via Model ABC registration.
+
+    def wrap_invoke_fn_with_tracker(
+        self, invoke_fn: Callable, tracker: Any
+    ) -> Callable:
+        """Wrap Agent models in ModelProxy for token tracking.
+
+        Introspects invoke_fn's closure to find Agent instances and wraps
+        their .model in ModelProxy with the tracker. Since _get_response
+        is already patched on ModelProxy to call extract_usage(), this
+        enables automatic token tracking.
+        """
+        try:
+            from agents import Agent
+        except ImportError:
+            return invoke_fn
+
+        from ..proxy import ModelProxy
+
+        if hasattr(invoke_fn, "__closure__") and invoke_fn.__closure__:
+            for cell in invoke_fn.__closure__:
+                try:
+                    val = cell.cell_contents
+                    if isinstance(val, Agent) and not isinstance(val.model, ModelProxy):
+                        proxy = ModelProxy(val.model)
+                        proxy._set_token_tracker(tracker)
+                        val.model = proxy
+                except ValueError:
+                    pass
+
+        return invoke_fn
+
+    def create_token_tracker(self, agent: Any = None) -> Any:
+        """Return the tracker pre-attached to a parallel clone's proxy, if any."""
+        if agent is not None:
+            tracker = self._clone_trackers.pop(id(agent), None)
+            if tracker is not None:
+                return tracker
+        from ..token_tracking import TokenAccumulator
+
+        return TokenAccumulator()
 
     def clone_for_parallel(
         self,
@@ -129,18 +184,28 @@ class OpenAISDKAdapter(FrameworkAdapter):
         combo: tuple,
         get_model_name: Callable[[Any], str],
     ) -> Any:
-        """Clone the Agent with a fresh concrete Model for this combination.
+        """Clone the Agent with a fresh ModelProxy wrapping a concrete Model.
 
-        Bypasses the proxy entirely on the clone — assigns a real
-        ``OpenAIProvider`` Model directly so threads don't share mutable state.
+        Each clone gets its own proxy with a per-thread TokenAccumulator so
+        that proxy-level response interception tracks tokens correctly.
         """
         model_spec = combo[0]
         model_name = (
             model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
         )
         fresh_model = build_openai_agents_model(model_name)
+
+        # Wrap in a per-thread proxy so token interception works in parallel.
+        from ..proxy import ModelProxy
+        from ..token_tracking import TokenAccumulator
+
+        fresh_proxy = ModelProxy(fresh_model)
+        tracker = TokenAccumulator()
+        fresh_proxy._set_token_tracker(tracker)
+
         agent_copy = copy.copy(agent)
-        agent_copy.model = fresh_model
+        agent_copy.model = fresh_proxy
+        self._clone_trackers[id(agent_copy)] = tracker
         return agent_copy
 
 

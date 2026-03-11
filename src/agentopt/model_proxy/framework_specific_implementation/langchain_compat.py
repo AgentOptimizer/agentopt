@@ -6,7 +6,7 @@ from typing import Any, Callable, List, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import ChatGeneration
 
-from ..adapter import FrameworkAdapter, register_adapter
+from ..adapter import FrameworkAdapter
 from ..constants import detect_provider, no_key_error
 
 
@@ -351,6 +351,9 @@ class LangChainAdapter(FrameworkAdapter):
         self._clone_trackers[id(clone)] = tracker
         return clone
 
+
+# Self-register — runs when this module is first imported.
+from ..adapter import register_adapter  # noqa: E402
 
 # Self-register — runs when this module is first imported.
 register_adapter(LangChainAdapter())

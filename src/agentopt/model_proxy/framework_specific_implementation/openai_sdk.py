@@ -8,6 +8,17 @@ from ..constants import MODEL_FIELDS
 from ..token_tracking import extract_usage
 
 
+def is_openai_sdk_model(obj: Any) -> bool:
+    """Return True if *obj* is an OpenAI Agents SDK Model or a SimpleNamespace placeholder."""
+    mod = type(obj).__module__ or ""
+    if mod.startswith("agents"):
+        return True
+    # SimpleNamespace with a 'model' attribute is the convention for the OpenAI SDK examples.
+    if type(obj).__name__ == "SimpleNamespace" and hasattr(obj, "model"):
+        return True
+    return False
+
+
 def build_openai_agents_model(model_name: str) -> Any:
     """Create an OpenAI Agents SDK ``Model`` from a model name string.
 

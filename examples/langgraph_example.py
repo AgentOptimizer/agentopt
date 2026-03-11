@@ -20,6 +20,7 @@ from agentopt.model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    HyperbandModelSelector,
     BayesianOptimizationModelSelector,
 )
 
@@ -28,6 +29,7 @@ SELECTORS = {
     "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "hyperband": HyperbandModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
@@ -243,7 +245,7 @@ def run_model_selection(
     parallel=False,
     model_candidates=None,
     selector_name: str = "brute_force",
-    sample_fraction: float = 0.25,
+    selector_kwargs: dict | None = None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -263,18 +265,15 @@ def run_model_selection(
     else:
         kwargs = {"agent": agent_or_invoke_fn}
 
-    if selector_name == "random_search":
-        kwargs["sample_fraction"] = sample_fraction
+    if selector_kwargs:
+        kwargs.update(selector_kwargs)
+    if selector_name == "hyperband":
+        kwargs["reduction_factor"] = reduction_factor
 
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
     SelectorCls = SELECTORS[selector_name]
-    selector = SelectorCls(
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        **kwargs,
-    )
+    selector = SelectorCls(models=models, eval_fn=eval_fn, dataset=dataset, **kwargs)
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
     return results
@@ -344,6 +343,12 @@ if __name__ == "__main__":
         default=0.25,
         help="Fraction of combinations to evaluate when --selector=random_search",
     )
+    parser.add_argument(
+        "--reduction-factor",
+        type=float,
+        default=3.0,
+        help="Reduction factor η for hyperband selector (default: 3.0)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -370,6 +375,12 @@ if __name__ == "__main__":
         per_proxy_candidates = {p: candidates for p in llm_proxies}
 
     print("\n[2] Running model selection...")
+    selector_kwargs = {}
+    if args.selector == "random_search":
+        selector_kwargs["sample_fraction"] = args.sample_fraction
+    if args.selector == "hyperband":
+        selector_kwargs["reduction_factor"] = args.reduction_factor
+
     results = run_model_selection(
         agent_or_invoke,
         llm_proxies,
@@ -378,7 +389,7 @@ if __name__ == "__main__":
         parallel=args.parallel,
         model_candidates=per_proxy_candidates,
         selector_name=args.selector,
-        sample_fraction=args.sample_fraction,
+        selector_kwargs=selector_kwargs,
     )
 
     if not args.no_plot:

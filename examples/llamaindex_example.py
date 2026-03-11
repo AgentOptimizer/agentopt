@@ -14,6 +14,7 @@ from agentopt.model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    HyperbandModelSelector,
     BayesianOptimizationModelSelector,
 )
 from agentopt.model_proxy.framework_specific_implementation import build_llamaindex_llm
@@ -23,6 +24,7 @@ SELECTORS = {
     "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "hyperband": HyperbandModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
@@ -203,18 +205,22 @@ def run_model_selection(
     dataset_file=None,
     model_candidates=None,
     selector_name: str = "brute_force",
+    selector_kwargs: dict | None = None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     if model_candidates is None:
         model_candidates = ["gpt-4o-mini", "gpt-4o", "claude-sonnet-4-20250514"]
 
     SelectorCls = SELECTORS[selector_name]
-    selector = SelectorCls(
-        models={llm: model_candidates for llm in llm_proxies},
-        eval_fn=eval_fn,
-        dataset=dataset,
-        agent=agent,
-    )
+    base_kwargs = {
+        "models": {llm: model_candidates for llm in llm_proxies},
+        "eval_fn": eval_fn,
+        "dataset": dataset,
+        "agent": agent,
+    }
+    if selector_kwargs:
+        base_kwargs.update(selector_kwargs)
+    selector = SelectorCls(**base_kwargs)
 
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
@@ -275,6 +281,12 @@ if __name__ == "__main__":
         default="brute_force",
         help="Model selector to use (default: brute_force)",
     )
+    parser.add_argument(
+        "--reduction-factor",
+        type=float,
+        default=3.0,
+        help="Reduction factor η for hyperband selector (default: 3.0)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -297,6 +309,10 @@ if __name__ == "__main__":
         else None  # default mixed candidates
     )
 
+    selector_kwargs = {}
+    if args.selector == "hyperband":
+        selector_kwargs["reduction_factor"] = args.reduction_factor
+
     results = run_model_selection(
         agent,
         llm_proxies,
@@ -304,6 +320,7 @@ if __name__ == "__main__":
         dataset_file=args.dataset,
         model_candidates=candidates,
         selector_name=args.selector,
+        selector_kwargs=selector_kwargs,
     )
 
     plot_results(

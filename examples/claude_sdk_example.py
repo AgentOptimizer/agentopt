@@ -19,6 +19,7 @@ from agentopt.model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    HyperbandModelSelector,
     BayesianOptimizationModelSelector,
 )
 
@@ -27,6 +28,7 @@ SELECTORS = {
     "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "hyperband": HyperbandModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
@@ -193,7 +195,7 @@ def run_model_selection(
     dataset_file=None,
     clone_fn=None,
     selector_name: str = "brute_force",
-    sample_fraction: float = 0.25,
+    selector_kwargs: dict | None = None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -207,8 +209,8 @@ def run_model_selection(
     if clone_fn is not None:
         kwargs["clone_fn"] = clone_fn
 
-    if selector_name == "random_search":
-        kwargs["sample_fraction"] = sample_fraction
+    if selector_kwargs:
+        kwargs.update(selector_kwargs)
 
     SelectorCls = SELECTORS[selector_name]
     selector = SelectorCls(
@@ -288,6 +290,12 @@ if __name__ == "__main__":
         default=0.25,
         help="Fraction of combinations to evaluate when --selector=random_search",
     )
+    parser.add_argument(
+        "--reduction-factor",
+        type=float,
+        default=3.0,
+        help="Reduction factor η for hyperband selector (default: 3.0)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -308,6 +316,12 @@ if __name__ == "__main__":
         llm_proxies = [llm_proxy]
 
     print("\n[2] Running model selection...")
+    selector_kwargs = {}
+    if args.selector == "random_search":
+        selector_kwargs["sample_fraction"] = args.sample_fraction
+    if args.selector == "hyperband":
+        selector_kwargs["reduction_factor"] = args.reduction_factor
+
     results = run_model_selection(
         invoke,
         llm_proxies,
@@ -315,7 +329,7 @@ if __name__ == "__main__":
         dataset_file=args.dataset,
         clone_fn=clone_fn,
         selector_name=args.selector,
-        sample_fraction=args.sample_fraction,
+        selector_kwargs=selector_kwargs,
     )
 
     if not args.no_plot:

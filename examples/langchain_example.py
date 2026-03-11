@@ -20,6 +20,7 @@ from agentopt.model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    HyperbandModelSelector,
     BayesianOptimizationModelSelector,
 )
 
@@ -28,6 +29,7 @@ SELECTORS = {
     "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "hyperband": HyperbandModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
@@ -172,6 +174,7 @@ def run_model_selection(
     parallel=False,
     dataset_file=None,
     selector_name: str = "brute_force",
+    selector_kwargs: dict | None = None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -200,6 +203,8 @@ def run_model_selection(
         kwargs["agent"] = agent_or_invoke_fn
 
     SelectorCls = SELECTORS[selector_name]
+    if selector_kwargs:
+        kwargs.update(selector_kwargs)
     selector = SelectorCls(**kwargs)
 
     results = selector.select_best(parallel=parallel)
@@ -260,6 +265,12 @@ if __name__ == "__main__":
         default="brute_force",
         help="Model selector to use (default: brute_force)",
     )
+    parser.add_argument(
+        "--reduction-factor",
+        type=float,
+        default=3.0,
+        help="Reduction factor η for hyperband selector (default: 3.0)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -275,12 +286,17 @@ if __name__ == "__main__":
     print("\n[2] Running model selection...")
     if args.example == "single":
         llm_proxy, agent_executor = result
+        selector_kwargs = {}
+        if args.selector == "hyperband":
+            selector_kwargs["reduction_factor"] = args.reduction_factor
+
         results = run_model_selection(
             agent_executor,
             [llm_proxy],
             parallel=args.parallel,
             dataset_file=args.dataset,
             selector_name=args.selector,
+            selector_kwargs=selector_kwargs,
         )
     else:
         # Multi-agent returns (proxies_tuple, invoke_fn)
@@ -290,12 +306,17 @@ if __name__ == "__main__":
                 "Warning: parallel mode not supported for multi-agent "
                 "(uses invoke_fn). Running sequentially."
             )
+        selector_kwargs = {}
+        if args.selector == "hyperband":
+            selector_kwargs["reduction_factor"] = args.reduction_factor
+
         results = run_model_selection(
             chained_invoke,
             list(llm_proxies),
             use_invoke_fn=True,
             dataset_file=args.dataset,
             selector_name=args.selector,
+            selector_kwargs=selector_kwargs,
         )
 
     print("\n[3] Saving results plot...")

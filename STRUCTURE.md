@@ -20,10 +20,12 @@ agentopt/
 │   │       └── ag2.py           # AG2 support + AG2Adapter + _build_ag2_config
 │   └── model_selection/
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
-│       ├── brute_force.py       # BruteForceModelSelector (default, aliased as ModelSelector)
-│       ├── hill_climbing.py     # HillClimbingModelSelector (experimental)
-│       ├── arm_elimination.py   # ArmEliminationModelSelector (experimental)
-│       ├── bayesian_optimization.py  # BayesianOptimizationModelSelector (experimental)
+│       ├── brute_force.py       # BruteForceModelSelector (grid search over all combinations; default, aliased as ModelSelector)
+│       ├── random_search.py     # RandomSearchModelSelector (random subset of combinations; sampled brute-force)
+│       ├── hill_climbing.py     # HillClimbingModelSelector (local search / hill-climbing over combinations; experimental)
+│       ├── arm_elimination.py   # ArmEliminationModelSelector (bandit-style successive elimination; experimental)
+│       ├── hyperband.py         # HyperbandModelSelector (bandit-style, multi-bracket successive halving over dataset samples)
+│       ├── bayesian_optimization.py  # BayesianOptimizationModelSelector (Bayesian optimization over model combinations; experimental)
 │       └── utils.py             # Compat re-export of extract_prompt
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single, multi-agent, multi-LLM

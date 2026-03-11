@@ -56,7 +56,6 @@ class HyperbandModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
-        clone_fn: Optional[Callable] = None,
         reduction_factor: float = 3.0,
         max_resource: Optional[int] = None,
     ) -> None:
@@ -69,7 +68,6 @@ class HyperbandModelSelector(BaseModelSelector):
             dataset=dataset,
             agent=agent,
             invoke_fn=invoke_fn,
-            clone_fn=clone_fn,
         )
 
         self.reduction_factor = reduction_factor

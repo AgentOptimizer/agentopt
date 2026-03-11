@@ -24,7 +24,7 @@ agentopt/
 │       ├── random_search.py     # RandomSearchModelSelector (random subset of combinations; sampled brute-force)
 │       ├── hill_climbing.py     # HillClimbingModelSelector (local search / hill-climbing over combinations; experimental)
 │       ├── arm_elimination.py   # ArmEliminationModelSelector (bandit-style successive elimination; experimental)
-│       ├── hyperband.py         # HyperbandModelSelector (bandit-style, multi-bracket successive halving over dataset samples)
+│       ├── hyperband.py         # HyperbandModelSelector (bandit-style, multi-bracket successive halving over dataset samples; experimental)
 │       ├── bayesian_optimization.py  # BayesianOptimizationModelSelector (Bayesian optimization over model combinations; experimental)
 │       └── utils.py             # Compat re-export of extract_prompt
 ├── examples/

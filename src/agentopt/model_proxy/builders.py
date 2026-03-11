@@ -12,6 +12,20 @@ from .framework_specific_implementation.llamaindex import (
     is_llamaindex_llm,
     build_llamaindex_llm,
 )
+from .framework_specific_implementation.openai_sdk import (
+    build_openai_agents_model,
+)
+
+
+def _is_openai_sdk_model(obj: Any) -> bool:
+    """Return True if *obj* is an OpenAI Agents SDK Model or a SimpleNamespace placeholder."""
+    mod = type(obj).__module__ or ""
+    if mod.startswith("agents"):
+        return True
+    # SimpleNamespace with a 'model' attribute is the convention for the OpenAI SDK examples.
+    if type(obj).__name__ == "SimpleNamespace" and hasattr(obj, "model"):
+        return True
+    return False
 
 
 def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
@@ -39,5 +53,8 @@ def build_llm(model_name: str, current_llm: Any) -> Optional[Any]:
 
     if is_ag2_llm(current_llm):
         return AG2ConfigWrapper(model_name)
+
+    if _is_openai_sdk_model(current_llm):
+        return build_openai_agents_model(model_name)
 
     return None

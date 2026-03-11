@@ -32,7 +32,6 @@ class RandomSearchModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
-        clone_fn: Optional[Callable] = None,
         sample_fraction: float = 0.25,
         seed: Optional[int] = None,
     ) -> None:
@@ -41,7 +40,6 @@ class RandomSearchModelSelector(BaseModelSelector):
             eval_fn=eval_fn,
             agent=agent,
             invoke_fn=invoke_fn,
-            clone_fn=clone_fn,
             dataset=dataset,
         )
         if not 0 < sample_fraction <= 1:
@@ -200,22 +198,16 @@ class RandomSearchModelSelector(BaseModelSelector):
         self,
         max_workers: Optional[int] = None,
     ) -> SelectionResults:
+        from ..model_proxy.adapter import get_adapter
+        from ..model_proxy.builders import build_llm
+        from ..model_proxy.token_tracking import TokenAccumulator
+
         proxies, all_combinations, sampled_combinations = (
             self._get_sampled_combinations()
         )
 
         if max_workers is None:
             max_workers = len(sampled_combinations)
-
-        invoke_method_name = self._invoke_method_name
-        if invoke_method_name is None and self.clone_fn is None:
-            raise RuntimeError(
-                "Parallel mode requires either an agent= or a clone_fn= alongside "
-                "invoke_fn=. Pass clone_fn= to enable parallel evaluation for "
-                "custom multi-agent chains."
-            )
-
-        from ..model_proxy.adapter import get_adapter
 
         adapter = get_adapter(self.agent) if self.agent is not None else self._adapter
 
@@ -227,34 +219,23 @@ class RandomSearchModelSelector(BaseModelSelector):
         )
         print(f"{'='*60}\n")
 
-        # Phase 1: Create agent/invoke_fn copies (serial — cloning must not race).
-        print(
-            f"  Cloning agents for {len(sampled_combinations)} sampled combinations ..."
-        )
-        tasks: List[Tuple[str, tuple, Any, bool, Any]] = []
-
-        for idx, combo in enumerate(sampled_combinations, 1):
-            combo_name = " + ".join(self._get_model_name(m) for m in combo)
+        if self.agent is not None:
+            # Agent-based path: clone per combination.
             print(
-                f"    clone {idx}/{len(sampled_combinations)}: {combo_name}",
-                flush=True,
+                f"  Cloning agents for {len(sampled_combinations)} sampled combinations ..."
             )
-            for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
-                print(f"      proxy[{i}] → {self._get_model_name(model_obj)}")
+            tasks: List[Tuple[str, tuple, Any, bool, Any]] = []
 
-            try:
-                if self.clone_fn is not None:
-                    model_map = dict(zip(proxies, combo))
-                    fresh_invoke = self.clone_fn(model_map)
-                    token_tracker = None
-                    if adapter is not None:
-                        token_tracker, fresh_invoke = (
-                            adapter.wrap_invoke_fn_for_parallel(fresh_invoke)
-                        )
-                    tasks.append(
-                        (combo_name, combo, fresh_invoke, self.is_async, token_tracker)
-                    )
-                else:
+            for idx, combo in enumerate(sampled_combinations, 1):
+                combo_name = " + ".join(self._get_model_name(m) for m in combo)
+                print(
+                    f"    clone {idx}/{len(sampled_combinations)}: {combo_name}",
+                    flush=True,
+                )
+                for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
+                    print(f"      proxy[{i}] → {self._get_model_name(model_obj)}")
+
+                try:
                     if adapter is not None:
                         agent_copy = adapter.clone_for_parallel(
                             self.agent, proxies, combo, self._get_model_name
@@ -263,77 +244,178 @@ class RandomSearchModelSelector(BaseModelSelector):
                         import copy
 
                         agent_copy = copy.deepcopy(self.agent)
+                    tracker = (
+                        adapter.create_token_tracker(agent_copy)
+                        if adapter is not None
+                        else None
+                    )
                     invoke_fn = (
                         adapter.get_invoke_fn(agent_copy)
                         if adapter is not None
                         else self._make_invoke_fn(
-                            agent_copy, invoke_method_name, self.is_async
+                            agent_copy, self._invoke_method_name, self.is_async
                         )
                     )
-                    tasks.append((combo_name, combo, invoke_fn, False, agent_copy))
-            except Exception as e:
-                logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
-                continue
-
-        if not tasks:
-            raise RuntimeError("All clone attempts failed. Cannot evaluate any models.")
-
-        # Phase 2: Evaluate in parallel.
-        print(
-            f"\n  Evaluating {len(tasks)} sampled combinations across {max_workers} workers ..."
-        )
-        all_results: List[ModelResult] = []
-        future_to_info: Dict[Any, Tuple[str, tuple]] = {}
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for combo_name, combo, invoke_fn, is_async_flag, agent_copy in tasks:
-                future = executor.submit(
-                    self._evaluate_single,
-                    invoke_fn,
-                    is_async_flag,
-                    self.eval_fn,
-                    self.dataset,
-                    adapter=adapter,
-                    agent=agent_copy,
-                    label=combo_name,
-                )
-                future_to_info[future] = (combo_name, combo)
-
-            for future in as_completed(future_to_info):
-                combo_name, combo = future_to_info[future]
-                try:
-                    accuracy, latency, in_tok, out_tok = future.result()
-                    result = ModelResult(
-                        model_name=combo_name,
-                        accuracy=accuracy,
-                        latency_seconds=latency,
-                        input_tokens=in_tok,
-                        output_tokens=out_tok,
-                        attribute="combination",
-                        is_best=False,
-                    )
-                    print(f"  {result}")
-                    all_results.append(result)
+                    tasks.append((combo_name, combo, invoke_fn, False, tracker))
                 except Exception as e:
-                    print(f"  [{combo_name}] failed: {e}")
-                    all_results.append(
-                        ModelResult(
+                    logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
+                    continue
+
+            if not tasks:
+                raise RuntimeError("All clone attempts failed.")
+
+            print(
+                f"\n  Evaluating {len(tasks)} sampled combinations across "
+                f"{max_workers} workers ..."
+            )
+            all_results: List[ModelResult] = []
+            future_to_info: Dict[Any, Tuple[str, tuple]] = {}
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for combo_name, combo, invoke_fn, is_async_flag, tracker in tasks:
+                    future = executor.submit(
+                        self._evaluate_single,
+                        invoke_fn,
+                        is_async_flag,
+                        self.eval_fn,
+                        self.dataset,
+                        token_tracker=tracker,
+                        label=combo_name,
+                    )
+                    future_to_info[future] = (combo_name, combo)
+
+                for future in as_completed(future_to_info):
+                    combo_name, combo = future_to_info[future]
+                    try:
+                        accuracy, latency, in_tok, out_tok = future.result()
+                        result = ModelResult(
                             model_name=combo_name,
-                            accuracy=0.0,
-                            latency_seconds=0.0,
-                            input_tokens=0,
-                            output_tokens=0,
+                            accuracy=accuracy,
+                            latency_seconds=latency,
+                            input_tokens=in_tok,
+                            output_tokens=out_tok,
                             attribute="combination",
                             is_best=False,
                         )
-                    )
+                        print(f"  {result}")
+                        all_results.append(result)
+                    except Exception as e:
+                        print(f"  [{combo_name}] failed: {e}")
+                        all_results.append(
+                            ModelResult(
+                                model_name=combo_name,
+                                accuracy=0.0,
+                                latency_seconds=0.0,
+                                input_tokens=0,
+                                output_tokens=0,
+                                attribute="combination",
+                                is_best=False,
+                            )
+                        )
+        else:
+            # invoke_fn path: use thread-local model overrides on proxies.
+            print(f"  Preparing {len(sampled_combinations)} sampled combinations ...")
+            for idx, combo in enumerate(sampled_combinations, 1):
+                combo_name = " + ".join(self._get_model_name(m) for m in combo)
+                print(
+                    f"    combo {idx}/{len(sampled_combinations)}: {combo_name}",
+                    flush=True,
+                )
+                for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
+                    print(f"      proxy[{i}] → {self._get_model_name(model_obj)}")
 
-        # Phase 3: Determine best and set proxies.
+            print(
+                f"\n  Evaluating {len(sampled_combinations)} sampled combinations "
+                f"across {max_workers} workers ..."
+            )
+            all_results = []
+            future_to_info = {}
+
+            def _eval_with_thread_local(
+                combo: tuple,
+                proxies: List[ModelProxy],
+                invoke_fn: Any,
+                is_async: bool,
+                eval_fn: Any,
+                dataset: Any,
+                get_model_name: Any,
+                label: str,
+            ) -> Tuple[float, float, int, int]:
+                tracker = TokenAccumulator()
+                for proxy, model_spec in zip(proxies, combo):
+                    model_name = get_model_name(model_spec)
+                    current_model = object.__getattribute__(proxy, "_optmodel")
+                    fresh_model = build_llm(model_name, current_model)
+                    if fresh_model is None:
+                        raise RuntimeError(
+                            f"Cannot build model '{model_name}' for parallel evaluation."
+                        )
+                    proxy._set_thread_model(fresh_model, tracker)
+                try:
+                    return self._evaluate_single(
+                        invoke_fn,
+                        is_async,
+                        eval_fn,
+                        dataset,
+                        token_tracker=tracker,
+                        label=label,
+                    )
+                finally:
+                    for proxy in proxies:
+                        proxy._clear_thread_model()
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for combo in sampled_combinations:
+                    combo_name = " + ".join(self._get_model_name(m) for m in combo)
+                    future = executor.submit(
+                        _eval_with_thread_local,
+                        combo,
+                        proxies,
+                        self.invoke_fn,
+                        self.is_async,
+                        self.eval_fn,
+                        self.dataset,
+                        self._get_model_name,
+                        combo_name,
+                    )
+                    future_to_info[future] = (combo_name, combo)
+
+                for future in as_completed(future_to_info):
+                    combo_name, combo = future_to_info[future]
+                    try:
+                        accuracy, latency, in_tok, out_tok = future.result()
+                        result = ModelResult(
+                            model_name=combo_name,
+                            accuracy=accuracy,
+                            latency_seconds=latency,
+                            input_tokens=in_tok,
+                            output_tokens=out_tok,
+                            attribute="combination",
+                            is_best=False,
+                        )
+                        print(f"  {result}")
+                        all_results.append(result)
+                    except Exception as e:
+                        print(f"  [{combo_name}] failed: {e}")
+                        all_results.append(
+                            ModelResult(
+                                model_name=combo_name,
+                                accuracy=0.0,
+                                latency_seconds=0.0,
+                                input_tokens=0,
+                                output_tokens=0,
+                                attribute="combination",
+                                is_best=False,
+                            )
+                        )
+
+        # Determine best and set proxies.
         best_info = self._find_best(all_results)
         if best_info is not None:
             best_name, _ = best_info
-            for combo_name, combo, _, _ in tasks:
-                if combo_name == best_name:
+            target_combos = sampled_combinations
+            for combo in target_combos:
+                if " + ".join(self._get_model_name(m) for m in combo) == best_name:
                     for proxy, model_obj in zip(proxies, combo):
                         proxy.set_model(model_obj)
                     break

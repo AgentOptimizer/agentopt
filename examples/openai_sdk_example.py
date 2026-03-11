@@ -28,7 +28,6 @@ from agentopt.model_selection import (
     ArmEliminationModelSelector,
     BayesianOptimizationModelSelector,
 )
-from agents.models.openai_provider import OpenAIProvider
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
@@ -114,54 +113,13 @@ def multillm_example():
             else str(coder_result)
         )
 
-    def clone_fn(model_map):
-        """Build fresh agents for parallel evaluation.
-
-        model_map: {researcher_proxy -> model_name, coder_proxy -> model_name}.
-        """
-        r_model = model_map[researcher_proxy]
-        c_model = model_map[coder_proxy]
-        print(
-            f"  [clone_fn] building fresh agents (researcher: {r_model}, coder: {c_model})"
-        )
-        fresh_researcher = Agent(
-            name="researcher",
-            model=OpenAIProvider().get_model(r_model),
-            instructions="You are a research assistant. Analyze the question and provide relevant context and findings.",
-        )
-        fresh_coder = Agent(
-            name="coder",
-            model=OpenAIProvider().get_model(c_model),
-            instructions="You are a coding assistant. Based on the provided context, give a concise final answer.",
-        )
-
-        def fresh_invoke(input_data):
-            question = input_data["input"]
-            research_result = Runner.run_sync(fresh_researcher, question)
-            research_output = (
-                research_result.final_output
-                if hasattr(research_result, "final_output")
-                else str(research_result)
-            )
-            coder_result = Runner.run_sync(
-                fresh_coder, f"Context: {research_output}\n\nTask: {question}"
-            )
-            return (
-                coder_result.final_output
-                if hasattr(coder_result, "final_output")
-                else str(coder_result)
-            )
-
-        return fresh_invoke
-
-    return (researcher_proxy, coder_proxy), invoke_fn, clone_fn
+    return (researcher_proxy, coder_proxy), invoke_fn, None
 
 
 def run_model_selection(
     agent_or_invoke_fn,
     llm_proxies,
     dataset_file=None,
-    clone_fn=None,
     parallel=False,
     selector_name: str = "brute_force",
     sample_fraction: float = 0.25,
@@ -176,8 +134,6 @@ def run_model_selection(
     # Multi-agent: pass invoke_fn= for custom chaining
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "name"):
         kwargs = {"invoke_fn": agent_or_invoke_fn}
-        if clone_fn is not None:
-            kwargs["clone_fn"] = clone_fn
     else:
         kwargs = {"agent": agent_or_invoke_fn}
 
@@ -262,11 +218,11 @@ if __name__ == "__main__":
 
     print("\n[1] Setting up agents...")
     result = setup_fn()
-    # All setup functions return (proxy_or_proxies, agent_or_invoke_fn, clone_fn).
+    # All setup functions return (proxy_or_proxies, agent_or_invoke_fn, _).
     if isinstance(result[0], tuple):
-        llm_proxies, agent_or_invoke, clone_fn = result
+        llm_proxies, agent_or_invoke, _ = result
     else:
-        llm_proxy_or_agent, agent_or_invoke, clone_fn = result
+        llm_proxy_or_agent, agent_or_invoke, _ = result
         llm_proxies = [llm_proxy_or_agent]
 
     print("\n[2] Running model selection...")
@@ -274,7 +230,6 @@ if __name__ == "__main__":
         agent_or_invoke,
         llm_proxies,
         dataset_file=args.dataset,
-        clone_fn=clone_fn,
         parallel=args.parallel,
         selector_name=args.selector,
         sample_fraction=args.sample_fraction,

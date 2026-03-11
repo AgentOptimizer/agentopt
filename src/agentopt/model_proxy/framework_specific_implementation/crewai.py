@@ -1,9 +1,10 @@
 """CrewAI-specific LLM builder, agent sync, and FrameworkAdapter."""
 
 import logging
-from typing import Any, Callable, Dict, List, Tuple, Optional
+from typing import Any, Callable, List, Optional
 
 from ..adapter import FrameworkAdapter
+from ..token_tracking import TokenAccumulator
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,8 @@ class CrewAIAdapter(FrameworkAdapter):
     invoke_method_name = "kickoff"
 
     def __init__(self) -> None:
-        # Maps agent id → (input_tokens_seen, output_tokens_seen) at last get_token_usage call.
-        self._token_baseline: Dict[int, Tuple[int, int]] = {}
+        # Maps id(cloned_crew) → TokenAccumulator for parallel clones.
+        self._clone_trackers: dict = {}
 
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
@@ -51,7 +52,25 @@ class CrewAIAdapter(FrameworkAdapter):
         BaseLLM.register(proxy_cls)
 
         def _crewai_call(self: Any, *args: Any, **kwargs: Any) -> Any:
-            model = object.__getattribute__(self, "_optmodel")
+            model = self._get_effective_model()
+            tracker = self._get_effective_tracker()
+            if tracker is not None:
+                try:
+                    before = model.get_token_usage_summary()
+                    b_in = getattr(before, "prompt_tokens", 0)
+                    b_out = getattr(before, "completion_tokens", 0)
+                except Exception:
+                    b_in = b_out = 0
+                result = model.call(*args, **kwargs)
+                try:
+                    after = model.get_token_usage_summary()
+                    tracker.add(
+                        getattr(after, "prompt_tokens", 0) - b_in,
+                        getattr(after, "completion_tokens", 0) - b_out,
+                    )
+                except Exception:
+                    pass
+                return result
             return model.call(*args, **kwargs)
 
         proxy_cls.call = _crewai_call
@@ -69,17 +88,21 @@ class CrewAIAdapter(FrameworkAdapter):
     ) -> None:
         pass  # Model swapping is handled transparently via BaseLLM ABC registration.
 
-    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        """Return tokens consumed since the last call, via crew.usage_metrics."""
-        metrics = agent.usage_metrics
-        if metrics is None:
-            return (0, 0)
-        total_in = metrics.prompt_tokens
-        total_out = metrics.completion_tokens
-        key = id(agent)
-        prev_in, prev_out = self._token_baseline.get(key, (0, 0))
-        self._token_baseline[key] = (total_in, total_out)
-        return (total_in - prev_in, total_out - prev_out)
+    def create_token_tracker(self, agent: Any = None) -> TokenAccumulator:
+        """Return a TokenAccumulator for this agent.
+
+        Token tracking is handled by ``_crewai_call`` on each proxy, which
+        reads the LLM's ``_token_usage`` delta per call. No kickoff patching
+        needed — just return the right accumulator.
+        """
+        # Parallel clone path: retrieve pre-created tracker.
+        if agent is not None:
+            tracker = self._clone_trackers.pop(id(agent), None)
+            if tracker is not None:
+                return tracker
+
+        # Sequential path: bare accumulator (proxies get it via _set_token_tracker).
+        return TokenAccumulator()
 
     def clone_for_parallel(
         self,
@@ -104,6 +127,8 @@ class CrewAIAdapter(FrameworkAdapter):
             combo: The model specs corresponding to each proxy.
             get_model_name: Callable to extract a display name from a model spec.
         """
+        from ..proxy import ModelProxy
+
         cloned = agent.model_copy(deep=False)
 
         assert self.detect(
@@ -115,14 +140,19 @@ class CrewAIAdapter(FrameworkAdapter):
         n_agents = len(crew_agents)
         cloned_agents = []
 
+        # Shared tracker for all fresh proxies in this clone.
+        tracker = TokenAccumulator()
+
         if n_proxies == 1:
             # Shared-LLM: every sub-agent gets the same new model
             model_name = (
                 combo[0] if isinstance(combo[0], str) else get_model_name(combo[0])
             )
             fresh_llm = build_crewai_llm(model_name)
+            fresh_proxy = ModelProxy(fresh_llm)
+            fresh_proxy._set_token_tracker(tracker)
             for ag in crew_agents:
-                cloned_ag = ag.model_copy(update={"llm": fresh_llm}, deep=False)
+                cloned_ag = ag.model_copy(update={"llm": fresh_proxy}, deep=False)
                 cloned_agents.append(cloned_ag)
                 logger.debug(
                     "  [clone] %s → %s",
@@ -138,7 +168,9 @@ class CrewAIAdapter(FrameworkAdapter):
                     else get_model_name(model_spec)
                 )
                 fresh_llm = build_crewai_llm(model_name)
-                cloned_ag = ag.model_copy(update={"llm": fresh_llm}, deep=False)
+                fresh_proxy = ModelProxy(fresh_llm)
+                fresh_proxy._set_token_tracker(tracker)
+                cloned_ag = ag.model_copy(update={"llm": fresh_proxy}, deep=False)
                 cloned_agents.append(cloned_ag)
                 logger.debug(
                     "  [clone] %s → %s",
@@ -157,10 +189,6 @@ class CrewAIAdapter(FrameworkAdapter):
         cloned.agents = cloned_agents
 
         # Clone tasks and remap task.agent to the cloned agents.
-        # Must use `is` (identity) instead of dict lookup — Pydantic models
-        # aren't hashable.  Must clone tasks — model_copy(deep=False) shares
-        # Task objects with the original crew, so direct mutation would
-        # corrupt subsequent clones.
         cloned_tasks = []
         for task in cloned.tasks:
             new_agent = task.agent
@@ -172,6 +200,9 @@ class CrewAIAdapter(FrameworkAdapter):
                 task.model_copy(update={"agent": new_agent}, deep=False)
             )
         cloned.tasks = cloned_tasks
+
+        # Store tracker for create_token_tracker to retrieve.
+        self._clone_trackers[id(cloned)] = tracker
 
         return cloned
 

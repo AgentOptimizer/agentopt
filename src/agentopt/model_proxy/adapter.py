@@ -21,6 +21,8 @@ import copy
 from abc import ABC, abstractmethod
 from typing import Any, Callable, List, Optional, Tuple
 
+from .token_tracking import TokenAccumulator
+
 
 class FrameworkAdapter(ABC):
     """Abstract base for all framework adapters.
@@ -86,27 +88,29 @@ class FrameworkAdapter(ABC):
         """
         return False
 
-    def wrap_invoke_fn_for_parallel(self, invoke_fn: Callable) -> Tuple[Any, Callable]:
-        """Wrap invoke_fn to inject token tracking for the parallel clone_fn path.
+    def create_token_tracker(self, agent: Any = None) -> TokenAccumulator:
+        """Set up framework-specific token tracking hooks and return an accumulator.
 
-        Returns (token_tracker, wrapped_invoke_fn).
-        token_tracker is stored as `agent_copy` in tasks and passed as `agent`
-        to _evaluate_single so get_token_usage(token_tracker) returns counts.
-        Default: no-op — returns (None, invoke_fn).
+        Subclasses install whatever framework-specific hooks are needed
+        (callbacks, patches, etc.) that feed into the returned accumulator.
+        The consumer reads tokens via ``tracker.reset()``.
+
+        Args:
+            agent: The agent object (for agent= path) or None (for invoke_fn= path).
+
+        Default: returns a bare ``TokenAccumulator`` with no hooks.
         """
-        return None, invoke_fn
+        return TokenAccumulator()
 
-    def get_token_usage(self, _agent: Any) -> Tuple[int, int]:
-        """Return ``(input_tokens, output_tokens)`` accumulated since the last call.
+    def wrap_invoke_fn_with_tracker(
+        self, invoke_fn: Callable, tracker: TokenAccumulator
+    ) -> Callable:
+        """Wrap invoke_fn so that each call feeds token counts into *tracker*.
 
-        Counts are totalled across all samples evaluated since the previous
-        call (or since the adapter was set up).  Subclasses should reset their
-        counters after returning so each call reflects only the most recent
-        evaluation window.
-
-        Default: ``(0, 0)`` — override per framework.
+        Used for the sequential invoke_fn= path.
+        Default: no-op — returns invoke_fn unchanged.
         """
-        return (0, 0)
+        return invoke_fn
 
     def clone_for_parallel(
         self,

@@ -68,18 +68,7 @@ def single_agent_example():
     def invoke_fn(input_data):
         return asyncio.run(_query_async(input_data["input"], proxy))
 
-    def clone_fn(model_map):
-        """Build a fresh invoke_fn with independent ClaudeAgentOptions."""
-        model_name = model_map[proxy]
-        print(f"  [clone_fn] building fresh options (model: {model_name})")
-        fresh_options = ClaudeAgentOptions(model=model_name)
-
-        def fresh_invoke(input_data):
-            return asyncio.run(_query_async(input_data["input"], fresh_options))
-
-        return fresh_invoke
-
-    return proxy, invoke_fn, clone_fn
+    return proxy, invoke_fn, None
 
 
 def multi_agent_example():
@@ -106,29 +95,7 @@ def multi_agent_example():
         )
         return verified
 
-    def clone_fn(model_map):
-        """Build fresh invoke_fn — one shared ClaudeAgentOptions per combo."""
-        model_name = model_map[proxy]
-        print(f"  [clone_fn] building fresh solver + reviewer (model: {model_name})")
-        fresh_options = ClaudeAgentOptions(model=model_name)
-
-        def fresh_invoke(input_data):
-            question = input_data["input"]
-            answer = asyncio.run(
-                _query_async(f"Solve this math problem: {question}", fresh_options)
-            )
-            verified = asyncio.run(
-                _query_async(
-                    f"Verify this answer to '{question}': {answer}. "
-                    f"Reply with just the final number.",
-                    fresh_options,
-                )
-            )
-            return verified
-
-        return fresh_invoke
-
-    return proxy, invoke_fn, clone_fn
+    return proxy, invoke_fn, None
 
 
 def multi_agent_multi_llm_example():
@@ -157,33 +124,7 @@ def multi_agent_multi_llm_example():
         )
         return verified
 
-    def clone_fn(model_map):
-        """Build fresh invoke_fn with independent options per proxy."""
-        s_model = model_map[solver_proxy]
-        r_model = model_map[reviewer_proxy]
-        print(
-            f"  [clone_fn] building fresh agents (solver: {s_model}, reviewer: {r_model})"
-        )
-        fresh_solver = ClaudeAgentOptions(model=s_model)
-        fresh_reviewer = ClaudeAgentOptions(model=r_model)
-
-        def fresh_invoke(input_data):
-            question = input_data["input"]
-            answer = asyncio.run(
-                _query_async(f"Solve this math problem: {question}", fresh_solver)
-            )
-            verified = asyncio.run(
-                _query_async(
-                    f"Verify this answer to '{question}': {answer}. "
-                    f"Reply with just the final number.",
-                    fresh_reviewer,
-                )
-            )
-            return verified
-
-        return fresh_invoke
-
-    return (solver_proxy, reviewer_proxy), invoke_fn, clone_fn
+    return (solver_proxy, reviewer_proxy), invoke_fn, None
 
 
 def run_model_selection(
@@ -191,7 +132,6 @@ def run_model_selection(
     llm_proxies,
     parallel=False,
     dataset_file=None,
-    clone_fn=None,
     selector_name: str = "brute_force",
     sample_fraction: float = 0.25,
 ):
@@ -204,8 +144,6 @@ def run_model_selection(
     kwargs = {
         "invoke_fn": invoke_fn,
     }
-    if clone_fn is not None:
-        kwargs["clone_fn"] = clone_fn
 
     if selector_name == "random_search":
         kwargs["sample_fraction"] = sample_fraction
@@ -300,11 +238,11 @@ if __name__ == "__main__":
     print("\n[1] Setting up agents...")
     result = setup_fn()
 
-    # All setup functions now return 3-tuples: (proxy_or_proxies, invoke_fn, clone_fn)
+    # All setup functions return 3-tuples: (proxy_or_proxies, invoke_fn, _)
     if isinstance(result[0], tuple):
-        llm_proxies, invoke, clone_fn = result
+        llm_proxies, invoke, _ = result
     else:
-        llm_proxy, invoke, clone_fn = result
+        llm_proxy, invoke, _ = result
         llm_proxies = [llm_proxy]
 
     print("\n[2] Running model selection...")
@@ -313,7 +251,6 @@ if __name__ == "__main__":
         llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
-        clone_fn=clone_fn,
         selector_name=args.selector,
         sample_fraction=args.sample_fraction,
     )

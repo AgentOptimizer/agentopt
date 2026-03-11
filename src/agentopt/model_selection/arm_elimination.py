@@ -59,7 +59,6 @@ class ArmEliminationModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
-        clone_fn: Optional[Callable] = None,
         n_initial: Optional[int] = None,
         growth_factor: float = 2.0,
         confidence: float = 1.0,
@@ -70,7 +69,6 @@ class ArmEliminationModelSelector(BaseModelSelector):
             dataset=dataset,
             agent=agent,
             invoke_fn=invoke_fn,
-            clone_fn=clone_fn,
         )
         n = len(self.dataset)
         if n_initial is None:
@@ -93,8 +91,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
 
         Args:
             parallel: If True, evaluate active combinations concurrently
-                within each round.  Requires either ``agent=`` or
-                ``clone_fn=`` to be set.
+                within each round.
             max_workers: Thread-pool size for parallel mode.
 
         Returns:
@@ -170,16 +167,8 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 scores, latencies = self._evaluate_batch(batch, label=combo_name)
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
-                if self._adapter is not None:
-                    new_in, new_out = self._adapter.get_token_usage(self.agent)
-                    if (
-                        new_in == 0
-                        and new_out == 0
-                        and self._invoke_token_tracker is not None
-                    ):
-                        new_in, new_out = self._adapter.get_token_usage(
-                            self._invoke_token_tracker
-                        )
+                if self._token_tracker is not None:
+                    new_in, new_out = self._token_tracker.reset()
                     prev_in, prev_out = combo_tokens[idx]
                     combo_tokens[idx] = (prev_in + new_in, prev_out + new_out)
 
@@ -269,21 +258,17 @@ class ArmEliminationModelSelector(BaseModelSelector):
     # ------------------------------------------------------------------
 
     def _select_parallel(self, max_workers: Optional[int] = None) -> SelectionResults:
+        from ..model_proxy.adapter import get_adapter
+        from ..model_proxy.builders import build_llm
+        from ..model_proxy.token_tracking import TokenAccumulator
+
         proxies = list(self._models.keys())
         candidate_lists = list(self._models.values())
         all_combinations = list(itertools.product(*candidate_lists))
         dataset_list = list(self.dataset)
         n_total = len(dataset_list)
 
-        invoke_method_name = self._invoke_method_name
-        if invoke_method_name is None and self.clone_fn is None:
-            raise RuntimeError(
-                "Parallel mode requires either agent= or clone_fn= alongside invoke_fn=."
-            )
-
-        from ..model_proxy.adapter import get_adapter
-
-        adapter = get_adapter(self.agent) if self.agent is not None else None
+        adapter = get_adapter(self.agent) if self.agent is not None else self._adapter
 
         if max_workers is None:
             max_workers = len(all_combinations)
@@ -305,20 +290,17 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 "Only one round possible — consider a larger dataset or a smaller n_initial."
             )
 
-        # Phase 1: Clone agents for all combinations (serial).
-        print(f"\n  Cloning agents for {len(all_combinations)} combinations ...")
-        tasks: Dict[int, Tuple[str, tuple, Callable, bool]] = {}
-        for idx, combo in enumerate(all_combinations):
-            combo_name = " + ".join(self._get_model_name(m) for m in combo)
-            print(
-                f"    clone {idx+1}/{len(all_combinations)}: {combo_name}", flush=True
-            )
-            try:
-                if self.clone_fn is not None:
-                    model_map = dict(zip(proxies, combo))
-                    fresh_invoke = self.clone_fn(model_map)
-                    tasks[idx] = (combo_name, combo, fresh_invoke, self.is_async)
-                else:
+        if self.agent is not None:
+            # Agent-based path: clone per combination.
+            print(f"\n  Cloning agents for {len(all_combinations)} combinations ...")
+            tasks: Dict[int, Tuple[str, tuple, Callable, bool]] = {}
+            for idx, combo in enumerate(all_combinations):
+                combo_name = " + ".join(self._get_model_name(m) for m in combo)
+                print(
+                    f"    clone {idx+1}/{len(all_combinations)}: {combo_name}",
+                    flush=True,
+                )
+                try:
                     if adapter is not None:
                         agent_copy = adapter.clone_for_parallel(
                             self.agent, proxies, combo, self._get_model_name
@@ -329,14 +311,20 @@ class ArmEliminationModelSelector(BaseModelSelector):
 
                         agent_copy = copy.deepcopy(self.agent)
                         invoke_fn = self._make_invoke_fn(
-                            agent_copy, invoke_method_name, self.is_async
+                            agent_copy, self._invoke_method_name, self.is_async
                         )
                     tasks[idx] = (combo_name, combo, invoke_fn, False)
-            except Exception as e:
-                logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
+                except Exception as e:
+                    logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
 
-        if not tasks:
-            raise RuntimeError("All clone attempts failed. Cannot evaluate any models.")
+            if not tasks:
+                raise RuntimeError("All clone attempts failed.")
+        else:
+            # invoke_fn path: prepare task entries (thread-local will be set per round).
+            tasks = {}
+            for idx, combo in enumerate(all_combinations):
+                combo_name = " + ".join(self._get_model_name(m) for m in combo)
+                tasks[idx] = (combo_name, combo, self.invoke_fn, self.is_async)
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in tasks}
         combo_latencies: Dict[int, List[float]] = {i: [] for i in tasks}
@@ -345,6 +333,32 @@ class ArmEliminationModelSelector(BaseModelSelector):
         offset = 0
         batch_size = self.n_initial
         round_num = 1
+
+        use_thread_local = self.agent is None
+
+        def _eval_batch_thread_local(
+            combo: tuple,
+            batch: List[Tuple[Any, Any]],
+            label: str,
+        ) -> Tuple[List[float], List[float]]:
+            """Set thread-local models, evaluate batch, then clean up."""
+            tracker = TokenAccumulator()
+            for proxy, model_spec in zip(proxies, combo):
+                model_name = self._get_model_name(model_spec)
+                current_model = object.__getattribute__(proxy, "_optmodel")
+                fresh_model = build_llm(model_name, current_model)
+                if fresh_model is None:
+                    raise RuntimeError(
+                        f"Cannot build model '{model_name}' for parallel evaluation."
+                    )
+                proxy._set_thread_model(fresh_model, tracker)
+            try:
+                return self._evaluate_batch_static(
+                    self.invoke_fn, self.is_async, self.eval_fn, batch, label
+                )
+            finally:
+                for proxy in proxies:
+                    proxy._clear_thread_model()
 
         while active and offset < n_total:
             batch_end = min(offset + batch_size, n_total)
@@ -355,21 +369,25 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 f"{len(active)} active combination(s)]:"
             )
 
-            # Evaluate active combos in parallel on current batch.
             future_to_idx: Dict[Any, int] = {}
             with ThreadPoolExecutor(
                 max_workers=min(max_workers, len(active))
             ) as executor:
                 for idx in active:
-                    combo_name, _, invoke_fn, is_async_flag = tasks[idx]
-                    future = executor.submit(
-                        self._evaluate_batch_static,
-                        invoke_fn,
-                        is_async_flag,
-                        self.eval_fn,
-                        batch,
-                        combo_name,
-                    )
+                    combo_name, combo, invoke_fn, is_async_flag = tasks[idx]
+                    if use_thread_local:
+                        future = executor.submit(
+                            _eval_batch_thread_local, combo, batch, combo_name
+                        )
+                    else:
+                        future = executor.submit(
+                            self._evaluate_batch_static,
+                            invoke_fn,
+                            is_async_flag,
+                            self.eval_fn,
+                            batch,
+                            combo_name,
+                        )
                     future_to_idx[future] = idx
 
                 for future in as_completed(future_to_idx):

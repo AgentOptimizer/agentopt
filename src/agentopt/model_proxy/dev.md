@@ -171,10 +171,11 @@ def invoke_fn(input_data):
 No agent-side mutation is needed. The proxy is captured in a closure, so
 `proxy.set_model()` changes what the next `invoke_fn()` call sees.
 
-**Parallel support — clone_fn:**
+**Parallel support — thread-local overrides:**
 
-For parallel evaluation, `clone_fn` creates fresh `ClaudeAgentOptions` per combo,
-bypassing the proxy entirely so threads don't share mutable state.
+For parallel evaluation, `ModelProxy` uses thread-local model/tracker overrides.
+Each thread sets its own model on the proxy via `_set_thread_model()`, so the
+`invoke_fn` closure sees the correct model per thread without shared mutable state.
 
 **Key files:** `examples/claude_sdk_example.py`
 
@@ -249,19 +250,13 @@ graph.add_node("solver", call_solver)
 app = graph.compile()  # frozen — solver_llm reference is baked in
 ```
 
-**Mutation strategy — full graph rebuild via clone_fn:**
+**Mutation strategy — thread-local model overrides:**
 
-LangGraph has no adapter in the registry — it always uses the `invoke_fn=` +
-`clone_fn=` path. The `clone_fn` rebuilds the entire graph from scratch with
-fresh LLM instances per combination:
-
-```python
-def clone_fn(model_map):
-    fresh_solver = create_model_from_string(model_map[solver_proxy])
-    fresh_reviewer = create_model_from_string(model_map[reviewer_proxy])
-    fresh_graph = build_graph(fresh_solver, fresh_reviewer)
-    return fresh_graph.invoke
-```
+LangGraph uses the `invoke_fn=` path. For sequential evaluation, `proxy.set_model()`
+updates the underlying model and the graph's closure sees the new model on next call.
+For parallel evaluation, each thread sets a per-thread model override on the proxy via
+`_set_thread_model()`. The proxy's `_get_effective_model()` returns the thread-local
+model, so each thread's graph invocation sees its own model without rebuilding the graph.
 
 **Key files:** `examples/langgraph_example.py`
 
@@ -316,28 +311,28 @@ proxy.set_model("gpt-4o")
         +- AG2 agents?          -> recreate LLMConfig + force client recreation
         +- OpenAI SDK?          -> no-op (delegates at call time via get_response)
         +- Claude SDK?          -> no-op (reads proxy via closure capture)
-        +- LangGraph?           -> no-op (uses clone_fn for parallel, sequential mutates proxy)
+        +- LangGraph?           -> no-op (thread-local overrides handle parallel)
 ```
 
 ---
 
-## clone_fn — Parallel Support for invoke_fn-based Pipelines
+## Thread-Local Model Overrides — Parallel Support for invoke_fn-based Pipelines
 
-When using `invoke_fn=` (instead of `agent=`) with `parallel=True`, you must
-also supply `clone_fn`. This is required for frameworks not in the adapter
-registry (LangGraph, Claude SDK) or for custom multi-agent chains.
+When using `invoke_fn=` with `parallel=True`, `ModelProxy` uses thread-local
+storage to provide each evaluation thread with its own model instance. This
+eliminates the need for users to provide a cloning function.
 
-```python
-clone_fn: Callable[[Dict[ModelProxy, str]], Callable]
-```
+**How it works:**
 
-- Called once per model combination **serially** (cloning must not race)
-- Receives `{proxy: model_name_str}` mapping for the combo
-- Must return a fresh, independent `invoke_fn`-like callable with no shared mutable state
-- Required because `invoke_fn` closures often close over proxy objects — each
-  parallel thread needs its own LLM instances
+1. Each parallel thread calls `proxy._set_thread_model(fresh_model, tracker)` to
+   set per-thread overrides on every proxy in the combination.
+2. `proxy._get_effective_model()` returns the thread-local model if set, otherwise
+   the default model. Framework patches (`_get_response`, `_crewai_call`, etc.)
+   and `__getattr__` all use this method.
+3. After evaluation, `proxy._clear_thread_model()` removes the overrides.
 
-Without `clone_fn`, `parallel=True` with `invoke_fn=` raises `RuntimeError`.
+This means `invoke_fn` closures that capture `ModelProxy` objects automatically
+see the correct model per thread — no shared mutable state, no graph rebuilding.
 
 ---
 

@@ -10,7 +10,8 @@ import logging
 import os
 
 from ..adapter import FrameworkAdapter
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from ..token_tracking import TokenAccumulator
+from typing import Any, Callable, List, Optional
 
 from pydantic import BaseModel
 
@@ -133,12 +134,11 @@ class LlamaIndexAdapter(FrameworkAdapter):
 
     invoke_method_name = "run"
 
-    def __init__(self) -> None:
-        # Maps agent id → TokenCountingHandler installed at get_invoke_fn time.
-        self._token_handlers: Dict[int, Any] = {}
+    def _install_token_handler(self, tracker: TokenAccumulator) -> Optional[Any]:
+        """Attach a TokenCountingHandler via the global Settings callback manager.
 
-    def _install_token_handler(self, agent: Any) -> Optional[Any]:
-        """Attach a TokenCountingHandler via the global Settings callback manager."""
+        The handler feeds token counts into *tracker* after each LLM call.
+        """
         try:
             from llama_index.core.callbacks import TokenCountingHandler
             from llama_index.core import Settings
@@ -149,19 +149,17 @@ class LlamaIndexAdapter(FrameworkAdapter):
         handler = TokenCountingHandler(
             tokenizer=tiktoken.encoding_for_model("gpt-3.5-turbo").encode
         )
-        # AgentWorkflow and FunctionAgent have no per-instance callback_manager.
-        # The global Settings.callback_manager applies to all workflows/agents.
         Settings.callback_manager.add_handler(handler)
         return handler
 
-    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        handler = self._token_handlers.get(id(agent))
-        if handler is None:
-            return (0, 0)
-        in_tok = handler.prompt_llm_token_count
-        out_tok = handler.completion_llm_token_count
-        handler.reset_counts()
-        return (in_tok, out_tok)
+    def create_token_tracker(self, agent: Any = None) -> TokenAccumulator:
+        """Create a TokenAccumulator backed by LlamaIndex's TokenCountingHandler."""
+        tracker = TokenAccumulator()
+        handler = self._install_token_handler(tracker)
+        if handler is not None:
+            self._handler = handler
+            self._tracker = tracker
+        return tracker
 
     def detect(self, agent: Any) -> bool:
         return (type(agent).__module__ or "").startswith("llama_index") and hasattr(
@@ -170,8 +168,6 @@ class LlamaIndexAdapter(FrameworkAdapter):
 
     def get_invoke_fn(self, agent: Any) -> Callable:
         """Wrap agent.run() so that the WorkflowHandler is awaited correctly.
-
-        Also installs a TokenCountingHandler for token usage tracking.
 
         ``inspect.iscoroutinefunction(agent.run)`` returns False due to
         instrumentation decorators, so we use ``inspect.isawaitable()`` instead.
@@ -184,9 +180,8 @@ class LlamaIndexAdapter(FrameworkAdapter):
         import inspect
         import threading
 
-        handler = self._install_token_handler(agent)
-        if handler is not None:
-            self._token_handlers[id(agent)] = handler
+        handler = getattr(self, "_handler", None)
+        tracker = getattr(self, "_tracker", None)
 
         method = agent.run
 
@@ -208,7 +203,15 @@ class LlamaIndexAdapter(FrameworkAdapter):
                 return result
 
             future = asyncio.run_coroutine_threadsafe(_async_run(), _loop)
-            return future.result()
+            result = future.result()
+            # Flush handler counts into the shared tracker.
+            if handler is not None and tracker is not None:
+                tracker.add(
+                    handler.prompt_llm_token_count,
+                    handler.completion_llm_token_count,
+                )
+                handler.reset_counts()
+            return result
 
         return _invoke
 

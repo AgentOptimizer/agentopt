@@ -1,10 +1,33 @@
 """LangChain-specific LLM builder, agent sync, and FrameworkAdapter."""
 
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, List, Optional
+
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import ChatGeneration
 
 from ..adapter import FrameworkAdapter, register_adapter
 from ..constants import detect_provider, no_key_error
+
+
+class _TokenTrackingCallback(BaseCallbackHandler):
+    """LangChain callback that feeds on_llm_end token counts into a TokenAccumulator."""
+
+    def __init__(self, tracker: Any) -> None:
+        super().__init__()
+        self._tracker = tracker
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        for gen_list in response.generations:
+            for gen in gen_list:
+                if isinstance(gen, ChatGeneration):
+                    meta = getattr(gen.message, "usage_metadata", None)
+                    if meta:
+                        self._tracker.add(
+                            meta.get("input_tokens", 0),
+                            meta.get("output_tokens", 0),
+                        )
+
 
 # Module prefixes that identify LangChain-compatible LLM objects.
 LANGCHAIN_COMPATIBLE_PREFIXES = (
@@ -158,59 +181,14 @@ def build_langchain_compatible_llm(model_name: str) -> Optional[Any]:
 # ---------------------------------------------------------------------------
 
 
-try:
-    from langchain_core.callbacks import BaseCallbackHandler as _BaseCallbackHandler
-except ImportError:
-    _BaseCallbackHandler = object  # type: ignore[misc, assignment]
-
-
-class _TokenCountingCallback(_BaseCallbackHandler):
-    """LangChain callback handler that accumulates token usage."""
-
-    def __init__(self) -> None:
-        if _BaseCallbackHandler is not object:
-            super().__init__()
-        self.input_tokens: int = 0
-        self.output_tokens: int = 0
-
-    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
-        llm_output = getattr(response, "llm_output", None) or {}
-        usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
-        if usage:
-            self.input_tokens += usage.get("prompt_tokens", 0)
-            self.output_tokens += usage.get("completion_tokens", 0)
-            return
-        # Fallback: per-generation usage_metadata (newer LangChain / Anthropic)
-        for gens in getattr(response, "generations", []):
-            for gen in gens:
-                msg = getattr(gen, "message", None)
-                if msg is None:
-                    continue
-                meta = getattr(msg, "usage_metadata", None) or {}
-                self.input_tokens += meta.get("input_tokens", 0)
-                self.output_tokens += meta.get("output_tokens", 0)
-
-    def reset(self) -> Tuple[int, int]:
-        in_tok, out_tok = self.input_tokens, self.output_tokens
-        self.input_tokens = 0
-        self.output_tokens = 0
-        return in_tok, out_tok
-
-
 class LangChainAdapter(FrameworkAdapter):
     """Adapter for LangChain ``AgentExecutor`` agents."""
 
     invoke_method_name = "invoke"
 
     def __init__(self) -> None:
-        # Maps agent id → callback handler (installed on first get_invoke_fn call).
-        self._callbacks: Dict[int, _TokenCountingCallback] = {}
-
-    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        handler = self._callbacks.get(id(agent))
-        if handler is None:
-            return (0, 0)
-        return handler.reset()
+        # Maps id(agent_copy) → TokenAccumulator for parallel clones.
+        self._clone_trackers: dict = {}
 
     def _extract_prompt(self, agent_executor: Any) -> Any:
         """Extract the ChatPromptTemplate from a LangChain AgentExecutor's chain."""
@@ -267,77 +245,52 @@ class LangChainAdapter(FrameworkAdapter):
     def detect_model(self, model: Any) -> bool:
         return is_langchain_compatible_llm(model)
 
-    def _install_callback(self, agent: Any) -> None:
-        """Attach a _TokenCountingCallback to the executor's callbacks list."""
-        if id(agent) in self._callbacks:
-            return
-        handler = _TokenCountingCallback()
-        self._callbacks[id(agent)] = handler
-        agent.callbacks = list(agent.callbacks or []) + [handler]
-
     def get_invoke_fn(self, agent: Any) -> Callable:
+        callback = getattr(self, "_pending_callback", None)
+        if callback is not None:
+            original_invoke = agent.invoke
+
+            def _invoke_with_tracking(input_data: Any) -> Any:
+                return original_invoke(input_data, config={"callbacks": [callback]})
+
+            return _invoke_with_tracking
         return agent.invoke
+
+    def create_token_tracker(self, agent: Any = None) -> Any:
+        """Return the tracker pre-attached to a parallel clone's proxy, if any."""
+        if agent is not None:
+            tracker = self._clone_trackers.pop(id(agent), None)
+            if tracker is not None:
+                self._pending_callback = _TokenTrackingCallback(tracker)
+                return tracker
+        from ..token_tracking import TokenAccumulator
+
+        tracker = TokenAccumulator()
+        self._pending_callback = _TokenTrackingCallback(tracker)
+        return tracker
 
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]
     ) -> None:
-        """Register token counting and (for agent= path) LCEL chain rebuild sync.
-
-        Token tracking is installed on the LLM object itself for both paths —
-        executor-level callbacks are not reliably propagated to on_llm_end in
-        newer LangChain (0.3+) with LCEL-based AgentExecutor.
-        """
-        # Always install token tracking on the LLM itself.
-        if id(proxy) not in self._callbacks:
-            handler = _TokenCountingCallback()
-            self._callbacks[id(proxy)] = handler
-
-            def _reinstall(new_llm: Any, _h: _TokenCountingCallback = handler) -> None:
-                new_llm.callbacks = list(getattr(new_llm, "callbacks", None) or []) + [
-                    _h
-                ]
-
-            underlying = object.__getattribute__(proxy, "_optmodel")
-            _reinstall(underlying)
-            proxy._add_sync(_reinstall)
-
+        """Register LCEL chain rebuild sync and token tracking callback."""
         if agent is None:
-            return  # invoke_fn path: done
+            return  # invoke_fn path: no agent to attach to
 
-        # agent= path: also install LCEL chain rebuild sync.
+        # Install LCEL chain rebuild sync.
         tools = agent.tools
         prompt = self._extract_prompt(agent)
-        if prompt is None:
-            return  # can't rebuild without the prompt template
+        if prompt is not None:
 
-        def _sync(
-            new_llm: Any,
-            _exec: Any = agent,
-            _tools: list = tools,
-            _prompt: Any = prompt,
-        ) -> None:
-            LangChainAdapter._sync_executor(_exec, new_llm, _tools, _prompt)
+            def _sync(
+                new_llm: Any,
+                _exec: Any = agent,
+                _tools: list = tools,
+                _prompt: Any = prompt,
+                _proxy: Any = proxy,
+            ) -> None:
+                LangChainAdapter._sync_executor(_exec, _proxy, _tools, _prompt)
 
-        proxy._add_sync(_sync)
-
-    def wrap_invoke_fn_for_parallel(self, invoke_fn: Any) -> Any:
-        """Wrap invoke_fn to inject a token-counting callback via RunnableConfig.
-
-        The returned token_tracker is a _TokenCountingCallback whose counts
-        are accessible via get_token_usage(token_tracker).
-        LangGraph propagates RunnableConfig callbacks to all child runnables,
-        so on_llm_end fires on the fresh LLMs created by clone_fn.
-        """
-        from langchain_core.runnables import RunnableConfig
-
-        handler = _TokenCountingCallback()
-        self._callbacks[id(handler)] = handler
-        config = RunnableConfig(callbacks=[handler])
-
-        def wrapped(input_data):
-            return invoke_fn(input_data, config=config)
-
-        return handler, wrapped
+            proxy._add_sync(_sync)
 
     def clone_for_parallel(
         self,
@@ -383,10 +336,20 @@ class LangChainAdapter(FrameworkAdapter):
                 f"LangChainAdapter.clone_for_parallel: could not build LLM for '{model_name}'."
             )
 
-        new_agent_chain = create_tool_calling_agent(fresh_llm, tools, prompt)
+        # Wrap in a per-thread proxy so token interception works in parallel.
+        from ..proxy import ModelProxy
+        from ..token_tracking import TokenAccumulator
+
+        fresh_proxy = ModelProxy(fresh_llm)
+        tracker = TokenAccumulator()
+        fresh_proxy._set_token_tracker(tracker)
+
+        new_agent_chain = create_tool_calling_agent(fresh_proxy, tools, prompt)
         temp = AgentExecutor(agent=new_agent_chain, tools=tools)
         # Shallow-copy the executor structure, replacing only the agent chain.
-        return agent.model_copy(update={"agent": temp.agent}, deep=False)
+        clone = agent.model_copy(update={"agent": temp.agent}, deep=False)
+        self._clone_trackers[id(clone)] = tracker
+        return clone
 
 
 # Self-register — runs when this module is first imported.

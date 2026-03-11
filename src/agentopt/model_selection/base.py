@@ -190,7 +190,6 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
-        clone_fn: Optional[Callable] = None,
     ) -> None:
         """
         Initialize the model selector.
@@ -205,12 +204,6 @@ class BaseModelSelector(ABC):
                 LlamaIndex, OpenAI SDK).  Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent or multi-agent chain.
                 Mutually exclusive with *agent*.
-            clone_fn: Optional factory for parallel evaluation when *invoke_fn*
-                is used.  Called once per model combination with a
-                ``{proxy: model_name}`` dict; must return a fresh callable
-                (same signature as *invoke_fn*) that is independent of any
-                shared state.  Required for ``select_best(parallel=True)``
-                when *invoke_fn* is provided instead of *agent*.
         """
         if agent is None and invoke_fn is None:
             raise ValueError("Either 'agent' or 'invoke_fn' must be provided")
@@ -224,7 +217,6 @@ class BaseModelSelector(ABC):
         self.eval_fn = eval_fn
         self.dataset = dataset
         self._models = models
-        self.clone_fn = clone_fn
         self._proxies = list(models.keys())
 
         # Validate API keys for all candidate models.
@@ -232,7 +224,7 @@ class BaseModelSelector(ABC):
         for warning in warnings:
             raise ValueError(warning)
 
-        self._invoke_token_tracker = None
+        self._token_tracker = None
         if invoke_fn is not None:
             self.invoke_fn = invoke_fn
             self.is_async = inspect.iscoroutinefunction(invoke_fn)
@@ -242,24 +234,28 @@ class BaseModelSelector(ABC):
             from ..model_proxy.adapter import get_adapter_for_model
 
             for proxy in self._proxies:
-                # Try the proxy itself first (e.g. OpenAI SDK proxies registered
-                # as Model ABC virtual subclasses via patch_proxy_class).
-                adapter = get_adapter_for_model(proxy)
+                # Check the underlying model first for a more specific match,
+                # then fall back to the proxy itself.  This prevents the OpenAI
+                # SDK adapter (which registers ModelProxy as a virtual subclass
+                # of Model) from shadowing framework-specific adapters.
+                adapter = None
+                try:
+                    underlying = object.__getattribute__(proxy, "_optmodel")
+                    adapter = get_adapter_for_model(underlying)
+                except AttributeError:
+                    pass
                 if adapter is None:
-                    try:
-                        underlying = object.__getattribute__(proxy, "_optmodel")
-                        adapter = get_adapter_for_model(underlying)
-                    except AttributeError:
-                        pass
+                    adapter = get_adapter_for_model(proxy)
                 if adapter is not None:
                     self._adapter = adapter
+                    tracker = adapter.create_token_tracker()
+                    self._token_tracker = tracker
                     for p in self._proxies:
+                        p._set_token_tracker(tracker)
                         adapter.register_with_proxy(p, None, self._proxies)
-                    # Wrap invoke_fn for sequential token tracking.
-                    tracker, self.invoke_fn = adapter.wrap_invoke_fn_for_parallel(
-                        self.invoke_fn
+                    self.invoke_fn = adapter.wrap_invoke_fn_with_tracker(
+                        self.invoke_fn, tracker
                     )
-                    self._invoke_token_tracker = tracker
                     break
         else:
             # Auto-detect framework via adapter registry.
@@ -272,13 +268,16 @@ class BaseModelSelector(ABC):
                     "Pass 'invoke_fn' directly instead."
                 )
 
+            self._adapter = adapter
+            tracker = adapter.create_token_tracker(agent)
+            self._token_tracker = tracker
             self.invoke_fn = adapter.get_invoke_fn(agent)
             self.is_async = False  # all adapters wrap async internally
             self._invoke_method_name = getattr(adapter, "invoke_method_name", None)
-            self._adapter = adapter
 
             # Auto-register proxy ↔ agent sync for sequential evaluation.
             for proxy in self._proxies:
+                proxy._set_token_tracker(tracker)
                 adapter.register_with_proxy(proxy, agent, self._proxies)
 
     def _evaluate(
@@ -319,21 +318,7 @@ class BaseModelSelector(ABC):
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
 
-        in_tok, out_tok = 0, 0
-        if self._adapter is not None:
-            for proxy in self._proxies:
-                pi, po = self._adapter.get_token_usage(proxy)
-                in_tok += pi
-                out_tok += po
-            # Fall back to agent-level tracking for non-LangChain frameworks
-            # (CrewAI, LlamaIndex, AG2) that track at agent level, not LLM level.
-            if in_tok == 0 and out_tok == 0 and self.agent is not None:
-                in_tok, out_tok = self._adapter.get_token_usage(self.agent)
-            # Fall back to wrapped invoke_fn tracker (multi-LLM invoke_fn= path).
-            if in_tok == 0 and out_tok == 0 and self._invoke_token_tracker is not None:
-                in_tok, out_tok = self._adapter.get_token_usage(
-                    self._invoke_token_tracker
-                )
+        in_tok, out_tok = self._token_tracker.reset() if self._token_tracker else (0, 0)
 
         return avg_score, avg_latency, in_tok, out_tok
 
@@ -385,8 +370,7 @@ class BaseModelSelector(ABC):
         is_async: bool,
         eval_fn: EvalFn,
         dataset: Dataset,
-        adapter: Any = None,
-        agent: Any = None,
+        token_tracker: Any = None,
         label: str = "",
     ) -> Tuple[float, float, int, int]:
         """Evaluate an agent against the dataset. Thread-safe."""
@@ -410,9 +394,7 @@ class BaseModelSelector(ABC):
 
         avg_score = total_score / total if total > 0 else 0.0
         avg_latency = total_latency / total if total > 0 else 0.0
-        in_tok, out_tok = (
-            adapter.get_token_usage(agent) if adapter is not None else (0, 0)
-        )
+        in_tok, out_tok = token_tracker.reset() if token_tracker is not None else (0, 0)
         return avg_score, avg_latency, in_tok, out_tok
 
     @staticmethod

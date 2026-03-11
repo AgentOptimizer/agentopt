@@ -6,11 +6,11 @@ silently convert LLMConfig → AG2ConfigWrapper in ModelProxy.__init__
 so that set_model() can update the config in place.
 
 Additionally, ConversableAgent.__init__ is patched to auto-register
-agents with the proxy, so _sync_registered_frameworks() can recreate
-the LLMConfig and force client recreation on set_model().
-
-This is the same registration pattern used for OpenAI Agents SDK
-in openai_sdk.py.
+agents with the proxy and replace the agent's ``client`` with a
+``ProxyAwareWrapper`` — a subclass of ``OpenAIWrapper`` that resolves
+the LLM config from the proxy at call time.  This makes AG2 agents
+respect ``ModelProxy.set_model()`` and thread-local overrides for
+parallel evaluation.
 """
 
 from __future__ import annotations
@@ -20,18 +20,12 @@ import os
 import threading
 
 from ..adapter import FrameworkAdapter
-from typing import Any, Callable, Dict, List, Tuple
-
-# ---------------------------------------------------------------------------
-# Thread-local token tracking for parallel clone_fn path
-# ---------------------------------------------------------------------------
-
-_token_tracking_local = threading.local()
+from ..token_tracking import TokenAccumulator
+from typing import Any, Callable, List, Tuple
 
 
-def _read_total_tokens(agent: Any) -> Tuple[int, int]:
-    """Read cumulative prompt/completion tokens from agent.client.total_usage_summary."""
-    summary = getattr(getattr(agent, "client", None), "total_usage_summary", None)
+def _read_usage_summary(summary: Any) -> Tuple[int, int]:
+    """Extract (prompt_tokens, completion_tokens) from a usage summary dict."""
     if not isinstance(summary, dict):
         return (0, 0)
     in_tok = out_tok = 0
@@ -43,40 +37,10 @@ def _read_total_tokens(agent: Any) -> Tuple[int, int]:
     return (in_tok, out_tok)
 
 
-class _TrackedResponse:
-    """Wraps an AG2 response to accumulate token usage after events are consumed.
-
-    AG2 stores token usage in ``agent.client.total_usage_summary``, not in
-    conversation messages.  This wrapper intercepts ``events`` iteration and
-    records the delta in the accumulator after the generator is exhausted.
-    """
-
-    def __init__(
-        self, response: Any, agent: Any, before: Tuple[int, int], acc: Any
-    ) -> None:
-        self._response = response
-        # Store as an instance attribute so it shadows any class-level property.
-        self.events = self._build_tracked_events(response, agent, before, acc)
-
-    @staticmethod
-    def _build_tracked_events(response: Any, agent: Any, before: Tuple[int, int], acc: Any):  # type: ignore[override]
-        for event in response.events:
-            yield event
-        # Events exhausted — compute token delta from agent's usage summary.
-        after_in, after_out = _read_total_tokens(agent)
-        acc.input_tokens += after_in - before[0]
-        acc.output_tokens += after_out - before[1]
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._response, name)
-
-
-class _AG2TokenAccumulator:
-    """Accumulates token counts across multiple ConversableAgent.run() calls."""
-
-    def __init__(self) -> None:
-        self.input_tokens = 0
-        self.output_tokens = 0
+def _read_total_tokens(agent: Any) -> Tuple[int, int]:
+    """Read cumulative prompt/completion tokens from agent.client.total_usage_summary."""
+    summary = getattr(getattr(agent, "client", None), "total_usage_summary", None)
+    return _read_usage_summary(summary)
 
 
 def is_ag2_llm(llm: Any) -> bool:
@@ -122,6 +86,117 @@ class AG2ConfigWrapper:
 
 
 # ---------------------------------------------------------------------------
+# ProxyAwareWrapper — makes AG2 agents route LLM calls through the proxy
+# ---------------------------------------------------------------------------
+
+
+class ProxyAwareWrapper:
+    """Wrapper that resolves the LLM config from a ``ModelProxy`` at call time.
+
+    Each ``create()`` call reads the proxy's effective model (which is
+    thread-local–aware), obtains or rebuilds the appropriate ``OpenAIWrapper``,
+    and feeds token usage into the proxy's effective tracker.
+
+    **AG2 thread note:** AG2's ``agent.run()`` spawns an internal thread
+    (``initiate_chat``), so the LLM call happens in a *different* thread
+    from the one that set the proxy's thread-local override.  To handle
+    this, ``ProxyAwareWrapper`` snapshots the proxy's effective model and
+    tracker into instance-level attributes (``_override_model`` and
+    ``_override_tracker``) that are visible across threads.  These are
+    set/cleared by ``_set_thread_model``/``_clear_thread_model`` on the
+    proxy, which are called from the selectors.
+    """
+
+    def __init__(self, proxy: Any) -> None:
+        self._proxy = proxy
+        # Instance-level override — set by proxy._set_thread_model() hook.
+        self._override_model: Any = None  # AG2ConfigWrapper or None
+        self._override_tracker: Any = None  # TokenAccumulator or None
+        # Build the initial inner wrapper.
+        self._inner = self._build_inner_from(proxy._get_effective_model())
+        self._current_model = (
+            self._inner._config_list[0].get("model")
+            if self._inner._config_list
+            else None
+        )
+        # Expose usage summaries for _read_total_tokens compat.
+        self.total_usage_summary = self._inner.total_usage_summary
+        self.actual_usage_summary = self._inner.actual_usage_summary
+
+    @staticmethod
+    def _build_inner_from(wrapper: Any) -> Any:
+        """Build an OpenAIWrapper from an AG2ConfigWrapper."""
+        from autogen import LLMConfig
+        from autogen.oai.client import OpenAIWrapper
+
+        config = wrapper.config_list[0]
+        return OpenAIWrapper(**LLMConfig(config))
+
+    def _get_effective_model_and_tracker(self) -> Tuple[Any, Any]:
+        """Return (AG2ConfigWrapper, tracker), preferring instance override."""
+        if self._override_model is not None:
+            return self._override_model, self._override_tracker
+        return self._proxy._get_effective_model(), self._proxy._get_effective_tracker()
+
+    def create(self, **config: Any) -> Any:
+        """Resolve effective model, call inner wrapper, and track tokens."""
+        wrapper, tracker = self._get_effective_model_and_tracker()
+        model = wrapper.config_list[0].get("model")
+
+        # Rebuild inner wrapper if model changed.
+        if model != self._current_model:
+            self._inner = self._build_inner_from(wrapper)
+            self._current_model = model
+
+        response = self._inner.create(**config)
+
+        # Sync usage summaries for _read_total_tokens compat.
+        self.total_usage_summary = self._inner.total_usage_summary
+        self.actual_usage_summary = self._inner.actual_usage_summary
+
+        # Feed tokens into the effective tracker.
+        if tracker is not None and self._inner.actual_usage_summary:
+            in_tok, out_tok = _read_usage_summary(self._inner.actual_usage_summary)
+            if in_tok or out_tok:
+                tracker.add(in_tok, out_tok)
+
+        return response
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate everything else to the inner wrapper."""
+        return getattr(self._inner, name)
+
+
+# ---------------------------------------------------------------------------
+# _TrackingClientWrapper — token tracking for cloned agents (parallel path)
+# ---------------------------------------------------------------------------
+
+
+class _TrackingClientWrapper:
+    """Thin wrapper around OpenAIWrapper that feeds token usage into a tracker.
+
+    Used for cloned agents in parallel evaluation where there is no
+    ModelProxy / ProxyAwareWrapper — just a bare OpenAIWrapper that
+    needs its usage reported to a TokenAccumulator.
+    """
+
+    def __init__(self, inner: Any, tracker: TokenAccumulator) -> None:
+        self._inner = inner
+        self._tracker = tracker
+
+    def create(self, **kwargs: Any) -> Any:
+        response = self._inner.create(**kwargs)
+        if self._inner.actual_usage_summary:
+            in_tok, out_tok = _read_usage_summary(self._inner.actual_usage_summary)
+            if in_tok or out_tok:
+                self._tracker.add(in_tok, out_tok)
+        return response
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+# ---------------------------------------------------------------------------
 # FrameworkAdapter
 # ---------------------------------------------------------------------------
 
@@ -131,73 +206,33 @@ class AG2Adapter(FrameworkAdapter):
 
     invoke_method_name = "run"
 
-    def __init__(self) -> None:
-        # Maps agent id → last response, set by the invoke closure.
-        self._last_responses: Dict[int, Any] = {}
-
     def detect_model(self, model: Any) -> bool:
         return is_ag2_llm(model)
 
-    def get_token_usage(self, agent: Any) -> Tuple[int, int]:
-        stored = self._last_responses.pop(id(agent), None)
-        if stored is None:
-            return (0, 0)
-        if isinstance(stored, _AG2TokenAccumulator):
-            result = (stored.input_tokens, stored.output_tokens)
-            stored.input_tokens = 0
-            stored.output_tokens = 0
-            return result
-        return (0, 0)
+    def create_token_tracker(self, agent: Any = None) -> TokenAccumulator:
+        """Create a TokenAccumulator for AG2 token tracking.
 
-    def wrap_invoke_fn_for_parallel(self, invoke_fn: Any) -> Any:
-        """Wrap invoke_fn to capture token usage from any ConversableAgent.run() calls.
-
-        Introspects invoke_fn.__closure__ to find ConversableAgent instances and
-        patches their run() at the instance level (takes precedence over class method).
-        Uses thread-local storage so each parallel task tracks its own tokens
-        without cross-thread contamination.
+        When *agent* is provided and its client is a bare OpenAIWrapper
+        (not a ProxyAwareWrapper), wrap the client so that each create()
+        call feeds token counts into the tracker automatically.
         """
-        fresh_agents = []
-        try:
-            from autogen import ConversableAgent as _CA
+        tracker = TokenAccumulator()
+        self._current_tracker = tracker
+        if agent is not None and hasattr(agent, "client"):
+            client = agent.client
+            if not isinstance(client, ProxyAwareWrapper):
+                agent.client = _TrackingClientWrapper(client, tracker)
+        return tracker
 
-            if hasattr(invoke_fn, "__closure__") and invoke_fn.__closure__:
-                for cell in invoke_fn.__closure__:
-                    try:
-                        val = cell.cell_contents
-                        if isinstance(val, _CA):
-                            fresh_agents.append(val)
-                    except ValueError:
-                        pass
-        except ImportError:
-            pass
+    def wrap_invoke_fn_with_tracker(
+        self, invoke_fn: Any, tracker: TokenAccumulator
+    ) -> Any:
+        """No-op for AG2 — token tracking is handled by ProxyAwareWrapper.
 
-        acc = _AG2TokenAccumulator()
-        self._last_responses[id(acc)] = acc
-
-        for agent in fresh_agents:
-            _orig_run = agent.run
-
-            def _instance_patched_run(
-                *args: Any, _orig: Any = _orig_run, _agent: Any = agent, **kwargs: Any
-            ) -> Any:
-                before = _read_total_tokens(_agent)
-                response = _orig(*args, **kwargs)
-                _acc = getattr(_token_tracking_local, "accumulator", None)
-                if _acc is not None:
-                    return _TrackedResponse(response, _agent, before, _acc)
-                return response
-
-            agent.run = _instance_patched_run
-
-        def wrapped(input_data: Any) -> Any:
-            _token_tracking_local.accumulator = acc
-            try:
-                return invoke_fn(input_data)
-            finally:
-                _token_tracking_local.accumulator = None
-
-        return acc, wrapped
+        ProxyAwareWrapper.create() feeds token counts into the proxy's
+        effective tracker on every LLM call, so no external wrapping is needed.
+        """
+        return invoke_fn
 
     @classmethod
     def patch_proxy_class(cls, proxy_cls: type) -> None:
@@ -237,6 +272,7 @@ class AG2Adapter(FrameworkAdapter):
                 wrapper = AG2ConfigWrapper(model_name)
                 original_init(self, wrapper)
                 object.__setattr__(self, "_ag2_agents", [])
+                object.__setattr__(self, "_ag2_eval_lock", threading.Lock())
             else:
                 original_init(self, initial_model)
 
@@ -265,6 +301,9 @@ class AG2Adapter(FrameworkAdapter):
                 ag2_agents = object.__getattribute__(llm_config_arg, "_ag2_agents")
                 if self_agent not in ag2_agents:
                     ag2_agents.append(self_agent)
+                # Replace the agent's client with a proxy-aware wrapper so
+                # all LLM calls route through the proxy (thread-local aware).
+                self_agent.client = ProxyAwareWrapper(llm_config_arg)
 
         ConversableAgent.__init__ = _patched_agent_init
 
@@ -275,16 +314,17 @@ class AG2Adapter(FrameworkAdapter):
         )
 
     def get_invoke_fn(self, agent: Any) -> Callable:
-        """Wrap agent.run() to handle input dict and extract content."""
-        acc = _AG2TokenAccumulator()
-        self._last_responses[id(agent)] = acc
+        """Wrap agent.run() to handle input dict and extract content.
+
+        Token tracking is handled by ProxyAwareWrapper.create() — no
+        before/after delta tracking is needed here.
+        """
 
         def _invoke(input_data: Any) -> Any:
             if isinstance(input_data, dict):
                 message = input_data.get("input", str(input_data))
             else:
                 message = str(input_data)
-            before = _read_total_tokens(agent)
             response = agent.run(message=message, max_turns=1, user_input=False)
 
             def _extract(r: Any) -> str:
@@ -299,23 +339,25 @@ class AG2Adapter(FrameworkAdapter):
                     return last.content if hasattr(last, "content") else str(last)
                 return ""
 
-            result = _extract(response)
-            after_in, after_out = _read_total_tokens(agent)
-            acc.input_tokens += after_in - before[0]
-            acc.output_tokens += after_out - before[1]
-            return result
+            return _extract(response)
 
         return _invoke
 
     def register_with_proxy(
         self, proxy: Any, agent: Any, all_proxies: List[Any]
     ) -> None:
-        """Register sync callback that calls sync_ag2_agents on set_model()."""
+        """Register sync callback to update agent llm_config on set_model().
+
+        The ProxyAwareWrapper auto-resolves the model on each create() call,
+        so client recreation is not needed.  We update llm_config for
+        consistency (e.g. if user code reads agent.llm_config).
+        """
         try:
             ag2_agents = object.__getattribute__(proxy, "_ag2_agents")
         except AttributeError:
             ag2_agents: list = []
             object.__setattr__(proxy, "_ag2_agents", ag2_agents)
+            object.__setattr__(proxy, "_ag2_eval_lock", threading.Lock())
 
         if agent is None:
             return  # invoke_fn path: no agent sync needed
@@ -331,7 +373,6 @@ class AG2Adapter(FrameworkAdapter):
             new_config = LLMConfig(*new_llm.config_list)
             for ag in _agents:
                 ag.llm_config = new_config
-                ag.client = ag._create_client(new_config)
 
         proxy._add_sync(_sync)
 

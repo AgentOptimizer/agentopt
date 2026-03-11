@@ -180,24 +180,7 @@ def multiagent_example():
     def invoke_fn(input_data):
         return workflow.invoke(input_data)
 
-    def clone_fn(model_map):
-        """Build a fresh workflow for parallel evaluation.
-
-        model_map: {proxy -> model_name_string} for this combination.
-        Both solver and reviewer share the same model since there is one proxy.
-        """
-        model_name = model_map[proxy]
-        bare_name = model_name.split("/", 1)[-1] if "/" in model_name else model_name
-        print(f"  [clone_fn] building fresh workflow (model: {model_name})")
-        fresh_llm = (
-            ChatAnthropic(model=bare_name)
-            if "claude" in model_name
-            else ChatOpenAI(model=bare_name)
-        )
-        fresh_wf = MultiAgentWorkflow(solver_model=fresh_llm, reviewer_model=fresh_llm)
-        return fresh_wf.invoke
-
-    return proxy, invoke_fn, clone_fn
+    return proxy, invoke_fn, None
 
 
 def multiagent_multillm_example():
@@ -220,42 +203,13 @@ def multiagent_multillm_example():
     def invoke_fn(input_data):
         return agent.invoke(input_data)
 
-    def clone_fn(model_map):
-        """Build a fresh workflow for parallel evaluation.
-
-        model_map: {solver_proxy -> model_name, reviewer_proxy -> model_name}.
-        Each proxy maps to its own model candidate for this combination.
-        """
-        s_model = model_map[solver_proxy]
-        r_model = model_map[reviewer_proxy]
-        s_bare = s_model.split("/", 1)[-1] if "/" in s_model else s_model
-        r_bare = r_model.split("/", 1)[-1] if "/" in r_model else r_model
-        print(
-            f"  [clone_fn] building fresh workflow (solver: {s_model}, reviewer: {r_model})"
-        )
-        fresh_solver = (
-            ChatAnthropic(model=s_bare)
-            if "claude" in s_model
-            else ChatOpenAI(model=s_bare)
-        )
-        fresh_reviewer = (
-            ChatAnthropic(model=r_bare)
-            if "claude" in r_model
-            else ChatOpenAI(model=r_bare)
-        )
-        fresh_wf = MultiAgentWorkflow(
-            solver_model=fresh_solver, reviewer_model=fresh_reviewer
-        )
-        return fresh_wf.invoke
-
-    return (solver_proxy, reviewer_proxy), invoke_fn, clone_fn
+    return (solver_proxy, reviewer_proxy), invoke_fn, None
 
 
 def run_model_selection(
     agent_or_invoke_fn,
     llm_proxies,
     dataset_file=None,
-    clone_fn=None,
     parallel=False,
     model_candidates=None,
     selector_name: str = "brute_force",
@@ -274,16 +228,12 @@ def run_model_selection(
 
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "invoke"):
         kwargs = {"invoke_fn": agent_or_invoke_fn}
-        if clone_fn is not None:
-            kwargs["clone_fn"] = clone_fn
     else:
         kwargs = {"agent": agent_or_invoke_fn}
 
     if selector_name == "random_search":
         kwargs["sample_fraction"] = sample_fraction
 
-    mode = "parallel" if parallel else "sequential"
-    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
     SelectorCls = SELECTORS[selector_name]
     selector = SelectorCls(
         models=models,
@@ -341,7 +291,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--parallel",
         action="store_true",
-        help="Evaluate model combinations in parallel (requires clone_fn)",
+        help="Evaluate model combinations in parallel",
     )
     parser.add_argument(
         "--no-plot",
@@ -371,11 +321,11 @@ if __name__ == "__main__":
     print("\n[1] Setting up agents...")
     result = setup_fn()
 
-    # All setup functions now return (proxy_or_proxies, invoke_fn, clone_fn).
+    # All setup functions return (proxy_or_proxies, invoke_fn, _).
     if isinstance(result[0], tuple):
-        llm_proxies, agent_or_invoke, clone_fn = result
+        llm_proxies, agent_or_invoke, _ = result
     else:
-        llm_proxy, agent_or_invoke, clone_fn = result
+        llm_proxy, agent_or_invoke, _ = result
         llm_proxies = [llm_proxy]
 
     # Per-proxy candidates for multi-llm: both proxies search the same 2 models
@@ -390,7 +340,6 @@ if __name__ == "__main__":
         agent_or_invoke,
         llm_proxies,
         dataset_file=args.dataset,
-        clone_fn=clone_fn,
         parallel=args.parallel,
         model_candidates=per_proxy_candidates,
         selector_name=args.selector,

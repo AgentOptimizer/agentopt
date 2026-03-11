@@ -46,7 +46,6 @@ class HillClimbingModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[callable] = None,
-        clone_fn: Optional[callable] = None,
         max_iterations: int = 20,
         num_restarts: int = 3,
         patience: int = 3,
@@ -63,8 +62,6 @@ class HillClimbingModelSelector(BaseModelSelector):
                 Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent.
                 Mutually exclusive with *agent*.
-            clone_fn: Optional factory for parallel evaluation with invoke_fn.
-                See BaseModelSelector for full documentation.
             max_iterations: Maximum iterations per restart before stopping.
             num_restarts: Number of random restarts.
             patience: Stop a restart after this many consecutive iterations
@@ -76,7 +73,6 @@ class HillClimbingModelSelector(BaseModelSelector):
             eval_fn=eval_fn,
             agent=agent,
             invoke_fn=invoke_fn,
-            clone_fn=clone_fn,
             dataset=dataset,
         )
         self.max_iterations = max_iterations

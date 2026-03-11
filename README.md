@@ -86,12 +86,11 @@ results = selector.select_best()
 
 ### LangGraph
 
-LangGraph graphs are compiled state machines — use `invoke_fn` and `clone_fn` instead of `agent=`:
+LangGraph graphs are compiled state machines — use `invoke_fn` instead of `agent=`:
 
 ```python
 from langchain_openai import ChatOpenAI
 from agentopt import ModelProxy, ModelSelector
-from agentopt.model_factory import create_model_from_string
 
 # 1. Wrap the LLM
 llm = ChatOpenAI(model="gpt-4o-mini")
@@ -103,19 +102,12 @@ graph = build_my_graph(proxy)  # your compiled StateGraph
 def invoke_fn(input_data):
     return graph.invoke(input_data)
 
-# 3. clone_fn for parallel — rebuilds graph with fresh LLMs per combo
-def clone_fn(model_map):
-    fresh_llm = create_model_from_string(model_map[proxy])
-    fresh_graph = build_my_graph(fresh_llm)
-    return fresh_graph.invoke
-
-# 4. Run optimization
+# 3. Run optimization — parallel mode uses thread-local model overrides automatically
 selector = ModelSelector(
     models={proxy: ["gpt-4o-mini", "gpt-4o"]},
     eval_fn=my_eval_fn,
     dataset=dataset,
     invoke_fn=invoke_fn,
-    clone_fn=clone_fn,  # required for parallel=True with invoke_fn
 )
 results = selector.select_best(parallel=True)
 ```
@@ -175,7 +167,7 @@ results = selector.select_best()
 
 ### Claude Agent SDK
 
-The Claude SDK is functional (no persistent agent object), so use `invoke_fn` and `clone_fn`:
+The Claude SDK is functional (no persistent agent object), so use `invoke_fn`:
 
 ```python
 import asyncio
@@ -194,18 +186,11 @@ async def _query_async(prompt, options):
 def invoke_fn(input_data):
     return asyncio.run(_query_async(input_data["input"], proxy))
 
-def clone_fn(model_map):
-    fresh_options = ClaudeAgentOptions(model=model_map[proxy])
-    def fresh_invoke(input_data):
-        return asyncio.run(_query_async(input_data["input"], fresh_options))
-    return fresh_invoke
-
 selector = ModelSelector(
     models={proxy: ["haiku", "sonnet"]},  # Claude SDK uses short aliases
     eval_fn=my_eval_fn,
     dataset=dataset,
     invoke_fn=invoke_fn,
-    clone_fn=clone_fn,
 )
 results = selector.select_best(parallel=True)
 ```
@@ -383,7 +368,6 @@ results = selector.select_best(parallel=True)
 | `dataset` | `list[tuple[Any, str]]` | List of `(input_data, expected_answer)` tuples. `input_data` is passed directly to the agent's invoke method |
 | `agent` | `Any` | Agent object (CrewAI Crew, LangChain AgentExecutor, LlamaIndex AgentWorkflow, OpenAI SDK Agent, AG2 ConversableAgent). Mutually exclusive with `invoke_fn` |
 | `invoke_fn` | `callable` | Custom function `(input_data) -> result`. Use for LangGraph, Claude SDK, or custom pipelines. Mutually exclusive with `agent` |
-| `clone_fn` | `callable` | Factory `(model_map) -> invoke_fn` for parallel mode with `invoke_fn`. Required when using `invoke_fn` + `parallel=True` |
 
 **`select_best()` parameters:**
 
@@ -450,12 +434,12 @@ When `parallel=True`, `select_best()`:
 3. Evaluates all copies concurrently using `ThreadPoolExecutor`
 4. Sets the original proxies to the winning combination
 
-**With `invoke_fn=` + `clone_fn=`:**
-1. Calls `clone_fn(model_map)` once per combination to get an independent `invoke_fn`
-2. Each clone gets its own LLM instances — no shared mutable state
-3. Evaluates all clones concurrently
+**With `invoke_fn=`:**
+1. Each thread sets per-thread model overrides on the `ModelProxy` objects captured in the closure
+2. The proxy's `_get_effective_model()` returns the thread-local model, so each thread sees its own model
+3. Evaluates all combinations concurrently using `ThreadPoolExecutor`
 
-Each thread gets its own agent/invoke instance — no shared state, no conflicts.
+Each thread gets its own model instances via thread-local storage — no shared state, no conflicts.
 
 ### Multi-Agent / Multi-LLM Optimization
 
@@ -475,7 +459,6 @@ selector = ModelSelector(
     eval_fn=eval_fn,
     dataset=dataset,
     invoke_fn=my_pipeline,
-    clone_fn=my_clone_fn,
 )
 # Tests all 4 combinations: (mini,mini), (mini,4o), (4o,mini), (4o,4o)
 results = selector.select_best(parallel=True)
@@ -511,11 +494,11 @@ Each `ModelResult` contains:
 |-----------|----------------------|---------------|-----------------|-------------|----------|
 | CrewAI | Yes (duck typing) | `.kickoff()` | Yes | Yes | Yes (adapter) |
 | LangChain | Yes (duck typing) | `.invoke()` | Yes | Yes (multi-llm) | Sequential only |
-| LangGraph | N/A (uses `invoke_fn`) | graph `.invoke()` | Yes | Yes | Yes (via `clone_fn`) |
+| LangGraph | N/A (uses `invoke_fn`) | graph `.invoke()` | Yes | Yes | Yes (thread-local) |
 | LlamaIndex | No (Pydantic strict) | `.run()` (async) | Yes | Yes | Yes (adapter) |
-| OpenAI SDK | Yes (ABC virtual subclass) | `Runner.run_sync()` | OpenAI only | Yes (multi-llm) | Yes (via `clone_fn`) |
-| Claude SDK | N/A (uses `invoke_fn`) | `query()` (async) | Claude only | Yes | Yes (via `clone_fn`) |
-| AG2 | No (patched validation) | `.run()` | OpenAI + Anthropic | Yes | Yes (via `clone_fn`) |
+| OpenAI SDK | Yes (ABC virtual subclass) | `Runner.run_sync()` | OpenAI only | Yes (multi-llm) | Yes (adapter / thread-local) |
+| Claude SDK | N/A (uses `invoke_fn`) | `query()` (async) | Claude only | Yes | Yes (thread-local) |
+| AG2 | No (patched validation) | `.run()` | OpenAI + Anthropic | Yes | Yes (adapter / thread-local) |
 
 **Known limitations:**
 - **LangChain multi-agent parallel** does not work (sequential only)

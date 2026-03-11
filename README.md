@@ -388,6 +388,8 @@ AgentOpt includes four model selection strategies:
 
 - **`ArmEliminationModelSelector`** — Successive elimination strategy that evaluates combinations in rounds with growing batch sizes and drops statistically dominated arms using confidence bounds. Often reduces total API calls versus brute force.
 
+- **`BayesianOptimizationModelSelector`** — Gaussian process-based optimization that models the accuracy surface over model combinations and uses an acquisition function to select the most promising combination to evaluate next. Efficient for large search spaces.
+
 ```python
 from agentopt import (
     BaseModelSelector,
@@ -485,6 +487,8 @@ Each `ModelResult` contains:
 | `model_name` | `str` | Name of the model or combination |
 | `accuracy` | `float` | Average score across the dataset |
 | `latency_seconds` | `float` | Average latency per evaluation |
+| `input_tokens` | `int` | Total input tokens consumed |
+| `output_tokens` | `int` | Total output tokens consumed |
 | `attribute` | `str` | Grouping label (e.g., `"combination"`) |
 | `is_best` | `bool` | Whether this was the best result |
 
@@ -493,7 +497,7 @@ Each `ModelResult` contains:
 | Framework | Proxy works directly? | Invoke method | Cross-provider? | Multi-agent | Parallel |
 |-----------|----------------------|---------------|-----------------|-------------|----------|
 | CrewAI | Yes (duck typing) | `.kickoff()` | Yes | Yes | Yes (adapter) |
-| LangChain | Yes (duck typing) | `.invoke()` | Yes | Yes (multi-llm) | Sequential only |
+| LangChain | Yes (duck typing) | `.invoke()` | Yes | Yes (multi-llm) | Yes (adapter) |
 | LangGraph | N/A (uses `invoke_fn`) | graph `.invoke()` | Yes | Yes | Yes (thread-local) |
 | LlamaIndex | No (Pydantic strict) | `.run()` (async) | Yes | Yes | Yes (adapter) |
 | OpenAI SDK | Yes (ABC virtual subclass) | `Runner.run_sync()` | OpenAI only | Yes (multi-llm) | Yes (adapter / thread-local) |
@@ -501,7 +505,6 @@ Each `ModelResult` contains:
 | AG2 | No (patched validation) | `.run()` | OpenAI + Anthropic | Yes | Yes (adapter / thread-local) |
 
 **Known limitations:**
-- **LangChain multi-agent parallel** does not work (sequential only)
 - **OpenAI SDK** only supports OpenAI models natively
 - **Claude SDK** only supports Claude models (uses short aliases: `"haiku"`, `"sonnet"`, `"opus"`)
 - **AG2** supports OpenAI and Anthropic models natively; other providers not yet supported
@@ -545,13 +548,14 @@ agentopt/
 │   │   ├── proxy.py             # ModelProxy — transparent proxy, set_model(), register()
 │   │   ├── adapter.py           # FrameworkAdapter ABC + registry (get_adapter, register_adapter)
 │   │   ├── constants.py         # Framework detection helpers + MODEL_FIELDS
+│   │   ├── token_tracking.py    # TokenAccumulator + extract_usage()
 │   │   ├── builders.py          # Generic LLM rebuild helpers
 │   │   └── framework_specific_implementation/
 │   │       ├── crewai.py        # CrewAI support + CrewAIAdapter
 │   │       ├── langchain_compat.py  # LangChain support + LangChainAdapter
 │   │       ├── llamaindex.py    # LlamaIndex support + LlamaIndexAdapter + build_llamaindex_llm
 │   │       ├── openai_sdk.py    # OpenAI Agents SDK support + OpenAISDKAdapter
-│   │       └── ag2.py           # AG2 support + AG2Adapter + _build_ag2_config
+│   │       └── ag2.py           # AG2 support + AG2Adapter + ProxyAwareWrapper
 │   └── model_selection/
 │       ├── base.py              # BaseModelSelector, ModelResult, SelectionResults
 │       ├── brute_force.py       # BruteForceModelSelector (default ModelSelector)
@@ -583,8 +587,8 @@ uv run python examples/crewai_example.py single
 uv run python examples/crewai_example.py multi-llm --parallel
 
 # LangChain
-uv run python examples/langchain_example.py single
-uv run python examples/langchain_example.py multi-llm
+uv run python examples/langchain_example.py
+uv run python examples/langchain_example.py --parallel
 
 # LangGraph
 uv run python examples/langgraph_example.py multi

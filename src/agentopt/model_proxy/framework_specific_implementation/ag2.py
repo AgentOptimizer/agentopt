@@ -37,12 +37,6 @@ def _read_usage_summary(summary: Any) -> Tuple[int, int]:
     return (in_tok, out_tok)
 
 
-def _read_total_tokens(agent: Any) -> Tuple[int, int]:
-    """Read cumulative prompt/completion tokens from agent.client.total_usage_summary."""
-    summary = getattr(getattr(agent, "client", None), "total_usage_summary", None)
-    return _read_usage_summary(summary)
-
-
 def is_ag2_llm(llm: Any) -> bool:
     """Check if an LLM object is an AG2ConfigWrapper."""
     return isinstance(llm, AG2ConfigWrapper)
@@ -217,7 +211,6 @@ class AG2Adapter(FrameworkAdapter):
         call feeds token counts into the tracker automatically.
         """
         tracker = TokenAccumulator()
-        self._current_tracker = tracker
         if agent is not None and hasattr(agent, "client"):
             client = agent.client
             if not isinstance(client, ProxyAwareWrapper):

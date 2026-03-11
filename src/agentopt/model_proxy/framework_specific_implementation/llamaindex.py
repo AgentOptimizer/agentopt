@@ -304,7 +304,6 @@ class LlamaIndexAdapter(FrameworkAdapter):
                 cloned_agents[name] = ag.model_copy(
                     update={"llm": fresh_llm}, deep=False
                 )
-                print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
         elif n_proxies == n_agents:
             for (name, ag), model_spec in zip(agents_dict.items(), combo):
                 model_name = (
@@ -316,7 +315,6 @@ class LlamaIndexAdapter(FrameworkAdapter):
                 cloned_agents[name] = ag.model_copy(
                     update={"llm": fresh_llm}, deep=False
                 )
-                print(f"  [combo] {name} -> {model_name} ({type(fresh_llm).__name__})")
         else:
             logger.warning(
                 "Cannot map %d proxies to %d agents for parallel clone.",

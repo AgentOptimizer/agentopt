@@ -1,6 +1,5 @@
 """Shared token accumulator and usage extraction for all framework adapters."""
 
-import inspect
 import threading
 from typing import Any, Tuple
 

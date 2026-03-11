@@ -7,14 +7,13 @@ import inspect
 import logging
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
 from ..base_models import Dataset, EvalFn, validate_dataset
 from ..model_proxy import ModelProxy
-from ..model_proxy.constants import MODEL_FIELDS, validate_model_candidates
+from ..model_proxy.constants import validate_model_candidates
 
 logger = logging.getLogger(__name__)
 

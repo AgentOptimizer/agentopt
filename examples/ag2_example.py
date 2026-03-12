@@ -205,27 +205,26 @@ def run_model_selection(
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
     model_candidates = ["gpt-4o-mini", "gpt-5.1", "gpt-4o"]
 
-    models = {p: model_candidates for p in llm_proxies}
+    mode = "parallel" if parallel else "sequential"
+    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
     # Single agent: pass agent= so the selector auto-detects AG2's .run()
     # Multi-agent: pass invoke_fn= for custom chaining
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "run"):
-        kwargs = {"invoke_fn": agent_or_invoke_fn}
+        agent_key, agent_val = "invoke_fn", agent_or_invoke_fn
     else:
-        kwargs = {"agent": agent_or_invoke_fn}
+        agent_key, agent_val = "agent", agent_or_invoke_fn
 
-    if selector_kwargs:
-        kwargs.update(selector_kwargs)
-
-    mode = "parallel" if parallel else "sequential"
-    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
     SelectorCls = SELECTORS[selector_name]
-    selector = SelectorCls(
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        **kwargs,
-    )
+    base_kwargs = {
+        "models": {p: model_candidates for p in llm_proxies},
+        "eval_fn": eval_fn,
+        "dataset": dataset,
+        agent_key: agent_val,
+    }
+    if selector_kwargs:
+        base_kwargs.update(selector_kwargs)
+    selector = SelectorCls(**base_kwargs)
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
     return results

@@ -283,6 +283,12 @@ if __name__ == "__main__":
         help="Model selector to use (default: brute_force)",
     )
     parser.add_argument(
+        "--sample-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of combinations to evaluate when --selector=random_search",
+    )
+    parser.add_argument(
         "--reduction-factor",
         type=float,
         default=3.0,
@@ -311,6 +317,8 @@ if __name__ == "__main__":
     )
 
     selector_kwargs = {}
+    if args.selector == "random_search":
+        selector_kwargs["sample_fraction"] = args.sample_fraction
     if args.selector == "hyperband":
         selector_kwargs["reduction_factor"] = args.reduction_factor
 

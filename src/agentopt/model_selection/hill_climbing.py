@@ -285,14 +285,29 @@ class HillClimbingModelSelector(BaseModelSelector):
     # Public API
     # ------------------------------------------------------------------
 
-    def select_best(self) -> SelectionResults:
+    def select_best(
+        self,
+        parallel: bool = False,
+        max_workers: Optional[int] = None,
+    ) -> SelectionResults:
         """Run hill climbing with random restarts and return the best combination.
+
+        Args:
+            parallel: Must be False. Hill climbing does not support parallel
+                evaluation.
+            max_workers: Unused. Accepted for API compatibility.
 
         Returns:
             SelectionResults with all evaluated combinations; the best one
             is marked with ``is_best=True``.  The proxies are left set to
             the best combination found.
         """
+        assert not parallel, (
+            "HillClimbingModelSelector does not support parallel evaluation. "
+            "Hill climbing explores neighbors sequentially and cannot be parallelized. "
+            "Use parallel=False or choose a selector that supports parallel mode "
+            "(e.g., brute_force, random_search, arm_elimination, hyperband)."
+        )
         proxies = list(self._models.keys())
 
         all_results: List[ModelResult] = []

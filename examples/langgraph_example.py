@@ -229,17 +229,22 @@ def run_model_selection(
     models = model_candidates
 
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "invoke"):
-        kwargs = {"invoke_fn": agent_or_invoke_fn}
+        agent_key, agent_val = "invoke_fn", agent_or_invoke_fn
     else:
-        kwargs = {"agent": agent_or_invoke_fn}
-
-    if selector_kwargs:
-        kwargs.update(selector_kwargs)
-    if selector_name == "hyperband":
-        kwargs["reduction_factor"] = reduction_factor
+        agent_key, agent_val = "agent", agent_or_invoke_fn
 
     SelectorCls = SELECTORS[selector_name]
-    selector = SelectorCls(models=models, eval_fn=eval_fn, dataset=dataset, **kwargs)
+    base_kwargs = {
+        "models": models,
+        "eval_fn": eval_fn,
+        "dataset": dataset,
+        agent_key: agent_val,
+    }
+    if selector_kwargs:
+        base_kwargs.update(selector_kwargs)
+    if selector_name == "hyperband":
+        base_kwargs["reduction_factor"] = reduction_factor
+    selector = SelectorCls(**base_kwargs)
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
     return results

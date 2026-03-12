@@ -235,7 +235,7 @@ def run_model_selection(
 
     SelectorCls = SELECTORS[selector_name]
     base_kwargs = {
-        models={
+        "models": {
             llm_proxy: [
                 "openai/gpt-4o-mini",
                 "openai/gpt-4o",
@@ -243,9 +243,9 @@ def run_model_selection(
             ]
             for llm_proxy in llm_proxies
         },
-        eval_fn=eval_fn,
-        dataset=dataset,
-        agent=crew,
+        "eval_fn": eval_fn,
+        "dataset": dataset,
+        "agent": crew,
     }
     if selector_kwargs:
         base_kwargs.update(selector_kwargs)

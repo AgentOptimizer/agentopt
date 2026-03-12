@@ -111,18 +111,21 @@ def run_model_selection(
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
     SelectorCls = SELECTORS[selector_name]
-    selector = SelectorCls(
-        models={
+    base_kwargs = {
+        "models": {
             llm: [
                 "openai/gpt-4o-mini",
                 "openai/gpt-4o",
             ]
             for llm in llm_proxies
         },
-        eval_fn=eval_fn,
-        dataset=dataset,
-        agent=agent_or_invoke_fn,
-    )
+        "eval_fn": eval_fn,
+        "dataset": dataset,
+        "agent": agent_or_invoke_fn,
+    }
+    if selector_kwargs:
+        base_kwargs.update(selector_kwargs)
+    selector = SelectorCls(**base_kwargs)
 
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
@@ -152,8 +155,30 @@ def plot_results(results, title="Model Performance", save_path=None):
     plt.close()
 
 
+def multiagent_example():
+    raise SystemExit("Multi-agent (shared LLM) is not available for LangChain example.")
+
+
+def multiagent_multillm_example():
+    raise SystemExit(
+        "Multi-agent (separate LLMs) is not available for LangChain example."
+    )
+
+
+EXAMPLES = {
+    "single": ("Single-agent", single_agent_example),
+    "multi": ("Multi-agent (shared LLM)", multiagent_example),
+    "multi-llm": ("Multi-agent (separate LLMs)", multiagent_multillm_example),
+}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LangChain model selection example")
+    parser.add_argument(
+        "example",
+        choices=EXAMPLES.keys(),
+        help="Which example to run",
+    )
     parser.add_argument(
         "--parallel",
         action="store_true",
@@ -172,6 +197,12 @@ if __name__ == "__main__":
         help="Model selector to use (default: brute_force)",
     )
     parser.add_argument(
+        "--sample-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of combinations to evaluate when --selector=random_search",
+    )
+    parser.add_argument(
         "--reduction-factor",
         type=float,
         default=3.0,
@@ -179,25 +210,39 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    label, setup_fn = EXAMPLES[args.example]
     mode = "parallel" if args.parallel else "sequential"
 
     print("=" * 40)
-    print(f"Single-agent ({mode})")
+    print(f"{label} ({mode})")
     print("=" * 40)
 
     print("\n[1] Setting up agents...")
-    llm_proxy, agent_executor = single_agent_example()
+    result = setup_fn()
+    # multi-llm returns a tuple of proxies; the others return a single proxy
+    if isinstance(result[0], tuple):
+        llm_proxies, agent_executor = result
+    else:
+        llm_proxy, agent_executor = result
+        llm_proxies = [llm_proxy]
 
     print("\n[2] Running model selection...")
+    selector_kwargs = {}
+    if args.selector == "random_search":
+        selector_kwargs["sample_fraction"] = args.sample_fraction
+    if args.selector == "hyperband":
+        selector_kwargs["reduction_factor"] = args.reduction_factor
+
     results = run_model_selection(
         agent_executor,
-        [llm_proxy],
+        llm_proxies,
         parallel=args.parallel,
         dataset_file=args.dataset,
         selector_name=args.selector,
+        selector_kwargs=selector_kwargs,
     )
 
     print("\n[3] Saving results plot...")
     plot_results(
-        results, "LangChain Single-agent Results", "examples/langchain_results.png"
+        results, f"LangChain {label} Results", "examples/langchain_results.png"
     )

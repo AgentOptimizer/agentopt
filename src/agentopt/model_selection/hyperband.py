@@ -131,8 +131,9 @@ class HyperbandModelSelector(BaseModelSelector):
         total_configs = len(all_combinations)
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
-        combo_latencies: Dict[int, List[float]] = {
-            i: [] for i in range(total_configs)
+        combo_latencies: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
+        combo_tokens: Dict[int, Dict[str, Tuple[int, int]]] = {
+            i: {} for i in range(total_configs)
         }
 
         print(f"\n{'='*60}")
@@ -148,9 +149,7 @@ class HyperbandModelSelector(BaseModelSelector):
             # Number of configurations (theoretical) and initial resource for this bracket.
             n_s = int(
                 math.ceil(
-                    (self._B / self.max_resource)
-                    * (self.reduction_factor**s)
-                    / (s + 1)
+                    (self._B / self.max_resource) * (self.reduction_factor**s) / (s + 1)
                 )
             )
             r_s = int(self.max_resource * (self.reduction_factor ** (-s)))
@@ -199,9 +198,12 @@ class HyperbandModelSelector(BaseModelSelector):
                     for proxy, model_obj in zip(proxies, combo):
                         proxy.set_model(model_obj)
 
-                    scores, latencies = self._evaluate_batch(batch, label=combo_name)
+                    scores, latencies, tokens = self._evaluate_batch(
+                        batch, label=combo_name
+                    )
                     combo_scores[idx].extend(scores)
                     combo_latencies[idx].extend(latencies)
+                    self._merge_tokens(combo_tokens[idx], tokens)
 
                     mu = (
                         sum(combo_scores[idx]) / len(combo_scores[idx])
@@ -253,13 +255,14 @@ class HyperbandModelSelector(BaseModelSelector):
                 avg_latency = sum(latencies) / len(latencies)
             else:
                 accuracy, avg_latency = 0.0, 0.0
+            in_tokens, out_tokens = self._split_tokens(combo_tokens[idx])
             all_results.append(
                 ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,
-                    input_tokens={},
-                    output_tokens={},
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
                     attribute="combination",
                     is_best=False,
                 )
@@ -290,6 +293,10 @@ class HyperbandModelSelector(BaseModelSelector):
     # ------------------------------------------------------------------
 
     def _select_parallel(self, max_workers: Optional[int] = None) -> SelectionResults:
+        from ..model_proxy.adapter import get_adapter
+        from ..model_proxy.builders import build_llm
+        from ..model_proxy.token_tracking import TokenAccumulator
+
         proxies = list(self._models.keys())
         candidate_lists = list(self._models.values())
         all_combinations = list(itertools.product(*candidate_lists))
@@ -297,15 +304,7 @@ class HyperbandModelSelector(BaseModelSelector):
 
         total_configs = len(all_combinations)
 
-        invoke_method_name = self._invoke_method_name
-        if invoke_method_name is None and self.clone_fn is None:
-            raise RuntimeError(
-                "Parallel mode requires either agent= or clone_fn= alongside invoke_fn=."
-            )
-
-        from ..model_proxy.adapter import get_adapter
-
-        adapter = get_adapter(self.agent) if self.agent is not None else None
+        adapter = get_adapter(self.agent) if self.agent is not None else self._adapter
 
         if max_workers is None:
             max_workers = total_configs
@@ -319,18 +318,14 @@ class HyperbandModelSelector(BaseModelSelector):
         print(f"  s_max={self._s_max}, B={self._B}")
         print(f"{'='*60}")
 
-        # Phase 1: Clone agents for all combinations (serial).
-        print(f"\n  Cloning agents for {total_configs} combinations ...")
-        tasks: Dict[int, Tuple[str, tuple, Callable, bool]] = {}
-        for idx, combo in enumerate(all_combinations):
-            combo_name = " + ".join(self._get_model_name(m) for m in combo)
-            print(f"    clone {idx+1}/{total_configs}: {combo_name}", flush=True)
-            try:
-                if self.clone_fn is not None:
-                    model_map = dict(zip(proxies, combo))
-                    fresh_invoke = self.clone_fn(model_map)
-                    tasks[idx] = (combo_name, combo, fresh_invoke, self.is_async)
-                else:
+        if self.agent is not None:
+            # Agent-based path: clone per combination (serial cloning).
+            print(f"\n  Cloning agents for {total_configs} combinations ...")
+            tasks: Dict[int, Tuple[str, tuple, Callable, bool, Any]] = {}
+            for idx, combo in enumerate(all_combinations):
+                combo_name = " + ".join(self._get_model_name(m) for m in combo)
+                print(f"    clone {idx+1}/{total_configs}: {combo_name}", flush=True)
+                try:
                     if adapter is not None:
                         agent_copy = adapter.clone_for_parallel(
                             self.agent, proxies, combo, self._get_model_name
@@ -341,25 +336,68 @@ class HyperbandModelSelector(BaseModelSelector):
 
                         agent_copy = copy.deepcopy(self.agent)
                         invoke_fn = self._make_invoke_fn(
-                            agent_copy, invoke_method_name, self.is_async
+                            agent_copy, self._invoke_method_name, self.is_async
                         )
-                    tasks[idx] = (combo_name, combo, invoke_fn, False)
-            except Exception as e:
-                logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
+                    tracker = (
+                        adapter.create_token_tracker(agent_copy)
+                        if adapter is not None
+                        else None
+                    )
+                    tasks[idx] = (combo_name, combo, invoke_fn, False, tracker)
+                except Exception as e:
+                    logger.warning("Clone failed for [%s], skipping: %s", combo_name, e)
 
-        if not tasks:
-            raise RuntimeError("All clone attempts failed. Cannot evaluate any models.")
+            if not tasks:
+                raise RuntimeError(
+                    "All clone attempts failed. Cannot evaluate any models."
+                )
+        else:
+            # invoke_fn path: prepare task entries (thread-local will be set per round).
+            tasks = {}
+            for idx, combo in enumerate(all_combinations):
+                combo_name = " + ".join(self._get_model_name(m) for m in combo)
+                tasks[idx] = (combo_name, combo, self.invoke_fn, self.is_async, None)
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in tasks}
         combo_latencies: Dict[int, List[float]] = {i: [] for i in tasks}
+        combo_tokens: Dict[int, Dict[str, Tuple[int, int]]] = {i: {} for i in tasks}
+
+        use_thread_local = self.agent is None
+
+        def _eval_batch_thread_local(
+            combo: tuple,
+            batch: List[Tuple[Any, Any]],
+            label: str,
+        ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
+            """Set thread-local models, evaluate batch, then clean up."""
+            tracker = TokenAccumulator()
+            for proxy, model_spec in zip(proxies, combo):
+                model_name = self._get_model_name(model_spec)
+                current_model = object.__getattribute__(proxy, "_optmodel")
+                fresh_model = build_llm(model_name, current_model)
+                if fresh_model is None:
+                    raise RuntimeError(
+                        f"Cannot build model '{model_name}' for parallel evaluation."
+                    )
+                proxy._set_thread_model(fresh_model, tracker)
+            try:
+                return self._evaluate_batch_static(
+                    self.invoke_fn,
+                    self.is_async,
+                    self.eval_fn,
+                    batch,
+                    label,
+                    token_tracker=tracker,
+                )
+            finally:
+                for proxy in proxies:
+                    proxy._clear_thread_model()
 
         # Iterate brackets from most aggressive to least (standard Hyperband).
         for s in reversed(range(self._s_max + 1)):
             n_s = int(
                 math.ceil(
-                    (self._B / self.max_resource)
-                    * (self.reduction_factor**s)
-                    / (s + 1)
+                    (self._B / self.max_resource) * (self.reduction_factor**s) / (s + 1)
                 )
             )
             r_s = int(self.max_resource * (self.reduction_factor ** (-s)))
@@ -404,24 +442,33 @@ class HyperbandModelSelector(BaseModelSelector):
                     max_workers=min(max_workers, len(current_indices))
                 ) as executor:
                     for idx in current_indices:
-                        combo_name, _, invoke_fn, is_async_flag = tasks[idx]
-                        future = executor.submit(
-                            self._evaluate_batch_static,
-                            invoke_fn,
-                            is_async_flag,
-                            self.eval_fn,
-                            batch,
-                            combo_name,
-                        )
+                        combo_name, combo, invoke_fn, is_async_flag, tracker = tasks[
+                            idx
+                        ]
+                        if use_thread_local:
+                            future = executor.submit(
+                                _eval_batch_thread_local, combo, batch, combo_name
+                            )
+                        else:
+                            future = executor.submit(
+                                self._evaluate_batch_static,
+                                invoke_fn,
+                                is_async_flag,
+                                self.eval_fn,
+                                batch,
+                                combo_name,
+                                tracker,
+                            )
                         future_to_idx[future] = idx
 
                     for future in as_completed(future_to_idx):
                         idx = future_to_idx[future]
                         combo_name = tasks[idx][0]
                         try:
-                            scores, latencies = future.result()
+                            scores, latencies, tokens = future.result()
                             combo_scores[idx].extend(scores)
                             combo_latencies[idx].extend(latencies)
+                            self._merge_tokens(combo_tokens[idx], tokens)
                             mu = (
                                 sum(combo_scores[idx]) / len(combo_scores[idx])
                                 if combo_scores[idx]
@@ -475,13 +522,14 @@ class HyperbandModelSelector(BaseModelSelector):
                 avg_latency = sum(latencies) / len(latencies)
             else:
                 accuracy, avg_latency = 0.0, 0.0
+            in_tokens, out_tokens = self._split_tokens(combo_tokens.get(idx, {}))
             all_results.append(
                 ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,
-                    input_tokens=0,
-                    output_tokens=0,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
                     attribute="combination",
                     is_best=False,
                 )
@@ -511,12 +559,25 @@ class HyperbandModelSelector(BaseModelSelector):
     # Batch evaluation helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _merge_tokens(
+        accumulated: Dict[str, Tuple[int, int]],
+        new_tokens: Dict[str, Tuple[int, int]],
+    ) -> None:
+        """Merge new_tokens into accumulated token dict in-place."""
+        for model, (inp, out) in new_tokens.items():
+            if model in accumulated:
+                prev_inp, prev_out = accumulated[model]
+                accumulated[model] = (prev_inp + inp, prev_out + out)
+            else:
+                accumulated[model] = (inp, out)
+
     def _evaluate_batch(
         self,
         batch: List[Tuple[Any, Any]],
         label: str = "",
-    ) -> Tuple[List[float], List[float]]:
-        """Evaluate current invoke_fn on a batch; return per-sample scores and latencies."""
+    ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
+        """Evaluate current invoke_fn on a batch; return per-sample scores, latencies, and tokens."""
         scores: List[float] = []
         latencies: List[float] = []
         for i, (input_data, expected_answer) in enumerate(batch, 1):
@@ -532,7 +593,8 @@ class HyperbandModelSelector(BaseModelSelector):
                 latencies.append(latency)
             except Exception as e:
                 logger.warning("[%s] sample %d error: %s", label, i, e)
-        return scores, latencies
+        tokens = self._token_tracker.reset() if self._token_tracker else {}
+        return scores, latencies, tokens
 
     @staticmethod
     def _evaluate_batch_static(
@@ -541,8 +603,9 @@ class HyperbandModelSelector(BaseModelSelector):
         eval_fn: EvalFn,
         batch: List[Tuple[Any, Any]],
         label: str = "",
-    ) -> Tuple[List[float], List[float]]:
-        """Thread-safe batch evaluation returning per-sample scores and latencies."""
+        token_tracker: Any = None,
+    ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
+        """Thread-safe batch evaluation returning per-sample scores, latencies, and tokens."""
         scores: List[float] = []
         latencies: List[float] = []
         for i, (input_data, expected_answer) in enumerate(batch, 1):
@@ -558,5 +621,5 @@ class HyperbandModelSelector(BaseModelSelector):
                 latencies.append(latency)
             except Exception as e:
                 logger.debug("[%s] sample %d error: %s", label, i, e)
-        return scores, latencies
-
+        tokens = token_tracker.reset() if token_tracker is not None else {}
+        return scores, latencies, tokens

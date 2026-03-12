@@ -143,20 +143,16 @@ def run_model_selection(
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
-    kwargs = {
+    SelectorCls = SELECTORS[selector_name]
+    base_kwargs = {
+        "models": {llm: model_candidates for llm in llm_proxies},
+        "eval_fn": eval_fn,
+        "dataset": dataset,
         "invoke_fn": invoke_fn,
     }
-
     if selector_kwargs:
-        kwargs.update(selector_kwargs)
-
-    SelectorCls = SELECTORS[selector_name]
-    selector = SelectorCls(
-        models={llm: model_candidates for llm in llm_proxies},
-        eval_fn=eval_fn,
-        dataset=dataset,
-        **kwargs,
-    )
+        base_kwargs.update(selector_kwargs)
+    selector = SelectorCls(**base_kwargs)
 
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")

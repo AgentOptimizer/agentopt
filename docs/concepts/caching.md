@@ -66,8 +66,6 @@ The cache is backed by a JSON file. It:
 - Creates parent directories automatically
 - Recovers gracefully from corrupt JSON files (starts fresh with a warning)
 
-## API
+## API Reference
 
-::: agentopt.cache.ResponseCache
-
-::: agentopt.cache.NoCache
+See the [API reference page](../api/cache.md) for full class documentation (available once [PR #92](https://github.com/TianyiPeng/agentopt/pull/92) is merged).

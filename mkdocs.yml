@@ -1,0 +1,95 @@
+site_name: AgentOpt
+site_description: Framework-agnostic optimization for LLM-powered agents
+site_url: https://tianyipeng.github.io/agentopt/
+repo_url: https://github.com/TianyiPeng/agentopt
+repo_name: TianyiPeng/agentopt
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
+            members_order: source
+            docstring_style: numpy
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Concepts:
+    - ModelProxy: concepts/model-proxy.md
+    - Model Selection: concepts/model-selection.md
+    - Selection Strategies: concepts/strategies.md
+    - Caching: concepts/caching.md
+    - Framework Adapters: concepts/adapters.md
+  - Frameworks:
+    - Overview: frameworks/overview.md
+    - CrewAI: frameworks/crewai.md
+    - LangChain: frameworks/langchain.md
+    - LangGraph: frameworks/langgraph.md
+    - LlamaIndex: frameworks/llamaindex.md
+    - OpenAI Agents SDK: frameworks/openai-sdk.md
+    - Claude Agent SDK: frameworks/claude-sdk.md
+    - AG2: frameworks/ag2.md
+    - Custom: frameworks/custom.md
+  - API Reference:
+    - agentopt: api/index.md
+    - ModelProxy: api/model-proxy.md
+    - Model Selection: api/model-selection.md
+    - Cache: api/cache.md
+    - Types: api/types.md

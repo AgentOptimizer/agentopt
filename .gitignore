@@ -45,3 +45,6 @@ examples/*.csv
 examples/*.png
 examples/__pycache__/
 CLAUDE.md
+
+# MkDocs build output
+site/

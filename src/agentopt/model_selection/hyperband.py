@@ -12,11 +12,9 @@ This selector is designed to be simple for end users:
     between the number of configurations and per-configuration budget.
 """
 
-import asyncio
 import itertools
 import logging
 import math
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -198,7 +196,7 @@ class HyperbandModelSelector(BaseModelSelector):
                     for proxy, model_obj in zip(proxies, combo):
                         proxy.set_model(model_obj)
 
-                    scores, latencies, tokens = self._evaluate_batch(
+                    scores, latencies, tokens = self._evaluate_sequential(
                         batch, label=combo_name
                     )
                     combo_scores[idx].extend(scores)
@@ -381,13 +379,13 @@ class HyperbandModelSelector(BaseModelSelector):
                     )
                 proxy._set_thread_model(fresh_model, tracker)
             try:
-                return self._evaluate_batch_static(
+                return self._evaluate_thread_safe(
                     self.invoke_fn,
                     self.is_async,
                     self.eval_fn,
                     batch,
-                    label,
                     token_tracker=tracker,
+                    label=label,
                 )
             finally:
                 for proxy in proxies:
@@ -451,13 +449,13 @@ class HyperbandModelSelector(BaseModelSelector):
                             )
                         else:
                             future = executor.submit(
-                                self._evaluate_batch_static,
+                                self._evaluate_thread_safe,
                                 invoke_fn,
                                 is_async_flag,
                                 self.eval_fn,
                                 batch,
-                                combo_name,
                                 tracker,
+                                combo_name,
                             )
                         future_to_idx[future] = idx
 
@@ -571,55 +569,3 @@ class HyperbandModelSelector(BaseModelSelector):
                 accumulated[model] = (prev_inp + inp, prev_out + out)
             else:
                 accumulated[model] = (inp, out)
-
-    def _evaluate_batch(
-        self,
-        batch: List[Tuple[Any, Any]],
-        label: str = "",
-    ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
-        """Evaluate current invoke_fn on a batch; return per-sample scores, latencies, and tokens."""
-        scores: List[float] = []
-        latencies: List[float] = []
-        for i, (input_data, expected_answer) in enumerate(batch, 1):
-            try:
-                start = time.time()
-                if self.is_async:
-                    actual = asyncio.run(self.invoke_fn(input_data))
-                else:
-                    actual = self.invoke_fn(input_data)
-                latency = time.time() - start
-                score = float(self.eval_fn(expected_answer, actual))
-                scores.append(score)
-                latencies.append(latency)
-            except Exception as e:
-                logger.warning("[%s] sample %d error: %s", label, i, e)
-        tokens = self._token_tracker.reset() if self._token_tracker else {}
-        return scores, latencies, tokens
-
-    @staticmethod
-    def _evaluate_batch_static(
-        invoke_fn: Callable,
-        is_async: bool,
-        eval_fn: EvalFn,
-        batch: List[Tuple[Any, Any]],
-        label: str = "",
-        token_tracker: Any = None,
-    ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
-        """Thread-safe batch evaluation returning per-sample scores, latencies, and tokens."""
-        scores: List[float] = []
-        latencies: List[float] = []
-        for i, (input_data, expected_answer) in enumerate(batch, 1):
-            try:
-                start = time.time()
-                if is_async:
-                    actual = asyncio.run(invoke_fn(input_data))
-                else:
-                    actual = invoke_fn(input_data)
-                latency = time.time() - start
-                score = float(eval_fn(expected_answer, actual))
-                scores.append(score)
-                latencies.append(latency)
-            except Exception as e:
-                logger.debug("[%s] sample %d error: %s", label, i, e)
-        tokens = token_tracker.reset() if token_tracker is not None else {}
-        return scores, latencies, tokens

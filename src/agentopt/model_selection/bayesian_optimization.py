@@ -146,7 +146,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
         def evaluate_combo(combo: Tuple[int, ...]) -> Tuple[float, float, Dict]:
             set_proxies_from_combo(combo)
-            return self._evaluate(self.dataset)
+            scores, latencies, tokens = self._evaluate_sequential(self.dataset)
+            accuracy, _ = self._compute_stats(scores)
+            latency = sum(latencies) / len(latencies) if latencies else 0.0
+            return accuracy, latency, tokens
 
         print(f"\n{'='*60}")
         print(

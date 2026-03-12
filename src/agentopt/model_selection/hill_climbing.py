@@ -7,7 +7,7 @@ rather than blindly exploring the full Cartesian product.
 """
 
 import random
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
@@ -45,7 +45,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         eval_fn: EvalFn,
         dataset: Dataset,
         agent: Any = None,
-        invoke_fn: Optional[callable] = None,
+        invoke_fn: Optional[Callable] = None,
         max_iterations: int = 20,
         num_restarts: int = 3,
         patience: int = 3,
@@ -213,14 +213,21 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             # Re-use cached result if this combination was already evaluated.
             if combo_name in self._eval_cache:
-                accuracy, latency, tokens = self._eval_cache[combo_name]
+                accuracy, latency, in_tokens, out_tokens = self._eval_cache[combo_name]
                 cached = True
             else:
-                accuracy, latency, tokens = self._evaluate(self.dataset)
-                self._eval_cache[combo_name] = (accuracy, latency, tokens)
+                scores, latencies, tokens = self._evaluate_sequential(self.dataset)
+                accuracy, _ = self._compute_stats(scores)
+                latency = sum(latencies) / len(latencies) if latencies else 0.0
+                in_tokens, out_tokens = self._split_tokens(tokens)
+                self._eval_cache[combo_name] = (
+                    accuracy,
+                    latency,
+                    in_tokens,
+                    out_tokens,
+                )
                 cached = False
 
-            in_tokens, out_tokens = self._split_tokens(tokens)
             result = ModelResult(
                 model_name=combo_name,
                 accuracy=accuracy,

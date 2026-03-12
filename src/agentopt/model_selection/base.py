@@ -5,6 +5,7 @@ Base classes and result types for model selection.
 import asyncio
 import inspect
 import logging
+import math
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -297,11 +298,11 @@ class BaseModelSelector(ABC):
                 proxy._set_token_tracker(tracker)
                 adapter.register_with_proxy(proxy, agent, self._proxies)
 
-    def _evaluate(
+    def _evaluate_sequential(
         self,
         evaluation_tasks: Dataset,
         label: str = "",
-    ) -> Tuple[float, float, Dict[str, Tuple[int, int]]]:
+    ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
         """
         Evaluate the current state of the agent against a list of tasks.
 
@@ -310,12 +311,13 @@ class BaseModelSelector(ABC):
             label: Display label for progress traces.
 
         Returns:
-            Tuple of (score, avg_latency_seconds, tokens_by_model) where
-            tokens_by_model maps model name to (input_tokens, output_tokens).
+            Tuple of (scores, latencies, tokens_by_model) where scores and
+            latencies are per-sample lists and tokens_by_model maps model
+            name to (input_tokens, output_tokens).
         """
-        total_score = 0.0
+        scores: List[float] = []
+        latencies: List[float] = []
         total = len(evaluation_tasks)
-        total_latency = 0.0
 
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
             try:
@@ -325,20 +327,15 @@ class BaseModelSelector(ABC):
                 else:
                     actual_result = self.invoke_fn(input_data)
                 latency = time.time() - start_time
-                total_latency += latency
-
-                score = self.eval_fn(expected_answer, actual_result)
-                total_score += float(score)
-
+                score = float(self.eval_fn(expected_answer, actual_result))
+                scores.append(score)
+                latencies.append(latency)
             except Exception as e:
                 logger.warning("[%s] sample %d/%d error: %s", label, i, total, e)
 
-        avg_score = total_score / total if total > 0 else 0.0
-        avg_latency = total_latency / total if total > 0 else 0.0
-
         tokens = self._token_tracker.reset() if self._token_tracker else {}
 
-        return avg_score, avg_latency, tokens
+        return scores, latencies, tokens
 
     def _get_model_name(self, model_obj: Any) -> str:
         """Extract model name from model object for display purposes."""
@@ -383,18 +380,18 @@ class BaseModelSelector(ABC):
             return method
 
     @staticmethod
-    def _evaluate_single(
+    def _evaluate_thread_safe(
         invoke_fn: Callable,
         is_async: bool,
         eval_fn: EvalFn,
         dataset: Dataset,
         token_tracker: Any = None,
         label: str = "",
-    ) -> Tuple[float, float, Dict[str, Tuple[int, int]]]:
+    ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
         """Evaluate an agent against the dataset. Thread-safe."""
-        total_score = 0.0
+        scores: List[float] = []
+        latencies: List[float] = []
         total = len(dataset)
-        total_latency = 0.0
 
         for i, (input_data, expected_answer) in enumerate(dataset, 1):
             try:
@@ -404,16 +401,14 @@ class BaseModelSelector(ABC):
                 else:
                     actual_result = invoke_fn(input_data)
                 latency = time.time() - start_time
-                total_latency += latency
-                score = eval_fn(expected_answer, actual_result)
-                total_score += float(score)
+                score = float(eval_fn(expected_answer, actual_result))
+                scores.append(score)
+                latencies.append(latency)
             except Exception as e:
                 logger.debug("[%s] sample %d/%d error: %s", label, i, total, e)
 
-        avg_score = total_score / total if total > 0 else 0.0
-        avg_latency = total_latency / total if total > 0 else 0.0
         tokens = token_tracker.reset() if token_tracker is not None else {}
-        return avg_score, avg_latency, tokens
+        return scores, latencies, tokens
 
     @staticmethod
     def _split_tokens(
@@ -447,6 +442,22 @@ class BaseModelSelector(ABC):
                 best_latency = r.latency_seconds
 
         return (best.model_name, best.accuracy) if best else None
+
+    @staticmethod
+    def _compute_stats(scores: List[float]) -> Tuple[float, float]:
+        """Return (mean, sample_std) for a list of scores.
+
+        Returns (0.0, 0.5) when scores is empty and (mean, 0.5) when there
+        is only one sample — both cases represent high uncertainty.
+        """
+        n = len(scores)
+        if n == 0:
+            return 0.0, 0.5
+        mean = sum(scores) / n
+        if n < 2:
+            return mean, 0.5
+        variance = sum((s - mean) ** 2 for s in scores) / (n - 1)
+        return mean, math.sqrt(variance)
 
     @abstractmethod
     def select_best(

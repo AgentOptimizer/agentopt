@@ -14,11 +14,9 @@ Algorithm:
   4. Repeat until the dataset is exhausted or one combination remains.
 """
 
-import asyncio
 import itertools
 import logging
 import math
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -164,14 +162,14 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 for proxy, model_obj in zip(proxies, combo):
                     proxy.set_model(model_obj)
 
-                scores, latencies = self._evaluate_batch(batch, label=combo_name)
+                scores, latencies, tokens = self._evaluate_sequential(
+                    batch, label=combo_name
+                )
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
-                if self._token_tracker is not None:
-                    new_tokens = self._token_tracker.reset()
-                    for model, (in_t, out_t) in new_tokens.items():
-                        prev_in, prev_out = combo_tokens[idx].get(model, (0, 0))
-                        combo_tokens[idx][model] = (prev_in + in_t, prev_out + out_t)
+                for model, (in_t, out_t) in tokens.items():
+                    prev_in, prev_out = combo_tokens[idx].get(model, (0, 0))
+                    combo_tokens[idx][model] = (prev_in + in_t, prev_out + out_t)
 
                 mu, _ = self._compute_stats(combo_scores[idx])
                 print(f"  {combo_name}: μ={mu:.3f} (n={len(combo_scores[idx])})")
@@ -329,6 +327,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in tasks}
         combo_latencies: Dict[int, List[float]] = {i: [] for i in tasks}
+        combo_tokens: Dict[int, Dict[str, Tuple[int, int]]] = {i: {} for i in tasks}
         active: Set[int] = set(tasks.keys())
 
         offset = 0
@@ -341,7 +340,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
             combo: tuple,
             batch: List[Tuple[Any, Any]],
             label: str,
-        ) -> Tuple[List[float], List[float]]:
+        ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
             """Set thread-local models, evaluate batch, then clean up."""
             tracker = TokenAccumulator()
             for proxy, model_spec in zip(proxies, combo):
@@ -354,8 +353,13 @@ class ArmEliminationModelSelector(BaseModelSelector):
                     )
                 proxy._set_thread_model(fresh_model, tracker)
             try:
-                return self._evaluate_batch_static(
-                    self.invoke_fn, self.is_async, self.eval_fn, batch, label
+                return self._evaluate_thread_safe(
+                    self.invoke_fn,
+                    self.is_async,
+                    self.eval_fn,
+                    batch,
+                    token_tracker=tracker,
+                    label=label,
                 )
             finally:
                 for proxy in proxies:
@@ -382,11 +386,12 @@ class ArmEliminationModelSelector(BaseModelSelector):
                         )
                     else:
                         future = executor.submit(
-                            self._evaluate_batch_static,
+                            self._evaluate_thread_safe,
                             invoke_fn,
                             is_async_flag,
                             self.eval_fn,
                             batch,
+                            None,
                             combo_name,
                         )
                     future_to_idx[future] = idx
@@ -395,9 +400,15 @@ class ArmEliminationModelSelector(BaseModelSelector):
                     idx = future_to_idx[future]
                     combo_name = tasks[idx][0]
                     try:
-                        scores, latencies = future.result()
+                        scores, latencies, tokens = future.result()
                         combo_scores[idx].extend(scores)
                         combo_latencies[idx].extend(latencies)
+                        for model, (in_t, out_t) in tokens.items():
+                            prev_in, prev_out = combo_tokens[idx].get(model, (0, 0))
+                            combo_tokens[idx][model] = (
+                                prev_in + in_t,
+                                prev_out + out_t,
+                            )
                         mu, _ = self._compute_stats(combo_scores[idx])
                         print(
                             f"  {combo_name}: μ={mu:.3f} (n={len(combo_scores[idx])})"
@@ -443,18 +454,16 @@ class ArmEliminationModelSelector(BaseModelSelector):
             combo_name = " + ".join(self._get_model_name(m) for m in combo)
             scores = combo_scores.get(idx, [])
             latencies = combo_latencies.get(idx, [])
-            if scores:
-                accuracy = sum(scores) / len(scores)
-                avg_latency = sum(latencies) / len(latencies)
-            else:
-                accuracy, avg_latency = 0.0, 0.0
+            accuracy, _ = self._compute_stats(scores)
+            avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+            in_tokens, out_tokens = self._split_tokens(combo_tokens.get(idx, {}))
             all_results.append(
                 ModelResult(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,
-                    input_tokens={},
-                    output_tokens={},
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
                     attribute="combination",
                     is_best=False,
                 )
@@ -483,71 +492,6 @@ class ArmEliminationModelSelector(BaseModelSelector):
     # ------------------------------------------------------------------
     # Statistical helpers
     # ------------------------------------------------------------------
-
-    def _evaluate_batch(
-        self,
-        batch: List[Tuple[Any, Any]],
-        label: str = "",
-    ) -> Tuple[List[float], List[float]]:
-        """Evaluate current invoke_fn on a batch; return per-sample scores and latencies."""
-        scores: List[float] = []
-        latencies: List[float] = []
-        for i, (input_data, expected_answer) in enumerate(batch, 1):
-            try:
-                start = time.time()
-                if self.is_async:
-                    actual = asyncio.run(self.invoke_fn(input_data))
-                else:
-                    actual = self.invoke_fn(input_data)
-                latency = time.time() - start
-                score = float(self.eval_fn(expected_answer, actual))
-                scores.append(score)
-                latencies.append(latency)
-            except Exception as e:
-                logger.warning("[%s] sample %d error: %s", label, i, e)
-        return scores, latencies
-
-    @staticmethod
-    def _evaluate_batch_static(
-        invoke_fn: Callable,
-        is_async: bool,
-        eval_fn: EvalFn,
-        batch: List[Tuple[Any, Any]],
-        label: str = "",
-    ) -> Tuple[List[float], List[float]]:
-        """Thread-safe batch evaluation returning per-sample scores and latencies."""
-        scores: List[float] = []
-        latencies: List[float] = []
-        for i, (input_data, expected_answer) in enumerate(batch, 1):
-            try:
-                start = time.time()
-                if is_async:
-                    actual = asyncio.run(invoke_fn(input_data))
-                else:
-                    actual = invoke_fn(input_data)
-                latency = time.time() - start
-                score = float(eval_fn(expected_answer, actual))
-                scores.append(score)
-                latencies.append(latency)
-            except Exception as e:
-                logger.debug("[%s] sample %d error: %s", label, i, e)
-        return scores, latencies
-
-    @staticmethod
-    def _compute_stats(scores: List[float]) -> Tuple[float, float]:
-        """Return (mean, sample_std) for a list of scores.
-
-        Returns (0.0, 0.5) when scores is empty and (mean, 0.5) when there
-        is only one sample — both cases represent high uncertainty.
-        """
-        n = len(scores)
-        if n == 0:
-            return 0.0, 0.5
-        mean = sum(scores) / n
-        if n < 2:
-            return mean, 0.5
-        variance = sum((s - mean) ** 2 for s in scores) / (n - 1)
-        return mean, math.sqrt(variance)
 
     def _is_dominated(
         self,

@@ -95,9 +95,11 @@ class BruteForceModelSelector(BaseModelSelector):
             for i, (proxy, model_obj) in enumerate(zip(proxies, combo)):
                 print(f"    proxy[{i}] → {self._get_model_name(model_obj)}")
             try:
-                accuracy, latency, tokens = self._evaluate(
+                scores, latencies, tokens = self._evaluate_sequential(
                     self.dataset, label=combo_name
                 )
+                accuracy, _ = self._compute_stats(scores)
+                latency = sum(latencies) / len(latencies) if latencies else 0.0
                 in_tokens, out_tokens = self._split_tokens(tokens)
 
                 result = ModelResult(
@@ -236,7 +238,7 @@ class BruteForceModelSelector(BaseModelSelector):
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 for combo_name, combo, invoke_fn, is_async_flag, tracker in tasks:
                     future = executor.submit(
-                        self._evaluate_single,
+                        self._evaluate_thread_safe,
                         invoke_fn,
                         is_async_flag,
                         self.eval_fn,
@@ -249,7 +251,9 @@ class BruteForceModelSelector(BaseModelSelector):
                 for future in as_completed(future_to_info):
                     combo_name, combo = future_to_info[future]
                     try:
-                        accuracy, latency, tokens = future.result()
+                        scores, latencies, tokens = future.result()
+                        accuracy, _ = self._compute_stats(scores)
+                        latency = sum(latencies) / len(latencies) if latencies else 0.0
                         in_tokens, out_tokens = self._split_tokens(tokens)
                         result = ModelResult(
                             model_name=combo_name,
@@ -315,7 +319,7 @@ class BruteForceModelSelector(BaseModelSelector):
                         )
                     proxy._set_thread_model(fresh_model, tracker)
                 try:
-                    return self._evaluate_single(
+                    return self._evaluate_thread_safe(
                         invoke_fn,
                         is_async,
                         eval_fn,
@@ -346,7 +350,9 @@ class BruteForceModelSelector(BaseModelSelector):
                 for future in as_completed(future_to_info):
                     combo_name, combo = future_to_info[future]
                     try:
-                        accuracy, latency, tokens = future.result()
+                        scores, latencies, tokens = future.result()
+                        accuracy, _ = self._compute_stats(scores)
+                        latency = sum(latencies) / len(latencies) if latencies else 0.0
                         in_tokens, out_tokens = self._split_tokens(tokens)
                         result = ModelResult(
                             model_name=combo_name,

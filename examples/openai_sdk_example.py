@@ -26,6 +26,7 @@ from agentopt.model_selection import (
     RandomSearchModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
+    HyperbandModelSelector,
     BayesianOptimizationModelSelector,
 )
 
@@ -34,6 +35,7 @@ SELECTORS = {
     "random_search": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "hyperband": HyperbandModelSelector,
     "bayesian_optimization": BayesianOptimizationModelSelector,
 }
 
@@ -122,33 +124,32 @@ def run_model_selection(
     dataset_file=None,
     parallel=False,
     selector_name: str = "brute_force",
-    sample_fraction: float = 0.25,
+    selector_kwargs: dict | None = None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
     model_candidates = ["gpt-4o-mini", "gpt-4o"]
 
-    models = {p: model_candidates for p in llm_proxies}
+    mode = "parallel" if parallel else "sequential"
+    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 
     # Single agent: pass agent= so the selector auto-detects via OpenAISDKAdapter
     # Multi-agent: pass invoke_fn= for custom chaining
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "name"):
-        kwargs = {"invoke_fn": agent_or_invoke_fn}
+        agent_key, agent_val = "invoke_fn", agent_or_invoke_fn
     else:
-        kwargs = {"agent": agent_or_invoke_fn}
+        agent_key, agent_val = "agent", agent_or_invoke_fn
 
-    if selector_name == "random_search":
-        kwargs["sample_fraction"] = sample_fraction
-
-    mode = "parallel" if parallel else "sequential"
-    print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
     SelectorCls = SELECTORS[selector_name]
-    selector = SelectorCls(
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        **kwargs,
-    )
+    base_kwargs = {
+        "models": {p: model_candidates for p in llm_proxies},
+        "eval_fn": eval_fn,
+        "dataset": dataset,
+        agent_key: agent_val,
+    }
+    if selector_kwargs:
+        base_kwargs.update(selector_kwargs)
+    selector = SelectorCls(**base_kwargs)
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
     return results
@@ -209,6 +210,12 @@ if __name__ == "__main__":
         default=0.25,
         help="Fraction of combinations to evaluate when --selector=random_search",
     )
+    parser.add_argument(
+        "--reduction-factor",
+        type=float,
+        default=3.0,
+        help="Reduction factor η for hyperband selector (default: 3.0)",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -226,13 +233,19 @@ if __name__ == "__main__":
         llm_proxies = [llm_proxy_or_agent]
 
     print("\n[2] Running model selection...")
+    selector_kwargs = {}
+    if args.selector == "random_search":
+        selector_kwargs["sample_fraction"] = args.sample_fraction
+    if args.selector == "hyperband":
+        selector_kwargs["reduction_factor"] = args.reduction_factor
+
     results = run_model_selection(
         agent_or_invoke,
         llm_proxies,
         dataset_file=args.dataset,
         parallel=args.parallel,
         selector_name=args.selector,
-        sample_fraction=args.sample_fraction,
+        selector_kwargs=selector_kwargs,
     )
 
     if not args.no_plot:

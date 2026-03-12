@@ -84,10 +84,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         Parameters
         ----------
         parallel:
-            Accepted for API compatibility with other selectors. Currently
-            ignored — Bayesian optimization always runs sequentially.
+            Must be False. Bayesian optimization does not support parallel
+            evaluation.
         max_workers:
-            Unused placeholder for future parallel support.
+            Unused. Accepted for API compatibility.
 
         Returns
         -------
@@ -95,14 +95,19 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             Container with all evaluated combinations and the best one flagged
             via ``is_best=True``.
         """
+        assert not parallel, (
+            "BayesianOptimizationModelSelector does not support parallel evaluation. "
+            "Bayesian optimization is inherently sequential — each iteration uses a "
+            "surrogate model fitted on all prior observations to select the next candidate. "
+            "Use parallel=False or choose a selector that supports parallel mode "
+            "(e.g., brute_force, random_search, arm_elimination, hyperband)."
+        )
+
         import torch
         from botorch.acquisition.analytic import LogExpectedImprovement
         from botorch.fit import fit_gpytorch_mll
         from botorch.models.gp_regression_mixed import MixedSingleTaskGP
         from gpytorch.mlls import ExactMarginalLogLikelihood
-
-        assert parallel == False
-        assert max_workers is None or max_workers == 1
 
         proxies = list(self._models.keys())
         candidate_lists = list(self._models.values())
@@ -141,7 +146,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
         def evaluate_combo(combo: Tuple[int, ...]) -> Tuple[float, float, Dict]:
             set_proxies_from_combo(combo)
-            return self._evaluate(self.dataset)
+            scores, latencies, tokens = self._evaluate_sequential(self.dataset)
+            accuracy, _ = self._compute_stats(scores)
+            latency = sum(latencies) / len(latencies) if latencies else 0.0
+            return accuracy, latency, tokens
 
         print(f"\n{'='*60}")
         print(

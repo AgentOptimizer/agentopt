@@ -7,6 +7,7 @@ from .brute_force import BruteForceModelSelector
 from .random_search import RandomSearchModelSelector
 from .hill_climbing import HillClimbingModelSelector
 from .arm_elimination import ArmEliminationModelSelector
+from .hyperband import HyperbandModelSelector
 from .bayesian_optimization import BayesianOptimizationModelSelector
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "RandomSearchModelSelector",
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
+    "HyperbandModelSelector",
     "BayesianOptimizationModelSelector",
     "ModelResult",
     "SelectionResults",

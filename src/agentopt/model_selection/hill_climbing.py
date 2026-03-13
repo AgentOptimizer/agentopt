@@ -16,7 +16,7 @@ from ..model_topology import (
     get_higher_quality_neighbor,
     get_faster_neighbor,
 )
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, ModelResult, SelectionResults, _CACHE_SENTINEL
 
 
 class HillClimbingModelSelector(BaseModelSelector):
@@ -46,6 +46,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        cache: Optional["EvalCache"] = _CACHE_SENTINEL,
         max_iterations: int = 20,
         num_restarts: int = 3,
         patience: int = 3,
@@ -74,6 +75,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             agent=agent,
             invoke_fn=invoke_fn,
             dataset=dataset,
+            cache=cache,
         )
         self.max_iterations = max_iterations
         self.num_restarts = num_restarts

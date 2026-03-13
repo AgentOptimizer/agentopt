@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, ModelResult, SelectionResults, _CACHE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Any] = None,
+        cache: Optional["EvalCache"] = _CACHE_SENTINEL,
         n_iterations: Optional[int] = None,
         n_initial_random: Optional[int] = None,
     ) -> None:
@@ -67,6 +68,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             agent=agent,
             invoke_fn=invoke_fn,
             dataset=dataset,
+            cache=cache,
         )
         _require_botorch()
         # If left as ``None``, effective defaults are chosen inside ``select_best``

@@ -13,10 +13,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from ..base_models import Dataset, EvalFn, validate_dataset
+from ..cache import EvalCache, NoCache
 from ..model_proxy import ModelProxy
 from ..model_proxy.constants import validate_model_candidates
+from ..model_proxy.token_tracking import TokenAccumulator
 
 logger = logging.getLogger(__name__)
+
+_CACHE_SENTINEL = object()  # distinguishes "use default" from "disable"
 
 
 class ModelResult(BaseModel):
@@ -208,6 +212,7 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        cache: Optional[EvalCache] = _CACHE_SENTINEL,
     ) -> None:
         """
         Initialize the model selector.
@@ -222,6 +227,9 @@ class BaseModelSelector(ABC):
                 LlamaIndex, OpenAI SDK).  Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent or multi-agent chain.
                 Mutually exclusive with *agent*.
+            cache: An :class:`EvalCache` instance for caching per-item evaluation
+                results.  By default an ``EvalCache`` at ``.cache/eval_cache.json``
+                is created automatically.  Pass ``None`` to disable caching.
         """
         if agent is None and invoke_fn is None:
             raise ValueError("Either 'agent' or 'invoke_fn' must be provided")
@@ -236,6 +244,12 @@ class BaseModelSelector(ABC):
         self.dataset = dataset
         self._models = models
         self._proxies = list(models.keys())
+        if cache is _CACHE_SENTINEL:
+            self._cache: EvalCache | NoCache = EvalCache()
+        elif cache is None:
+            self._cache = NoCache()
+        else:
+            self._cache = cache
 
         # Validate API keys for all candidate models.
         warnings, _ = validate_model_candidates(models)
@@ -306,6 +320,9 @@ class BaseModelSelector(ABC):
         """
         Evaluate the current state of the agent against a list of tasks.
 
+        Uses per-item token tracking (swap tracker per item) and consults
+        the cache for previously evaluated items.
+
         Args:
             evaluation_tasks: Sequence of (input_data, expected_answer) pairs
             label: Display label for progress traces.
@@ -318,8 +335,36 @@ class BaseModelSelector(ABC):
         scores: List[float] = []
         latencies: List[float] = []
         total = len(evaluation_tasks)
+        aggregate_tokens: Dict[str, List[int]] = {}  # model -> [in, out]
 
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
+            # --- Cache lookup ---
+            cache_key = self._cache.make_key(label, input_data)
+            hit = self._cache.get(cache_key)
+            if hit is not None:
+                # Use cached score when save_score is enabled; otherwise recompute.
+                if getattr(self._cache, "save_score", False) and "score" in hit:
+                    score = hit["score"]
+                else:
+                    score = float(self.eval_fn(expected_answer, hit["response"]))
+                scores.append(score)
+                latencies.append(hit["latency"])
+                # Replay cached tokens into aggregate.
+                for model, (in_t, out_t) in hit.get("tokens", {}).items():
+                    if model not in aggregate_tokens:
+                        aggregate_tokens[model] = [0, 0]
+                    aggregate_tokens[model][0] += in_t
+                    aggregate_tokens[model][1] += out_t
+                continue
+
+            # --- Cache miss: call LLM ---
+            # Per-item token tracking: swap in a fresh tracker.
+            item_tracker: Optional[TokenAccumulator] = None
+            if self._token_tracker is not None:
+                item_tracker = TokenAccumulator()
+                for proxy in self._proxies:
+                    proxy._set_token_tracker(item_tracker)
+
             try:
                 start_time = time.time()
                 if self.is_async:
@@ -330,12 +375,42 @@ class BaseModelSelector(ABC):
                 score = float(self.eval_fn(expected_answer, actual_result))
                 scores.append(score)
                 latencies.append(latency)
+
+                # Collect per-item tokens.
+                item_tokens: Dict[str, Tuple[int, int]] = {}
+                if item_tracker is not None:
+                    item_tokens = item_tracker.reset()
+                    for model, (in_t, out_t) in item_tokens.items():
+                        if model not in aggregate_tokens:
+                            aggregate_tokens[model] = [0, 0]
+                        aggregate_tokens[model][0] += in_t
+                        aggregate_tokens[model][1] += out_t
+
+                # Store in cache.
+                entry: Dict[str, Any] = {
+                    "model_name": label,
+                    "latency": latency,
+                    "response": str(actual_result),
+                    "tokens": {k: list(v) for k, v in item_tokens.items()},
+                }
+                if getattr(self._cache, "save_score", False):
+                    entry["score"] = score
+                self._cache.set(cache_key, entry)
             except Exception as e:
                 logger.warning("[%s] sample %d/%d error: %s", label, i, total, e)
 
-        tokens = self._token_tracker.reset() if self._token_tracker else {}
+        # Restore the original tracker on proxies.
+        if self._token_tracker is not None:
+            for proxy in self._proxies:
+                proxy._set_token_tracker(self._token_tracker)
+            # Clear any leftover state in the original tracker.
+            self._token_tracker.reset()
 
-        return scores, latencies, tokens
+        # Flush any buffered cache entries to disk.
+        self._cache.flush()
+
+        result_tokens = {k: (v[0], v[1]) for k, v in aggregate_tokens.items()}
+        return scores, latencies, result_tokens
 
     def _get_model_name(self, model_obj: Any) -> str:
         """Extract model name from model object for display purposes."""
@@ -387,13 +462,41 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         token_tracker: Any = None,
         label: str = "",
+        cache: Optional["EvalCache | NoCache"] = None,
+        proxies: Optional[List[Any]] = None,
     ) -> Tuple[List[float], List[float], Dict[str, Tuple[int, int]]]:
         """Evaluate an agent against the dataset. Thread-safe."""
+        if cache is None:
+            cache = NoCache()
         scores: List[float] = []
         latencies: List[float] = []
         total = len(dataset)
+        aggregate_tokens: Dict[str, List[int]] = {}
 
         for i, (input_data, expected_answer) in enumerate(dataset, 1):
+            cache_key = cache.make_key(label, input_data)
+            hit = cache.get(cache_key)
+            if hit is not None:
+                if getattr(cache, "save_score", False) and "score" in hit:
+                    score = hit["score"]
+                else:
+                    score = float(eval_fn(expected_answer, hit["response"]))
+                scores.append(score)
+                latencies.append(hit["latency"])
+                for model, (in_t, out_t) in hit.get("tokens", {}).items():
+                    if model not in aggregate_tokens:
+                        aggregate_tokens[model] = [0, 0]
+                    aggregate_tokens[model][0] += in_t
+                    aggregate_tokens[model][1] += out_t
+                continue
+
+            # Per-item token tracking.
+            item_tracker: Optional[TokenAccumulator] = None
+            if token_tracker is not None and proxies:
+                item_tracker = TokenAccumulator()
+                for proxy in proxies:
+                    proxy._set_token_tracker(item_tracker)
+
             try:
                 start_time = time.time()
                 if is_async:
@@ -404,11 +507,39 @@ class BaseModelSelector(ABC):
                 score = float(eval_fn(expected_answer, actual_result))
                 scores.append(score)
                 latencies.append(latency)
+
+                item_tokens: Dict[str, Tuple[int, int]] = {}
+                if item_tracker is not None:
+                    item_tokens = item_tracker.reset()
+                    for model, (in_t, out_t) in item_tokens.items():
+                        if model not in aggregate_tokens:
+                            aggregate_tokens[model] = [0, 0]
+                        aggregate_tokens[model][0] += in_t
+                        aggregate_tokens[model][1] += out_t
+
+                entry: Dict[str, Any] = {
+                    "model_name": label,
+                    "latency": latency,
+                    "response": str(actual_result),
+                    "tokens": {k: list(v) for k, v in item_tokens.items()},
+                }
+                if getattr(cache, "save_score", False):
+                    entry["score"] = score
+                cache.set(cache_key, entry)
             except Exception as e:
                 logger.debug("[%s] sample %d/%d error: %s", label, i, total, e)
 
-        tokens = token_tracker.reset() if token_tracker is not None else {}
-        return scores, latencies, tokens
+        # Restore original tracker on proxies.
+        if token_tracker is not None and proxies:
+            for proxy in proxies:
+                proxy._set_token_tracker(token_tracker)
+            token_tracker.reset()
+
+        # Flush any buffered cache entries to disk.
+        cache.flush()
+
+        result_tokens = {k: (v[0], v[1]) for k, v in aggregate_tokens.items()}
+        return scores, latencies, result_tokens
 
     @staticmethod
     def _split_tokens(

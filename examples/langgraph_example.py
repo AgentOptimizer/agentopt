@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from agentopt import ModelProxy
+from agentopt import EvalCache, ModelProxy
 from agentopt.model_selection import (
     BruteForceModelSelector,
     RandomSearchModelSelector,
@@ -216,6 +216,7 @@ def run_model_selection(
     model_candidates=None,
     selector_name: str = "brute_force",
     selector_kwargs: dict | None = None,
+    cache_path: str | None = None,
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
@@ -228,6 +229,11 @@ def run_model_selection(
 
     models = model_candidates
 
+    # Set up cache.
+    cache = EvalCache(cache_path) if cache_path else None
+    if cache:
+        print(f"  [run] cache enabled: {cache_path} ({len(cache)} existing entries)")
+
     if callable(agent_or_invoke_fn) and not hasattr(agent_or_invoke_fn, "invoke"):
         agent_key, agent_val = "invoke_fn", agent_or_invoke_fn
     else:
@@ -239,6 +245,7 @@ def run_model_selection(
         "eval_fn": eval_fn,
         "dataset": dataset,
         agent_key: agent_val,
+        "cache": cache,
     }
     if selector_kwargs:
         base_kwargs.update(selector_kwargs)
@@ -247,6 +254,10 @@ def run_model_selection(
     selector = SelectorCls(**base_kwargs)
     results = selector.select_best(parallel=parallel)
     print(f"\nBest: {results.get_best()}")
+
+    if cache:
+        print(f"  [run] cache now has {len(cache)} entries")
+
     return results
 
 
@@ -320,6 +331,12 @@ if __name__ == "__main__":
         default=3.0,
         help="Reduction factor η for hyperband selector (default: 3.0)",
     )
+    parser.add_argument(
+        "--cache",
+        type=str,
+        default=None,
+        help="Path to cache file (e.g. .cache/langgraph_eval.json). Omit to disable caching.",
+    )
     args = parser.parse_args()
 
     label, setup_fn = EXAMPLES[args.example]
@@ -360,6 +377,7 @@ if __name__ == "__main__":
         model_candidates=per_proxy_candidates,
         selector_name=args.selector,
         selector_kwargs=selector_kwargs,
+        cache_path=args.cache,
     )
 
     if not args.no_plot:

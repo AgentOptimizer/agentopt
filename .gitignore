@@ -40,6 +40,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# Eval cache
+.cache/
+
 # Example outputs
 examples/*.csv
 examples/*.png

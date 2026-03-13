@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, ModelResult, SelectionResults, _CACHE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        cache: Optional["EvalCache"] = _CACHE_SENTINEL,
         n_initial: Optional[int] = None,
         growth_factor: float = 2.0,
         confidence: float = 1.0,
@@ -67,6 +68,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
             dataset=dataset,
             agent=agent,
             invoke_fn=invoke_fn,
+            cache=cache,
         )
         n = len(self.dataset)
         if n_initial is None:
@@ -360,6 +362,8 @@ class ArmEliminationModelSelector(BaseModelSelector):
                     batch,
                     token_tracker=tracker,
                     label=label,
+                    cache=self._cache,
+                    proxies=proxies,
                 )
             finally:
                 for proxy in proxies:
@@ -393,6 +397,8 @@ class ArmEliminationModelSelector(BaseModelSelector):
                             batch,
                             None,
                             combo_name,
+                            self._cache,
+                            proxies,
                         )
                     future_to_idx[future] = idx
 

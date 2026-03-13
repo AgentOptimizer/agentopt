@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, ModelResult, SelectionResults, _CACHE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ class HyperbandModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        cache: Optional["EvalCache"] = _CACHE_SENTINEL,
         reduction_factor: float = 3.0,
         max_resource: Optional[int] = None,
     ) -> None:
@@ -66,6 +67,7 @@ class HyperbandModelSelector(BaseModelSelector):
             dataset=dataset,
             agent=agent,
             invoke_fn=invoke_fn,
+            cache=cache,
         )
 
         self.reduction_factor = reduction_factor
@@ -386,6 +388,8 @@ class HyperbandModelSelector(BaseModelSelector):
                     batch,
                     token_tracker=tracker,
                     label=label,
+                    cache=self._cache,
+                    proxies=proxies,
                 )
             finally:
                 for proxy in proxies:
@@ -456,6 +460,8 @@ class HyperbandModelSelector(BaseModelSelector):
                                 batch,
                                 tracker,
                                 combo_name,
+                                cache=self._cache,
+                                proxies=proxies,
                             )
                         future_to_idx[future] = idx
 

@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, ModelResult, SelectionResults, _CACHE_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class BruteForceModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        cache: Optional["EvalCache"] = _CACHE_SENTINEL,
     ) -> None:
         super().__init__(
             models=models,
@@ -37,6 +38,7 @@ class BruteForceModelSelector(BaseModelSelector):
             agent=agent,
             invoke_fn=invoke_fn,
             dataset=dataset,
+            cache=cache,
         )
 
     def select_best(
@@ -245,6 +247,8 @@ class BruteForceModelSelector(BaseModelSelector):
                         self.dataset,
                         token_tracker=tracker,
                         label=combo_name,
+                        cache=self._cache,
+                        proxies=proxies,
                     )
                     future_to_info[future] = (combo_name, combo)
 
@@ -326,6 +330,8 @@ class BruteForceModelSelector(BaseModelSelector):
                         dataset,
                         token_tracker=tracker,
                         label=label,
+                        cache=self._cache,
+                        proxies=proxies,
                     )
                 finally:
                     for proxy in proxies:

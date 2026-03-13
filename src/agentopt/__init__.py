@@ -6,6 +6,7 @@ This package provides:
 - model selection utilities (`BruteForceModelSelector`, `RandomSearchModelSelector`, `HillClimbingModelSelector`, `ArmEliminationModelSelector`, `HyperbandModelSelector`, `BayesianOptimizationModelSelector`) to choose among models
 """
 
+from .cache import EvalCache, NoCache
 from .model_proxy import ModelProxy
 from .model_selection import (
     BruteForceModelSelector,
@@ -29,6 +30,8 @@ ModelSelector = BruteForceModelSelector
 __all__ = [
     # Core
     "ModelProxy",
+    "EvalCache",
+    "NoCache",
     "BaseModelSelector",
     "BruteForceModelSelector",
     "RandomSearchModelSelector",

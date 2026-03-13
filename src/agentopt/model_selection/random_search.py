@@ -35,6 +35,7 @@ class RandomSearchModelSelector(BaseModelSelector):
         cache: Optional["EvalCache"] = _CACHE_SENTINEL,
         sample_fraction: float = 0.25,
         seed: Optional[int] = None,
+        model_prices: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> None:
         super().__init__(
             models=models,
@@ -42,6 +43,7 @@ class RandomSearchModelSelector(BaseModelSelector):
             agent=agent,
             invoke_fn=invoke_fn,
             dataset=dataset,
+            model_prices=model_prices,
             cache=cache,
         )
         if not 0 < sample_fraction <= 1:
@@ -138,7 +140,7 @@ class RandomSearchModelSelector(BaseModelSelector):
                 latency = sum(latencies) / len(latencies) if latencies else 0.0
                 in_tokens, out_tokens = self._split_tokens(tokens)
 
-                result = ModelResult(
+                result = self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,
@@ -169,7 +171,7 @@ class RandomSearchModelSelector(BaseModelSelector):
             except Exception as e:
                 print(f"  [{combo_name}] failed: {e}")
                 all_results.append(
-                    ModelResult(
+                    self._make_result(
                         model_name=combo_name,
                         accuracy=0.0,
                         latency_seconds=0.0,
@@ -298,7 +300,7 @@ class RandomSearchModelSelector(BaseModelSelector):
                         accuracy, _ = self._compute_stats(scores)
                         latency = sum(latencies) / len(latencies) if latencies else 0.0
                         in_tokens, out_tokens = self._split_tokens(tokens)
-                        result = ModelResult(
+                        result = self._make_result(
                             model_name=combo_name,
                             accuracy=accuracy,
                             latency_seconds=latency,
@@ -312,7 +314,7 @@ class RandomSearchModelSelector(BaseModelSelector):
                     except Exception as e:
                         print(f"  [{combo_name}] failed: {e}")
                         all_results.append(
-                            ModelResult(
+                            self._make_result(
                                 model_name=combo_name,
                                 accuracy=0.0,
                                 latency_seconds=0.0,
@@ -399,7 +401,7 @@ class RandomSearchModelSelector(BaseModelSelector):
                         accuracy, _ = self._compute_stats(scores)
                         latency = sum(latencies) / len(latencies) if latencies else 0.0
                         in_tokens, out_tokens = self._split_tokens(tokens)
-                        result = ModelResult(
+                        result = self._make_result(
                             model_name=combo_name,
                             accuracy=accuracy,
                             latency_seconds=latency,
@@ -413,7 +415,7 @@ class RandomSearchModelSelector(BaseModelSelector):
                     except Exception as e:
                         print(f"  [{combo_name}] failed: {e}")
                         all_results.append(
-                            ModelResult(
+                            self._make_result(
                                 model_name=combo_name,
                                 accuracy=0.0,
                                 latency_seconds=0.0,

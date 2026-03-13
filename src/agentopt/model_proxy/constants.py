@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 MODEL_FIELDS = ("model", "model_name", "model_id")
 
 
-# Mapping of model provider prefixes to required environment variables.
+# Mapping of model provider prefixes to native environment variables.
 PROVIDER_API_KEYS: Dict[str, str] = {
     "anthropic/": "ANTHROPIC_API_KEY",
     "openai/": "OPENAI_API_KEY",
@@ -25,38 +25,56 @@ PROVIDER_API_KEYS: Dict[str, str] = {
     "bedrock/": "AWS_ACCESS_KEY_ID",
     "vertex_ai/": "GOOGLE_APPLICATION_CREDENTIALS",
     "azure/": "AZURE_API_KEY",
+    "litellm/": "LITELLM_API_KEY",
 }
+
+# Heuristic: bare model name patterns → provider.
+_BARE_NAME_HEURISTICS: List[Tuple[Tuple[str, ...], str, str]] = [
+    # (prefixes_or_substrings, provider, env_var)
+    (("gpt-", "o1-", "o3-", "o4-"), "openai", "OPENAI_API_KEY"),
+    (("claude",), "anthropic", "ANTHROPIC_API_KEY"),
+    (("gemini",), "google", "GOOGLE_API_KEY"),
+]
 
 
 def detect_provider(model_name: str) -> Tuple[str, str, Optional[str]]:
     """Detect provider from model name, strip prefix, resolve API key.
 
-    Returns (provider, clean_name, api_key).
-    Provider is one of: "bedrock", "openai", "google", "anthropic", "default".
+    Returns ``(provider, clean_name, api_key)``.
+
+    Resolution order:
+      1. Explicit prefix (e.g. ``"openai/gpt-4o"`` → ``("openai", "gpt-4o", key)``).
+         Checks the native API key first; falls back to ``OPENROUTER_API_KEY``.
+      2. Bare-name heuristics (e.g. ``"gpt-4o"`` → openai, ``"claude-..."`` → anthropic).
+      3. Default — returns ``("default", model_name, OPENAI_API_KEY)``.
     """
-    if model_name.startswith("bedrock/"):
-        return (
-            "bedrock",
-            model_name.removeprefix("bedrock/"),
-            os.getenv("AWS_ACCESS_KEY_ID"),
-        )
+    # 1. Explicit prefix match.
+    for prefix, env_var in PROVIDER_API_KEYS.items():
+        if model_name.startswith(prefix):
+            provider = prefix.rstrip("/")
+            clean_name = model_name[len(prefix) :]
+            api_key = os.getenv(env_var)
+            if api_key:
+                return provider, clean_name, api_key
+            # Fallback to OpenRouter when native key is missing.
+            openrouter_key = os.getenv("OPENROUTER_API_KEY")
+            if openrouter_key:
+                return "openrouter", clean_name, openrouter_key
+            return provider, clean_name, None
 
-    if model_name.startswith("openai/") or any(
-        model_name.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-")
-    ):
-        return "openai", model_name.removeprefix("openai/"), os.getenv("OPENAI_API_KEY")
+    # 2. Bare-name heuristics.
+    lower = model_name.lower()
+    for patterns, provider, env_var in _BARE_NAME_HEURISTICS:
+        if any(lower.startswith(p) for p in patterns):
+            api_key = os.getenv(env_var)
+            if api_key:
+                return provider, model_name, api_key
+            openrouter_key = os.getenv("OPENROUTER_API_KEY")
+            if openrouter_key:
+                return "openrouter", model_name, openrouter_key
+            return provider, model_name, None
 
-    if model_name.startswith("google/") or "gemini" in model_name.lower():
-        return "google", model_name.removeprefix("google/"), os.getenv("GOOGLE_API_KEY")
-
-    if model_name.startswith("anthropic/") or "claude" in model_name.lower():
-        return (
-            "anthropic",
-            model_name.removeprefix("anthropic/"),
-            os.getenv("ANTHROPIC_API_KEY"),
-        )
-
-    # Default — try OpenAI key
+    # 3. Default — try OpenAI key.
     return "default", model_name, os.getenv("OPENAI_API_KEY")
 
 

@@ -12,7 +12,6 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
 from ..model_topology import (
-    normalize_model_name,
     get_higher_quality_neighbor,
     get_faster_neighbor,
 )
@@ -51,6 +50,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         num_restarts: int = 3,
         patience: int = 3,
         seed: Optional[int] = None,
+        model_prices: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> None:
         """Initialize the hill-climbing model selector.
 
@@ -75,6 +75,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             agent=agent,
             invoke_fn=invoke_fn,
             dataset=dataset,
+            model_prices=model_prices,
             cache=cache,
         )
         self.max_iterations = max_iterations
@@ -107,9 +108,8 @@ class HillClimbingModelSelector(BaseModelSelector):
 
     def _find_candidate_by_name(self, proxy: ModelProxy, name: str) -> Any:
         """Find the original candidate object that matches *name*."""
-        norm_name = normalize_model_name(name)
         for candidate in self._models[proxy]:
-            if normalize_model_name(self._get_model_name(candidate)) == norm_name:
+            if self._get_model_name(candidate) == name:
                 return candidate
         return name  # fallback: pass the string directly
 
@@ -230,7 +230,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                 )
                 cached = False
 
-            result = ModelResult(
+            result = self._make_result(
                 model_name=combo_name,
                 accuracy=accuracy,
                 latency_seconds=latency,

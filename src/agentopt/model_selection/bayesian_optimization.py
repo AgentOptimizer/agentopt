@@ -9,7 +9,7 @@ Improvement (EI) on accuracy.
 import itertools
 import logging
 import random
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..base_models import Dataset, EvalFn
 from ..model_proxy import ModelProxy
@@ -60,6 +60,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         cache: Optional["EvalCache"] = _CACHE_SENTINEL,
         n_iterations: Optional[int] = None,
         n_initial_random: Optional[int] = None,
+        model_prices: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> None:
         """Initialize the Bayesian optimization model selector."""
         super().__init__(
@@ -68,6 +69,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             agent=agent,
             invoke_fn=invoke_fn,
             dataset=dataset,
+            model_prices=model_prices,
             cache=cache,
         )
         _require_botorch()
@@ -175,7 +177,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 in_tokens, out_tokens = self._split_tokens(tokens)
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
-                result = ModelResult(
+                result = self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,
@@ -189,7 +191,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             except Exception as e:
                 logger.warning("[init] [%s] failed: %s", combo_name, e)
                 all_results.append(
-                    ModelResult(
+                    self._make_result(
                         model_name=combo_name,
                         accuracy=0.0,
                         latency_seconds=0.0,
@@ -217,7 +219,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     in_tokens, out_tokens = self._split_tokens(tokens)
                     X_list.append(list(combo))
                     Y_list.append(accuracy)
-                    result = ModelResult(
+                    result = self._make_result(
                         model_name=combo_name,
                         accuracy=accuracy,
                         latency_seconds=latency,
@@ -274,7 +276,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 in_tokens, out_tokens = self._split_tokens(tokens)
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
-                result = ModelResult(
+                result = self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,

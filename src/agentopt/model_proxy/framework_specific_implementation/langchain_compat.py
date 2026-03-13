@@ -148,9 +148,10 @@ def create_model_from_string(model_name: str) -> Any:
     Returns:
         LangChain model object
     """
-    # --- LiteLLM explicit prefix (not handled by detect_provider) ---
-    if model_name.startswith("litellm/"):
-        clean_name = model_name.removeprefix("litellm/")
+    provider, clean_name, api_key = detect_provider(model_name)
+
+    # LiteLLM explicit prefix — route to LiteLLM proxy.
+    if provider == "litellm":
         fallback = _litellm_fallback(clean_name)
         if fallback:
             return fallback
@@ -159,7 +160,12 @@ def create_model_from_string(model_name: str) -> Any:
             "LITELLM_API_BASE are not both set."
         )
 
-    provider, clean_name, api_key = detect_provider(model_name)
+    # OpenRouter fallback (detect_provider returns this when native key missing).
+    if provider == "openrouter":
+        fallback = _openrouter_fallback(clean_name)
+        if fallback:
+            return fallback
+        raise no_key_error("OPENROUTER_API_KEY", model_name)
 
     if api_key:
         llm = _create_native_llm(provider, clean_name, api_key)

@@ -20,6 +20,7 @@ import os
 import threading
 
 from ..adapter import FrameworkAdapter
+from ..constants import detect_provider
 from ..token_tracking import TokenAccumulator
 from typing import Any, Callable, List, Tuple
 
@@ -54,17 +55,17 @@ class AG2ConfigWrapper:
     @staticmethod
     def _build_config(model: str) -> dict:
         """Build an AG2 config_list entry for the given model name."""
-        bare = model.split("/", 1)[-1] if "/" in model else model
-        if bare.startswith("claude") or model.startswith("anthropic/"):
+        provider, clean_name, api_key = detect_provider(model)
+        if provider == "anthropic":
             return {
                 "api_type": "anthropic",
-                "model": bare,
-                "api_key": os.getenv("ANTHROPIC_API_KEY"),
+                "model": clean_name,
+                "api_key": api_key,
             }
         return {
             "api_type": "openai",
-            "model": bare,
-            "api_key": os.getenv("OPENAI_API_KEY"),
+            "model": clean_name,
+            "api_key": api_key,
         }
 
     def __init__(self, model: str) -> None:

@@ -204,7 +204,7 @@ def run_model_selection(
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
-    model_candidates = ["gpt-4o-mini", "gpt-5.1", "gpt-4o"]
+    model_candidates = ["openai/gpt-4o-mini", "openai/gpt-5.1", "openai/gpt-4o"]
 
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")

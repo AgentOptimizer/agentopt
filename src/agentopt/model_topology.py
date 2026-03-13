@@ -7,82 +7,63 @@ algorithms like hill climbing can define "neighbors" in model space.
 
 from typing import List, Optional
 
-# Provider prefixes stripped during normalization.
-_PROVIDER_PREFIXES = ("openai/", "anthropic/", "google/")
-
-
-def normalize_model_name(name: str) -> str:
-    """Strip provider prefix to get a canonical model name.
-
-    Examples:
-        >>> normalize_model_name("openai/gpt-4o")
-        'gpt-4o'
-        >>> normalize_model_name("gpt-4o-mini")
-        'gpt-4o-mini'
-    """
-    for prefix in _PROVIDER_PREFIXES:
-        if name.startswith(prefix):
-            return name[len(prefix) :]
-    return name
-
-
 # ---------------------------------------------------------------------------
 # Quality ranking – ordered from HIGHEST quality to LOWEST quality.
-# Index 0 = best quality.
+# Index 0 = best quality.  Uses OpenRouter model naming.
 # ---------------------------------------------------------------------------
 QUALITY_RANKING: List[str] = [
     # OpenAI reasoning
-    "o3",
-    "o4-mini",
-    "o3-mini",
+    "openai/o3",
+    "openai/o4-mini",
+    "openai/o3-mini",
     # OpenAI GPT
-    "gpt-5.2",
-    "gpt-5.1",
-    "gpt-4.1",
-    "gpt-4o",
-    "gpt-4.1-mini",
-    "gpt-4o-mini",
-    "gpt-4.1-nano",
+    "openai/gpt-5.2",
+    "openai/gpt-5.1",
+    "openai/gpt-4.1",
+    "openai/gpt-4o",
+    "openai/gpt-4.1-mini",
+    "openai/gpt-4o-mini",
+    "openai/gpt-4.1-nano",
     # Anthropic
-    "claude-opus-4-20250514",
-    "claude-sonnet-4-20250514",
-    "claude-3.7-sonnet",
-    "claude-3.5-sonnet",
-    "claude-3.5-haiku",
-    "claude-3-haiku",
+    "anthropic/claude-opus-4-20250514",
+    "anthropic/claude-sonnet-4-20250514",
+    "anthropic/claude-3.7-sonnet",
+    "anthropic/claude-3.5-sonnet",
+    "anthropic/claude-3.5-haiku",
+    "anthropic/claude-3-haiku",
     # Google
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
+    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
+    "google/gemini-2.0-flash",
+    "google/gemini-2.0-flash-lite",
 ]
 
 # ---------------------------------------------------------------------------
 # Speed ranking – ordered from FASTEST to SLOWEST.
-# Index 0 = fastest.
+# Index 0 = fastest.  Uses OpenRouter model naming.
 # ---------------------------------------------------------------------------
 SPEED_RANKING: List[str] = [
     # Small / lite models first
-    "gpt-4.1-nano",
-    "gemini-2.0-flash-lite",
-    "gpt-4o-mini",
-    "claude-3-haiku",
-    "claude-3.5-haiku",
-    "gpt-4.1-mini",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash",
-    "gpt-4o",
-    "gpt-4.1",
-    "o4-mini",
-    "o3-mini",
-    "claude-3.5-sonnet",
-    "claude-3.7-sonnet",
-    "claude-sonnet-4-20250514",
-    "gpt-5.1",
-    "gemini-2.5-pro",
-    "gpt-5.2",
-    "claude-opus-4-20250514",
-    "o3",
+    "openai/gpt-4.1-nano",
+    "google/gemini-2.0-flash-lite",
+    "openai/gpt-4o-mini",
+    "anthropic/claude-3-haiku",
+    "anthropic/claude-3.5-haiku",
+    "openai/gpt-4.1-mini",
+    "google/gemini-2.0-flash",
+    "google/gemini-2.5-flash",
+    "openai/gpt-4o",
+    "openai/gpt-4.1",
+    "openai/o4-mini",
+    "openai/o3-mini",
+    "anthropic/claude-3.5-sonnet",
+    "anthropic/claude-3.7-sonnet",
+    "anthropic/claude-sonnet-4-20250514",
+    "openai/gpt-5.1",
+    "google/gemini-2.5-pro",
+    "openai/gpt-5.2",
+    "anthropic/claude-opus-4-20250514",
+    "openai/o3",
 ]
 
 
@@ -93,9 +74,8 @@ SPEED_RANKING: List[str] = [
 
 def _index_in_ranking(ranking: List[str], name: str) -> Optional[int]:
     """Return the index of *name* in *ranking*, or ``None`` if absent."""
-    normalized = normalize_model_name(name)
     for i, entry in enumerate(ranking):
-        if entry == normalized:
+        if entry == name:
             return i
     return None
 
@@ -131,11 +111,9 @@ def get_higher_quality_neighbor(current: str, candidates: List[str]) -> Optional
     the current model in that sorted order.
     """
     sorted_cands = _sort_candidates(candidates, QUALITY_RANKING)
-    norm_current = normalize_model_name(current)
-    norm_sorted = [normalize_model_name(c) for c in sorted_cands]
 
     try:
-        idx = norm_sorted.index(norm_current)
+        idx = sorted_cands.index(current)
     except ValueError:
         return None
 
@@ -152,11 +130,9 @@ def get_faster_neighbor(current: str, candidates: List[str]) -> Optional[str]:
     current model in that sorted order.
     """
     sorted_cands = _sort_candidates(candidates, SPEED_RANKING)
-    norm_current = normalize_model_name(current)
-    norm_sorted = [normalize_model_name(c) for c in sorted_cands]
 
     try:
-        idx = norm_sorted.index(norm_current)
+        idx = sorted_cands.index(current)
     except ValueError:
         return None
 

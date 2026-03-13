@@ -57,6 +57,7 @@ class HyperbandModelSelector(BaseModelSelector):
         cache: Optional["EvalCache"] = _CACHE_SENTINEL,
         reduction_factor: float = 3.0,
         max_resource: Optional[int] = None,
+        model_prices: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> None:
         if reduction_factor <= 1.0:
             raise ValueError("reduction_factor (η) must be > 1.0.")
@@ -67,6 +68,7 @@ class HyperbandModelSelector(BaseModelSelector):
             dataset=dataset,
             agent=agent,
             invoke_fn=invoke_fn,
+            model_prices=model_prices,
             cache=cache,
         )
 
@@ -257,7 +259,7 @@ class HyperbandModelSelector(BaseModelSelector):
                 accuracy, avg_latency = 0.0, 0.0
             in_tokens, out_tokens = self._split_tokens(combo_tokens[idx])
             all_results.append(
-                ModelResult(
+                self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,
@@ -528,7 +530,7 @@ class HyperbandModelSelector(BaseModelSelector):
                 accuracy, avg_latency = 0.0, 0.0
             in_tokens, out_tokens = self._split_tokens(combo_tokens.get(idx, {}))
             all_results.append(
-                ModelResult(
+                self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,

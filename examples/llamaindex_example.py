@@ -211,7 +211,7 @@ def run_model_selection(
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     if model_candidates is None:
-        model_candidates = ["gpt-4o-mini", "gpt-4o", "gpt-4o"]
+        model_candidates = ["openai/gpt-4o-mini", "openai/gpt-4o", "openai/gpt-4o"]
 
     # Set up cache.
     cache = EvalCache(cache_path) if cache_path else None
@@ -328,7 +328,7 @@ if __name__ == "__main__":
     # Multi-LLM uses Anthropic-only candidates to avoid cross-provider
     # tool format issues in LlamaIndex AgentWorkflow.
     candidates = (
-        ["gpt-4o", "gpt-5.1", "gpt-4o-mini"]
+        ["openai/gpt-4o", "openai/gpt-5.1", "openai/gpt-4o-mini"]
         if args.example == "multi-llm"
         else None  # default mixed candidates
     )

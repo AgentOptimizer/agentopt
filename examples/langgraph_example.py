@@ -359,7 +359,7 @@ if __name__ == "__main__":
     # → 4 combos: (gpt-4o, gpt-4o), (gpt-4o, -haiku), (-haiku, gpt-4o), (-haiku, -haiku)
     per_proxy_candidates = None
     if args.example == "multi-llm" and len(llm_proxies) == 2:
-        candidates = ["gpt-4o", "gpt-4.1"]
+        candidates = ["openai/gpt-4o", "openai/gpt-4.1"]
         per_proxy_candidates = {p: candidates for p in llm_proxies}
 
     print("\n[2] Running model selection...")

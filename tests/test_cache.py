@@ -9,7 +9,6 @@ import pytest
 
 from agentopt.cache import EvalCache, NoCache
 
-
 # ---------------------------------------------------------------------------
 # EvalCache unit tests
 # ---------------------------------------------------------------------------
@@ -320,9 +319,7 @@ class TestCachingInEvaluation:
         def eval_fn(expected, actual):
             return 1.0 if expected == actual else 0.0
 
-        selector_small = _make_selector(
-            cache, invoke_fn, eval_fn, [("hello", "HELLO")]
-        )
+        selector_small = _make_selector(cache, invoke_fn, eval_fn, [("hello", "HELLO")])
         selector_small._evaluate_sequential([("hello", "HELLO")], label="m1")
         assert call_count == 1
 

@@ -30,6 +30,7 @@ class BruteForceModelSelector(BaseModelSelector):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         cache: Optional["EvalCache"] = _CACHE_SENTINEL,
     ) -> None:
         super().__init__(
@@ -38,6 +39,7 @@ class BruteForceModelSelector(BaseModelSelector):
             agent=agent,
             invoke_fn=invoke_fn,
             dataset=dataset,
+            model_prices=model_prices,
             cache=cache,
         )
 
@@ -104,7 +106,7 @@ class BruteForceModelSelector(BaseModelSelector):
                 latency = sum(latencies) / len(latencies) if latencies else 0.0
                 in_tokens, out_tokens = self._split_tokens(tokens)
 
-                result = ModelResult(
+                result = self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=latency,
@@ -135,7 +137,7 @@ class BruteForceModelSelector(BaseModelSelector):
             except Exception as e:
                 print(f"  [{combo_name}] failed: {e}")
                 all_results.append(
-                    ModelResult(
+                    self._make_result(
                         model_name=combo_name,
                         accuracy=0.0,
                         latency_seconds=0.0,
@@ -259,7 +261,7 @@ class BruteForceModelSelector(BaseModelSelector):
                         accuracy, _ = self._compute_stats(scores)
                         latency = sum(latencies) / len(latencies) if latencies else 0.0
                         in_tokens, out_tokens = self._split_tokens(tokens)
-                        result = ModelResult(
+                        result = self._make_result(
                             model_name=combo_name,
                             accuracy=accuracy,
                             latency_seconds=latency,
@@ -273,7 +275,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     except Exception as e:
                         print(f"  [{combo_name}] failed: {e}")
                         all_results.append(
-                            ModelResult(
+                            self._make_result(
                                 model_name=combo_name,
                                 accuracy=0.0,
                                 latency_seconds=0.0,
@@ -360,7 +362,7 @@ class BruteForceModelSelector(BaseModelSelector):
                         accuracy, _ = self._compute_stats(scores)
                         latency = sum(latencies) / len(latencies) if latencies else 0.0
                         in_tokens, out_tokens = self._split_tokens(tokens)
-                        result = ModelResult(
+                        result = self._make_result(
                             model_name=combo_name,
                             accuracy=accuracy,
                             latency_seconds=latency,
@@ -374,7 +376,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     except Exception as e:
                         print(f"  [{combo_name}] failed: {e}")
                         all_results.append(
-                            ModelResult(
+                            self._make_result(
                                 model_name=combo_name,
                                 accuracy=0.0,
                                 latency_seconds=0.0,

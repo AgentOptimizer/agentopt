@@ -61,6 +61,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         n_initial: Optional[int] = None,
         growth_factor: float = 2.0,
         confidence: float = 1.0,
+        model_prices: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> None:
         super().__init__(
             models=models,
@@ -68,6 +69,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
             dataset=dataset,
             agent=agent,
             invoke_fn=invoke_fn,
+            model_prices=model_prices,
             cache=cache,
         )
         n = len(self.dataset)
@@ -223,7 +225,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 accuracy, avg_latency = 0.0, 0.0
             in_tokens, out_tokens = self._split_tokens(combo_tokens[idx])
             all_results.append(
-                ModelResult(
+                self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,
@@ -464,7 +466,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
             avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
             in_tokens, out_tokens = self._split_tokens(combo_tokens.get(idx, {}))
             all_results.append(
-                ModelResult(
+                self._make_result(
                     model_name=combo_name,
                     accuracy=accuracy,
                     latency_seconds=avg_latency,

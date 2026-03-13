@@ -10,12 +10,13 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from ..base_models import Dataset, EvalFn, validate_dataset
 from ..cache import EvalCache, NoCache
 from ..model_proxy import ModelProxy
 from ..model_proxy.constants import validate_model_candidates
+from ..model_price import compute_price
 from ..model_proxy.token_tracking import TokenAccumulator
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class ModelResult(BaseModel):
     output_tokens: Dict[str, int] = Field(default_factory=dict)
     attribute: str
     is_best: bool = False
+    _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
 
     @property
     def total_input_tokens(self) -> int:
@@ -42,6 +44,13 @@ class ModelResult(BaseModel):
     def total_output_tokens(self) -> int:
         return sum(self.output_tokens.values())
 
+    @property
+    def price(self) -> Optional[float]:
+        """Total cost in USD, or ``None`` if pricing is unavailable."""
+        return compute_price(
+            self.input_tokens, self.output_tokens, custom_prices=self._custom_prices
+        )
+
     def __str__(self) -> str:
         tok_parts = []
         for model in sorted(set(self.input_tokens) | set(self.output_tokens)):
@@ -49,10 +58,13 @@ class ModelResult(BaseModel):
             o = self.output_tokens.get(model, 0)
             tok_parts.append(f"{model}: {i}/{o}")
         tok_str = ", ".join(tok_parts) if tok_parts else "0/0"
+        p = self.price
+        price_str = f"${p:.6f}" if p is not None else "N/A"
         return (
             f"{self.model_name} (accuracy: {self.accuracy:.2%}, "
             f"latency: {self.latency_seconds:.2f}s, "
-            f"tokens: {{{tok_str}}})"
+            f"tokens: {{{tok_str}}}, "
+            f"price: {price_str})"
         )
 
 
@@ -93,6 +105,7 @@ class SelectionResults(BaseModel):
             "latency_seconds",
             "input_tokens",
             "output_tokens",
+            "price",
             "attribute",
             "is_best",
         ]
@@ -103,6 +116,8 @@ class SelectionResults(BaseModel):
                 row = result.model_dump()
                 row["input_tokens"] = json.dumps(row["input_tokens"])
                 row["output_tokens"] = json.dumps(row["output_tokens"])
+                p = result.price
+                row["price"] = f"{p:.6f}" if p is not None else ""
                 writer.writerow(row)
 
     def __str__(self) -> str:
@@ -128,29 +143,35 @@ class SelectionResults(BaseModel):
         def fmt_lat(v: float) -> str:
             return f"{v:.2f}s"
 
-        def fmt_tok(r: ModelResult) -> str:
-            return f"{r.total_input_tokens}/{r.total_output_tokens}"
+        def fmt_price(r: ModelResult) -> str:
+            p = r.price
+            return f"${p:.6f}" if p is not None else "N/A"
 
         # Compute column widths.
-        rank_h, model_h, acc_h, lat_h, tok_h = (
+        rank_h, model_h, acc_h, lat_h, price_h = (
             "Rank",
             "Model",
             "Accuracy",
             "Latency",
-            "Tokens (in/out)",
+            "Price",
         )
         rank_w = max(len(rank_h), len(str(len(unique))))
         model_w = max(len(model_h), *(len(r.model_name) for r in unique))
         acc_w = max(len(acc_h), *(len(fmt_acc(r.accuracy)) for r in unique))
         lat_w = max(len(lat_h), *(len(fmt_lat(r.latency_seconds)) for r in unique))
-        tok_w = max(len(tok_h), *(len(fmt_tok(r)) for r in unique))
+        price_w = max(len(price_h), *(len(fmt_price(r)) for r in unique))
 
         # Row builder.
         marker = ">>>"
         pad = " " * len(marker)
 
         def row(
-            rank_s: str, model_s: str, acc_s: str, lat_s: str, tok_s: str, best: bool
+            rank_s: str,
+            model_s: str,
+            acc_s: str,
+            lat_s: str,
+            price_s: str,
+            best: bool,
         ) -> str:
             prefix = marker if best else pad
             return (
@@ -158,10 +179,10 @@ class SelectionResults(BaseModel):
                 f"{model_s:<{model_w}}  "
                 f"{acc_s:>{acc_w}}  "
                 f"{lat_s:>{lat_w}}  "
-                f"{tok_s:>{tok_w}}"
+                f"{price_s:>{price_w}}"
             )
 
-        header_row = row(rank_h, model_h, acc_h, lat_h, tok_h, False)
+        header_row = row(rank_h, model_h, acc_h, lat_h, price_h, False)
         sep = pad + " " + "-" * (len(header_row) - len(pad) - 1)
 
         lines: List[str] = []
@@ -178,7 +199,7 @@ class SelectionResults(BaseModel):
                     r.model_name,
                     fmt_acc(r.accuracy),
                     fmt_lat(r.latency_seconds),
-                    fmt_tok(r),
+                    fmt_price(r),
                     r.is_best,
                 )
             )
@@ -191,7 +212,7 @@ class SelectionResults(BaseModel):
                 f"{pad} Best: {best_result.model_name} "
                 f"(accuracy: {best_result.accuracy:.2%}, "
                 f"latency: {best_result.latency_seconds:.2f}s, "
-                f"tokens: {fmt_tok(best_result)})"
+                f"price: {fmt_price(best_result)})"
             )
         lines.append("")
 
@@ -212,6 +233,7 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         agent: Any = None,
         invoke_fn: Optional[Callable] = None,
+        model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         cache: Optional[EvalCache] = _CACHE_SENTINEL,
     ) -> None:
         """
@@ -227,6 +249,11 @@ class BaseModelSelector(ABC):
                 LlamaIndex, OpenAI SDK).  Mutually exclusive with *invoke_fn*.
             invoke_fn: Callable for a custom agent or multi-agent chain.
                 Mutually exclusive with *agent*.
+            model_prices: Optional custom pricing overrides. Maps model names to
+                dicts with ``'input_price'`` and ``'output_price'`` keys ($/MTok).
+                Example: ``{'gpt-4o': {'input_price': 1.0, 'output_price': 2.0}}``.
+                If a model's price is specified here and differs from the built-in
+                default, the user-provided price is used.
             cache: An :class:`EvalCache` instance for caching per-item evaluation
                 results.  By default an ``EvalCache`` at ``.cache/eval_cache.json``
                 is created automatically.  Pass ``None`` to disable caching.
@@ -239,6 +266,17 @@ class BaseModelSelector(ABC):
             )
 
         validate_dataset(dataset)
+
+        # Store custom prices on the instance (no global mutation).
+        self._custom_prices: Optional[Dict[str, Tuple[float, float]]] = (
+            {
+                name: (d["input_price"], d["output_price"])
+                for name, d in model_prices.items()
+            }
+            if model_prices
+            else None
+        )
+
         self.agent = agent
         self.eval_fn = eval_fn
         self.dataset = dataset
@@ -423,6 +461,12 @@ class BaseModelSelector(ABC):
         else:
             return model_obj.__class__.__name__
 
+    def _make_result(self, **kwargs: Any) -> ModelResult:
+        """Create a :class:`ModelResult` with instance-level custom prices."""
+        result = ModelResult(**kwargs)
+        result._custom_prices = self._custom_prices
+        return result
+
     # ------------------------------------------------------------------
     # Parallel evaluation utilities
     # ------------------------------------------------------------------
@@ -553,24 +597,37 @@ class BaseModelSelector(ABC):
 
     @staticmethod
     def _find_best(results: List[ModelResult]) -> Optional[Tuple[str, float]]:
-        """Find the best result by accuracy (ties broken by latency)."""
+        """A tentative implementation of finding best, which sorts by accuracy, then by latency, then by cost."""
         best = None
         best_accuracy = float("-inf")
         best_latency = float("inf")
+        best_cost = float("inf")
         tol = 1e-9
 
         for r in results:
+            r_cost = r.price if r.price is not None else float("inf")
             if r.accuracy > best_accuracy + tol:
                 best = r
                 best_accuracy = r.accuracy
                 best_latency = r.latency_seconds
+                best_cost = r_cost
             elif (
                 abs(r.accuracy - best_accuracy) <= tol
-                and r.latency_seconds < best_latency
+                and r.latency_seconds < best_latency - tol
             ):
                 best = r
                 best_accuracy = r.accuracy
                 best_latency = r.latency_seconds
+                best_cost = r_cost
+            elif (
+                abs(r.accuracy - best_accuracy) <= tol
+                and abs(r.latency_seconds - best_latency) <= tol
+                and r_cost < best_cost - tol
+            ):
+                best = r
+                best_accuracy = r.accuracy
+                best_latency = r.latency_seconds
+                best_cost = r_cost
 
         return (best.model_name, best.accuracy) if best else None
 

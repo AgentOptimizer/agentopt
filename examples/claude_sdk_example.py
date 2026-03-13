@@ -140,7 +140,10 @@ def run_model_selection(
 ):
     dataset = load_dataset("examples/datasets", filename=dataset_file)
     print(f"  [run] dataset loaded: {len(dataset)} samples from {dataset_file}")
-    model_candidates = ["haiku", "sonnet"]
+    model_candidates = [
+        "anthropic/claude-haiku-4-5-20251001",
+        "anthropic/claude-sonnet-4-20250514",
+    ]
     mode = "parallel" if parallel else "sequential"
     print(f"  [run] starting model selection ({mode}) — candidates: {model_candidates}")
 

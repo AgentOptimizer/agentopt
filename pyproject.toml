@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentopt"
+version = "0.2.0"
+description = "Framework-agnostic LLM model selection optimizer for agents"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0.0",
+    "litellm",
+]
+
+[project.optional-dependencies]
+bayesian = ["torch>=2.0.0", "botorch>=0.10.0", "gpytorch>=1.11.0"]
+crewai = ["crewai"]
+langgraph = ["langchain-openai", "langgraph"]
+examples = ["crewai", "langchain-openai", "langgraph", "openai"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentopt"]

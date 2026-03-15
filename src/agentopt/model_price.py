@@ -14,23 +14,17 @@ def _find_price_file() -> Optional[Path]:
     """Locate ``model_price.json``.
 
     Search order:
-      1. Same directory as this module (inside package).
-      2. Current working directory.
-      3. Walk up from this module's file to find the project root.
+      1. Current working directory.
+      2. Walk up from this module's file to find the project root.
     """
     name = "model_price.json"
 
-    # 1. Same directory as this module.
-    pkg_path = Path(__file__).resolve().parent / name
-    if pkg_path.is_file():
-        return pkg_path
-
-    # 2. CWD
+    # 1. CWD
     cwd_path = Path.cwd() / name
     if cwd_path.is_file():
         return cwd_path
 
-    # 3. Walk up from this file's directory.
+    # 2. Walk up from this file's directory.
     current = Path(__file__).resolve().parent
     for _ in range(10):
         candidate = current / name

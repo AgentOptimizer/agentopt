@@ -297,6 +297,7 @@ class HyperbandModelSelector(BaseModelSelector):
     def _select_parallel(self, max_workers: Optional[int] = None) -> SelectionResults:
         from ..model_proxy.adapter import get_adapter
         from ..model_proxy.builders import build_llm
+        from ..model_proxy.model_copy import clone_model_spec
         from ..model_proxy.token_tracking import TokenAccumulator
 
         proxies = list(self._models.keys())
@@ -374,13 +375,16 @@ class HyperbandModelSelector(BaseModelSelector):
             """Set thread-local models, evaluate batch, then clean up."""
             tracker = TokenAccumulator()
             for proxy, model_spec in zip(proxies, combo):
-                model_name = self._get_model_name(model_spec)
-                current_model = object.__getattribute__(proxy, "_optmodel")
-                fresh_model = build_llm(model_name, current_model)
-                if fresh_model is None:
-                    raise RuntimeError(
-                        f"Cannot build model '{model_name}' for parallel evaluation."
-                    )
+                if isinstance(model_spec, str):
+                    model_name = self._get_model_name(model_spec)
+                    current_model = object.__getattribute__(proxy, "_optmodel")
+                    fresh_model = build_llm(model_name, current_model)
+                    if fresh_model is None:
+                        raise RuntimeError(
+                            f"Cannot build model '{model_name}' for parallel evaluation."
+                        )
+                else:
+                    fresh_model = clone_model_spec(model_spec)
                 proxy._set_thread_model(fresh_model, tracker)
             try:
                 return self._evaluate_thread_safe(

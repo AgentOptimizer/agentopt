@@ -21,6 +21,7 @@ import threading
 
 from ..adapter import FrameworkAdapter
 from ..constants import detect_provider
+from ..model_copy import clone_model_spec
 from ..token_tracking import TokenAccumulator
 from typing import Any, Callable, List, Tuple
 
@@ -393,12 +394,25 @@ class AG2Adapter(FrameworkAdapter):
     ) -> Any:
         """Clone the AG2 agent with a fresh LLMConfig for this combination."""
         model_spec = combo[0]
-        model_name = (
-            model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
-        )
         from autogen import LLMConfig
 
-        new_config = LLMConfig(AG2ConfigWrapper._build_config(model_name))
+        if isinstance(model_spec, str):
+            new_config = LLMConfig(AG2ConfigWrapper._build_config(model_spec))
+        elif hasattr(model_spec, "config_list"):
+            new_config = LLMConfig(*copy.deepcopy(model_spec.config_list))
+        elif hasattr(model_spec, "model"):
+            new_config = LLMConfig(
+                AG2ConfigWrapper._build_config(str(getattr(model_spec, "model")))
+            )
+        else:
+            cloned_spec = clone_model_spec(model_spec)
+            if hasattr(cloned_spec, "config_list"):
+                new_config = LLMConfig(*copy.deepcopy(cloned_spec.config_list))
+            else:
+                raise RuntimeError(
+                    "AG2Adapter.clone_for_parallel: unsupported non-string model candidate. "
+                    "Pass a string model name or an LLMConfig-like object."
+                )
         agent_copy = copy.copy(agent)
         agent_copy.llm_config = new_config
         agent_copy.client = agent_copy._create_client(new_config)

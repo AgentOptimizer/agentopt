@@ -5,6 +5,7 @@ from typing import Any, Callable, List, Optional
 
 from ..adapter import FrameworkAdapter
 from ..constants import MODEL_FIELDS
+from ..model_copy import clone_model_spec
 from ..token_tracking import TokenAccumulator
 
 logger = logging.getLogger(__name__)
@@ -154,10 +155,12 @@ class CrewAIAdapter(FrameworkAdapter):
 
         if n_proxies == 1:
             # Shared-LLM: every sub-agent gets the same new model
-            model_name = (
-                combo[0] if isinstance(combo[0], str) else get_model_name(combo[0])
-            )
-            fresh_llm = build_crewai_llm(model_name)
+            model_spec = combo[0]
+            model_name = get_model_name(model_spec)
+            if isinstance(model_spec, str):
+                fresh_llm = build_crewai_llm(model_name)
+            else:
+                fresh_llm = clone_model_spec(model_spec)
             fresh_proxy = ModelProxy(fresh_llm)
             fresh_proxy._set_token_tracker(tracker)
             for ag in crew_agents:
@@ -171,12 +174,11 @@ class CrewAIAdapter(FrameworkAdapter):
         elif n_proxies == n_agents:
             # Positional mapping: proxy i → agent i
             for ag, model_spec in zip(crew_agents, combo):
-                model_name = (
-                    model_spec
-                    if isinstance(model_spec, str)
-                    else get_model_name(model_spec)
-                )
-                fresh_llm = build_crewai_llm(model_name)
+                model_name = get_model_name(model_spec)
+                if isinstance(model_spec, str):
+                    fresh_llm = build_crewai_llm(model_name)
+                else:
+                    fresh_llm = clone_model_spec(model_spec)
                 fresh_proxy = ModelProxy(fresh_llm)
                 fresh_proxy._set_token_tracker(tracker)
                 cloned_ag = ag.model_copy(update={"llm": fresh_proxy}, deep=False)

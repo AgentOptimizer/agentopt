@@ -16,6 +16,7 @@ from typing import Any, Callable, List, Optional
 from pydantic import BaseModel
 
 from ..constants import detect_provider, no_key_error
+from ..model_copy import clone_model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -304,24 +305,22 @@ class LlamaIndexAdapter(FrameworkAdapter):
 
         if n_proxies == 1:
             model_spec = combo[0]
-            model_name = (
-                model_spec
-                if isinstance(model_spec, str)
-                else get_model_name(model_spec)
-            )
-            fresh_llm = build_llamaindex_llm(model_name)
+            if isinstance(model_spec, str):
+                model_name = model_spec
+                fresh_llm = build_llamaindex_llm(model_name)
+            else:
+                fresh_llm = clone_model_spec(model_spec)
             for name, ag in agents_dict.items():
                 cloned_agents[name] = ag.model_copy(
                     update={"llm": fresh_llm}, deep=False
                 )
         elif n_proxies == n_agents:
             for (name, ag), model_spec in zip(agents_dict.items(), combo):
-                model_name = (
-                    model_spec
-                    if isinstance(model_spec, str)
-                    else get_model_name(model_spec)
-                )
-                fresh_llm = build_llamaindex_llm(model_name)
+                if isinstance(model_spec, str):
+                    model_name = model_spec
+                    fresh_llm = build_llamaindex_llm(model_name)
+                else:
+                    fresh_llm = clone_model_spec(model_spec)
                 cloned_agents[name] = ag.model_copy(
                     update={"llm": fresh_llm}, deep=False
                 )

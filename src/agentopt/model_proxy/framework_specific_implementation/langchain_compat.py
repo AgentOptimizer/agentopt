@@ -8,6 +8,7 @@ from langchain_core.outputs import ChatGeneration
 
 from ..adapter import FrameworkAdapter
 from ..constants import detect_provider, no_key_error
+from ..model_copy import clone_model_spec
 
 
 class _TokenTrackingCallback(BaseCallbackHandler):
@@ -340,14 +341,15 @@ class LangChainAdapter(FrameworkAdapter):
 
         # Single-proxy case (standard): build one fresh LLM for this combo.
         model_spec = combo[0]
-        model_name = (
-            model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
-        )
-        fresh_llm = build_langchain_compatible_llm(model_name)
-        if fresh_llm is None:
-            raise RuntimeError(
-                f"LangChainAdapter.clone_for_parallel: could not build LLM for '{model_name}'."
-            )
+        if isinstance(model_spec, str):
+            model_name = model_spec
+            fresh_llm = build_langchain_compatible_llm(model_name)
+            if fresh_llm is None:
+                raise RuntimeError(
+                    f"LangChainAdapter.clone_for_parallel: could not build LLM for '{model_name}'."
+                )
+        else:
+            fresh_llm = clone_model_spec(model_spec)
 
         # Wrap in a per-thread proxy so token interception works in parallel.
         from ..proxy import ModelProxy

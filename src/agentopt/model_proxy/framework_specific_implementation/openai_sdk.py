@@ -5,6 +5,7 @@ from typing import Any, Callable, List
 
 from ..adapter import FrameworkAdapter
 from ..constants import MODEL_FIELDS
+from ..model_copy import clone_model_spec
 from ..token_tracking import extract_usage
 
 
@@ -190,10 +191,10 @@ class OpenAISDKAdapter(FrameworkAdapter):
         that proxy-level response interception tracks tokens correctly.
         """
         model_spec = combo[0]
-        model_name = (
-            model_spec if isinstance(model_spec, str) else get_model_name(model_spec)
-        )
-        fresh_model = build_openai_agents_model(model_name)
+        if isinstance(model_spec, str):
+            fresh_model = build_openai_agents_model(model_spec)
+        else:
+            fresh_model = clone_model_spec(model_spec)
 
         # Wrap in a per-thread proxy so token interception works in parallel.
         from ..proxy import ModelProxy

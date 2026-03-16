@@ -11,6 +11,7 @@ runtime with ``tracker.cache_enabled = False``.
 import hashlib
 import json
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -54,7 +55,7 @@ class CacheEntry:
 
 
 class ResponseCache:
-    """Thread-safe in-memory LRU-ish response cache.
+    """Thread-safe in-memory LRU response cache.
 
     Parameters
     ----------
@@ -63,7 +64,7 @@ class ResponseCache:
     """
 
     def __init__(self, max_size: int = 0) -> None:
-        self._store: Dict[str, CacheEntry] = {}
+        self._store: OrderedDict[str, CacheEntry] = OrderedDict()
         self._lock = threading.Lock()
         self._max_size = max_size
         self.stats = CacheStats()
@@ -73,6 +74,8 @@ class ResponseCache:
         with self._lock:
             entry = self._store.get(key)
             if entry is not None:
+                # Promote to most recently used on access
+                self._store.move_to_end(key)
                 self.stats.hits += 1
             else:
                 self.stats.misses += 1
@@ -82,9 +85,8 @@ class ResponseCache:
         """Store a response in the cache."""
         with self._lock:
             if self._max_size > 0 and len(self._store) >= self._max_size:
-                # Evict oldest entry (first inserted)
-                oldest_key = next(iter(self._store))
-                del self._store[oldest_key]
+                # Evict least recently used entry
+                self._store.popitem(last=False)
             self._store[key] = entry
 
     def clear(self) -> None:

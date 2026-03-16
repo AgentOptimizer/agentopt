@@ -8,6 +8,8 @@ from typing import Any, Callable, Optional
 
 import httpx
 
+from .cache import CacheEntry, ResponseCache, _make_cache_key
+
 # ---------------------------------------------------------------------------
 # ContextVars for attribution
 # ---------------------------------------------------------------------------
@@ -27,6 +29,10 @@ _agent_id_var: ContextVar[Optional[str]] = ContextVar(
 _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
 _installed = False
+
+# Cache and its enabled flag (set by LLMTracker)
+_cache: Optional[ResponseCache] = None
+_cache_enabled = True
 
 # URL path patterns that indicate LLM API endpoints
 _LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages")
@@ -68,6 +74,7 @@ def _try_record(
     response: httpx.Response,
     latency_seconds: float,
     callback: Callable,
+    cached: bool = False,
 ) -> None:
     """Attempt to parse the response and create a CallRecord."""
     from .models import CallRecord
@@ -100,8 +107,52 @@ def _try_record(
         request_body=request_body,
         response_body=body,
         timestamp=datetime.now(timezone.utc).isoformat(),
+        cached=cached,
     )
     callback(record)
+
+
+def _try_cache_lookup(request: httpx.Request) -> Optional[httpx.Response]:
+    """Check if a cached response exists for this request."""
+    if _cache is None or not _cache_enabled:
+        return None
+
+    try:
+        request_body = json.loads(request.content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    key = _make_cache_key(request_body)
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+
+    # Build a synthetic httpx.Response from cached bytes
+    return httpx.Response(
+        status_code=200,
+        content=entry.response_bytes,
+        headers=entry.response_headers,
+    )
+
+
+def _try_cache_store(request: httpx.Request, response: httpx.Response) -> None:
+    """Store a successful response in the cache."""
+    if _cache is None or not _cache_enabled:
+        return
+
+    try:
+        request_body = json.loads(request.content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return
+
+    key = _make_cache_key(request_body)
+    _cache.put(
+        key,
+        CacheEntry(
+            response_bytes=response.content,
+            response_headers=dict(response.headers),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +160,17 @@ def _try_record(
 # ---------------------------------------------------------------------------
 
 
-def install(callback: Callable) -> None:
+def install(callback: Callable, cache: Optional[ResponseCache] = None,
+            cache_enabled: bool = True) -> None:
     """Monkey-patch httpx.Client.send and httpx.AsyncClient.send."""
     global _original_sync_send, _original_async_send, _installed
+    global _cache, _cache_enabled
 
     if _installed:
         return
+
+    _cache = cache
+    _cache_enabled = cache_enabled
 
     _original_sync_send = httpx.Client.send
     _original_async_send = httpx.AsyncClient.send
@@ -125,6 +181,13 @@ def install(callback: Callable) -> None:
         if not _is_llm_request(request):
             return _original_sync_send(self, request, stream=stream, **kwargs)
 
+        # Cache lookup (only for non-streaming requests)
+        if not stream:
+            cached_response = _try_cache_lookup(request)
+            if cached_response is not None:
+                _try_record(request, cached_response, 0.0, callback, cached=True)
+                return cached_response
+
         t0 = time.monotonic()
         response = _original_sync_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
@@ -132,6 +195,7 @@ def install(callback: Callable) -> None:
         if not stream and response.status_code == 200:
             try:
                 response.read()
+                _try_cache_store(request, response)
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass
@@ -144,6 +208,13 @@ def install(callback: Callable) -> None:
         if not _is_llm_request(request):
             return await _original_async_send(self, request, stream=stream, **kwargs)
 
+        # Cache lookup (only for non-streaming requests)
+        if not stream:
+            cached_response = _try_cache_lookup(request)
+            if cached_response is not None:
+                _try_record(request, cached_response, 0.0, callback, cached=True)
+                return cached_response
+
         t0 = time.monotonic()
         response = await _original_async_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
@@ -151,6 +222,7 @@ def install(callback: Callable) -> None:
         if not stream and response.status_code == 200:
             try:
                 await response.aread()
+                _try_cache_store(request, response)
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass
@@ -165,6 +237,7 @@ def install(callback: Callable) -> None:
 def uninstall() -> None:
     """Restore original httpx send methods."""
     global _original_sync_send, _original_async_send, _installed
+    global _cache, _cache_enabled
 
     if not _installed:
         return
@@ -176,4 +249,6 @@ def uninstall() -> None:
 
     _original_sync_send = None
     _original_async_send = None
+    _cache = None
+    _cache_enabled = True
     _installed = False

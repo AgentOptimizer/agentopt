@@ -4,8 +4,10 @@ import threading
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Tuple
 
+from .cache import CacheStats, ResponseCache
 from .interceptor import (
     _agent_id_var,
+    _cache_enabled,
     _combo_id_var,
     _data_id_var,
     install,
@@ -17,28 +19,70 @@ from .models import CallRecord
 class LLMTracker:
     """Tracks LLM API calls via httpx interception.
 
+    Parameters
+    ----------
+    cache : bool
+        Enable API-level response caching (default ``True``).
+        When enabled, identical requests (same model, messages, etc.)
+        return cached responses instantly without hitting the API.
+    cache_max_size : int
+        Maximum number of cached entries. 0 means unlimited (default).
+
     Usage::
 
-        tracker = LLMTracker()
+        tracker = LLMTracker()           # cache on by default
+        tracker = LLMTracker(cache=False) # disable caching
         tracker.start()
 
         with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
             result = agent(input_data)
 
-        usage = tracker.get_usage(data_id="dp_1", combo_id="gpt4o+haiku")
+        usage = tracker.get_usage(combo_id="gpt4o+haiku")
+        print(tracker.cache_stats)       # CacheStats(hits=3, misses=2)
         tracker.stop()
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cache: bool = True, cache_max_size: int = 0) -> None:
         self._records: List[CallRecord] = []
         self._lock = threading.Lock()
         self._active = False
+        self._cache_on = cache
+        self._response_cache = ResponseCache(max_size=cache_max_size) if cache else None
+
+    @property
+    def cache_enabled(self) -> bool:
+        """Whether response caching is currently active."""
+        return self._cache_on
+
+    @cache_enabled.setter
+    def cache_enabled(self, value: bool) -> None:
+        """Enable or disable caching at runtime."""
+        import agentproxy.interceptor as _int
+
+        self._cache_on = value
+        _int._cache_enabled = value
+
+    @property
+    def cache_stats(self) -> CacheStats:
+        """Return cache hit/miss statistics."""
+        if self._response_cache is not None:
+            return self._response_cache.stats
+        return CacheStats()
+
+    def clear_cache(self) -> None:
+        """Clear all cached responses and reset stats."""
+        if self._response_cache is not None:
+            self._response_cache.clear()
 
     def start(self) -> None:
         """Install httpx patches. Idempotent."""
         if self._active:
             return
-        install(callback=self._on_call)
+        install(
+            callback=self._on_call,
+            cache=self._response_cache,
+            cache_enabled=self._cache_on,
+        )
         self._active = True
 
     def stop(self) -> None:

@@ -7,7 +7,6 @@ from typing import Dict, List, Optional, Tuple
 from .cache import CacheStats, ResponseCache
 from .interceptor import (
     _agent_id_var,
-    _cache_enabled,
     _combo_id_var,
     _data_id_var,
     install,

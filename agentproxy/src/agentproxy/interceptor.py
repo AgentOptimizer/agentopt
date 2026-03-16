@@ -69,6 +69,25 @@ def _parse_usage(body: dict) -> Optional[dict]:
     }
 
 
+def _get_request_body(request: httpx.Request) -> Optional[dict]:
+    """Parse and cache the JSON body of an httpx.Request.
+
+    The parsed body is stored in request.extensions so that repeated calls
+    for the same request instance do not re-deserialize the content.
+    """
+    cache_key = "_agentproxy_json_body"
+    if cache_key in request.extensions:
+        return request.extensions[cache_key]
+
+    try:
+        body = json.loads(request.content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+
+    request.extensions[cache_key] = body
+    return body
+
+
 def _try_record(
     request: httpx.Request,
     response: httpx.Response,
@@ -88,10 +107,7 @@ def _try_record(
     if parsed is None:
         return
 
-    try:
-        request_body = json.loads(request.content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        request_body = {}
+    request_body = _get_request_body(request) or {}
 
     model = request_body.get("model") or parsed["model"]
 
@@ -117,9 +133,8 @@ def _try_cache_lookup(request: httpx.Request) -> Optional[httpx.Response]:
     if _cache is None or not _cache_enabled:
         return None
 
-    try:
-        request_body = json.loads(request.content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    request_body = _get_request_body(request)
+    if request_body is None:
         return None
 
     key = _make_cache_key(request_body)
@@ -140,9 +155,8 @@ def _try_cache_store(request: httpx.Request, response: httpx.Response) -> None:
     if _cache is None or not _cache_enabled:
         return
 
-    try:
-        request_body = json.loads(request.content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    request_body = _get_request_body(request)
+    if request_body is None:
         return
 
     key = _make_cache_key(request_body)

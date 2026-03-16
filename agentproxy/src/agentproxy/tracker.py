@@ -58,6 +58,17 @@ class LLMTracker:
         """Enable or disable caching at runtime."""
         import agentproxy.interceptor as _int
 
+        # If no cache was initialized (e.g. constructed with cache=False),
+        # enabling caching would silently not work because the interceptor
+        # has no cache instance to use. Fail fast instead of misrepresenting
+        # the state.
+        if value and self._response_cache is None:
+            raise RuntimeError(
+                "Cannot enable caching: LLMTracker was constructed with "
+                "cache=False and no ResponseCache was initialized. "
+                "Create the tracker with cache=True to use caching."
+            )
+
         self._cache_on = value
         _int._cache_enabled = value
 

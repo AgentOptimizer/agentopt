@@ -4,6 +4,7 @@ import threading
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Tuple
 
+from .cache import CacheStats, ResponseCache
 from .interceptor import (
     _agent_id_var,
     _combo_id_var,
@@ -17,28 +18,81 @@ from .models import CallRecord
 class LLMTracker:
     """Tracks LLM API calls via httpx interception.
 
+    Parameters
+    ----------
+    cache : bool
+        Enable API-level response caching (default ``True``).
+        When enabled, identical requests (same model, messages, etc.)
+        return cached responses instantly without hitting the API.
+    cache_max_size : int
+        Maximum number of cached entries. 0 means unlimited (default).
+
     Usage::
 
-        tracker = LLMTracker()
+        tracker = LLMTracker()           # cache on by default
+        tracker = LLMTracker(cache=False) # disable caching
         tracker.start()
 
         with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
             result = agent(input_data)
 
-        usage = tracker.get_usage(data_id="dp_1", combo_id="gpt4o+haiku")
+        usage = tracker.get_usage(combo_id="gpt4o+haiku")
+        print(tracker.cache_stats)       # CacheStats(hits=3, misses=2)
         tracker.stop()
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cache: bool = True, cache_max_size: int = 0) -> None:
         self._records: List[CallRecord] = []
         self._lock = threading.Lock()
         self._active = False
+        self._cache_on = cache
+        self._response_cache = ResponseCache(max_size=cache_max_size) if cache else None
+
+    @property
+    def cache_enabled(self) -> bool:
+        """Whether response caching is currently active."""
+        return self._cache_on
+
+    @cache_enabled.setter
+    def cache_enabled(self, value: bool) -> None:
+        """Enable or disable caching at runtime."""
+        import agentproxy.interceptor as _int
+
+        # If no cache was initialized (e.g. constructed with cache=False),
+        # enabling caching would silently not work because the interceptor
+        # has no cache instance to use. Fail fast instead of misrepresenting
+        # the state.
+        if value and self._response_cache is None:
+            raise RuntimeError(
+                "Cannot enable caching: LLMTracker was constructed with "
+                "cache=False and no ResponseCache was initialized. "
+                "Create the tracker with cache=True to use caching."
+            )
+
+        self._cache_on = value
+        _int._cache_enabled = value
+
+    @property
+    def cache_stats(self) -> CacheStats:
+        """Return cache hit/miss statistics."""
+        if self._response_cache is not None:
+            return self._response_cache.stats
+        return CacheStats()
+
+    def clear_cache(self) -> None:
+        """Clear all cached responses and reset stats."""
+        if self._response_cache is not None:
+            self._response_cache.clear()
 
     def start(self) -> None:
         """Install httpx patches. Idempotent."""
         if self._active:
             return
-        install(callback=self._on_call)
+        install(
+            callback=self._on_call,
+            cache=self._response_cache,
+            cache_enabled=self._cache_on,
+        )
         self._active = True
 
     def stop(self) -> None:
@@ -116,6 +170,23 @@ class LLMTracker:
             totals[r.model][0] += r.prompt_tokens
             totals[r.model][1] += r.completion_tokens
         return {k: (v[0], v[1]) for k, v in totals.items()}
+
+    def get_cached_latency(
+        self,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> float:
+        """Return total latency (seconds) from cached responses.
+
+        Sums ``latency_seconds`` for all ``cached=True`` records matching
+        the given filters.  This represents the time that *would* have been
+        spent on real API calls but was saved by the cache.
+        """
+        records = self.get_records(
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id
+        )
+        return sum(r.latency_seconds for r in records if r.cached)
 
     def clear(self) -> None:
         """Clear all recorded data."""

@@ -24,3 +24,4 @@ class CallRecord:
     request_body: Dict[str, Any] = field(default_factory=dict)
     response_body: Dict[str, Any] = field(default_factory=dict)
     timestamp: str = ""
+    cached: bool = False

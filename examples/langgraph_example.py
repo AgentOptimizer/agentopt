@@ -123,9 +123,11 @@ def main():
     )
     results.print_summary()
 
+    print(f"\nCache stats: {selector._tracker.cache_stats}")
+
     best = results.get_best_combo()
     if best:
-        print(f"\nBest combination: {best}")
+        print(f"Best combination: {best}")
 
 
 if __name__ == "__main__":

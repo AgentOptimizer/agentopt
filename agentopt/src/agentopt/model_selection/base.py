@@ -369,9 +369,7 @@ class BaseModelSelector(ABC):
     # Combo generation
     # ------------------------------------------------------------------
 
-    def _generate_combos(
-        self,
-    ) -> Generator[Dict[str, ModelCandidate], None, None]:
+    def _generate_combos(self,) -> Generator[Dict[str, ModelCandidate], None, None]:
         """Yield all combinations as ``{node_name: model_candidate}`` dicts."""
         for combo_tuple in itertools.product(*self._models.values()):
             yield dict(zip(self._node_names, combo_tuple))

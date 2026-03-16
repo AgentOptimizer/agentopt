@@ -7,7 +7,7 @@ Prerequisites:
 """
 
 import argparse
-from typing import Dict
+from typing import Any, Dict
 
 from crewai import Agent, Crew, LLM, Task
 
@@ -35,19 +35,29 @@ except ImportError:
     pass
 
 
-def agent_maker(models: Dict[str, str]):
+def agent_maker(models: Dict[str, Any]):
     """Factory: builds a CrewAI crew with researcher + writer agents."""
+    researcher_llm = (
+        models["researcher"]
+        if not isinstance(models["researcher"], str)
+        else LLM(model=models["researcher"])
+    )
+    writer_llm = (
+        models["writer"]
+        if not isinstance(models["writer"], str)
+        else LLM(model=models["writer"])
+    )
     researcher = Agent(
         role="Researcher",
         goal="Research the topic and provide accurate information",
         backstory="You are a knowledgeable researcher.",
-        llm=LLM(model=models["researcher"]),
+        llm=researcher_llm,
     )
     writer = Agent(
         role="Writer",
         goal="Write a concise answer based on research",
         backstory="You are a skilled writer who distills information.",
-        llm=LLM(model=models["writer"]),
+        llm=writer_llm,
     )
 
     def run(input_data):
@@ -87,17 +97,25 @@ def main():
     parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--max-concurrent", type=int, default=20)
+    parser.add_argument(
+        "--use-instances",
+        action="store_true",
+        help="Pass pre-built LLM instances instead of model name strings",
+    )
     args = parser.parse_args()
+
+    candidates = ["gpt-5.2", "gpt-4o-mini", "gpt-4.1"]
+    if args.use_instances:
+        models = {
+            "researcher": [LLM(model=m) for m in candidates],
+            "writer": [LLM(model=m) for m in candidates],
+        }
+    else:
+        models = {"researcher": candidates, "writer": candidates}
 
     selector_cls = SELECTORS[args.selector]
     selector = selector_cls(
-        agent_fn=agent_maker,
-        models={
-            "researcher": ["gpt-5.2", "gpt-4o-mini", "gpt-4.1"],
-            "writer": ["gpt-5.2", "gpt-4o-mini", "gpt-4.1"],
-        },
-        eval_fn=eval_fn,
-        dataset=dataset,
+        agent_fn=agent_maker, models=models, eval_fn=eval_fn, dataset=dataset,
     )
 
     results = selector.select_best(

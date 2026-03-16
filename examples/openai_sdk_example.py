@@ -7,7 +7,7 @@ Prerequisites:
 """
 
 import argparse
-from typing import Dict
+from typing import Any, Dict
 
 from agents import Agent, Runner, function_tool
 
@@ -42,17 +42,26 @@ def search(query: str) -> str:
     return f"Search results for: {query}"
 
 
-def agent_maker(models: Dict[str, str]):
+def _resolve_model(candidate: Any) -> str:
+    """Extract model name string from a candidate (string, dict, or object)."""
+    if isinstance(candidate, str):
+        return candidate
+    if isinstance(candidate, dict):
+        return candidate["model"]
+    return getattr(candidate, "model", str(candidate))
+
+
+def agent_maker(models: Dict[str, Any]):
     """Factory: builds an OpenAI Agents SDK planner+solver agent pair."""
     planner = Agent(
         name="Planner",
-        model=models["planner"],
+        model=_resolve_model(models["planner"]),
         instructions="Create a brief plan to answer the question. Be concise.",
         tools=[search],
     )
     solver = Agent(
         name="Solver",
-        model=models["solver"],
+        model=_resolve_model(models["solver"]),
         instructions="Given a plan, produce a concise final answer.",
         handoffs=[],
     )
@@ -88,17 +97,25 @@ def main():
     parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--max-concurrent", type=int, default=20)
+    parser.add_argument(
+        "--use-instances",
+        action="store_true",
+        help="Pass config dicts instead of model name strings",
+    )
     args = parser.parse_args()
+
+    candidates = ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
+    if args.use_instances:
+        models = {
+            "planner": [{"model": m} for m in candidates],
+            "solver": [{"model": m} for m in candidates],
+        }
+    else:
+        models = {"planner": candidates, "solver": candidates}
 
     selector_cls = SELECTORS[args.selector]
     selector = selector_cls(
-        agent_fn=agent_maker,
-        models={
-            "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1"],
-            "solver": ["gpt-4o", "gpt-4o-mini", "gpt-4.1"],
-        },
-        eval_fn=eval_fn,
-        dataset=dataset,
+        agent_fn=agent_maker, models=models, eval_fn=eval_fn, dataset=dataset,
     )
 
     results = selector.select_best(

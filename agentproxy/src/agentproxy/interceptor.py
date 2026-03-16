@@ -1,12 +1,22 @@
-"""httpx monkey-patching for LLM call interception."""
+"""httpx and botocore monkey-patching for LLM call interception."""
 
 import json
+import re
 import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 import httpx
+
+# Optional botocore import for Bedrock support
+try:
+    import botocore.httpsession as _botocore_http
+
+    _HAS_BOTOCORE = True
+except ImportError:
+    _botocore_http = None  # type: ignore[assignment]
+    _HAS_BOTOCORE = False
 
 from .cache import CacheEntry, ResponseCache, _make_cache_key
 
@@ -28,6 +38,7 @@ _agent_id_var: ContextVar[Optional[str]] = ContextVar(
 
 _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
+_original_botocore_send: Optional[Callable] = None
 _installed = False
 
 # Cache and its enabled flag (set by LLMTracker)
@@ -44,6 +55,41 @@ def _is_llm_request(request: httpx.Request) -> bool:
         return False
     path = request.url.raw_path.decode("ascii", errors="ignore")
     return any(pattern in path for pattern in _LLM_PATH_PATTERNS)
+
+
+# Regex to extract model ID from Bedrock Converse URL path
+_BEDROCK_MODEL_RE = re.compile(r"/model/([^/]+)/converse")
+
+
+def _is_bedrock_request(url: str) -> bool:
+    """Check if a URL targets the Bedrock Runtime Converse API."""
+    return "bedrock-runtime" in url and "/model/" in url and "/converse" in url
+
+
+def _extract_bedrock_model(url: str) -> Optional[str]:
+    """Extract the model ID from a Bedrock Converse API URL."""
+    from urllib.parse import unquote
+
+    m = _BEDROCK_MODEL_RE.search(url)
+    return unquote(m.group(1)) if m else None
+
+
+def _parse_bedrock_usage(body: dict) -> Optional[dict]:
+    """Extract model and token usage from a Bedrock Converse response.
+
+    Bedrock uses camelCase: ``inputTokens`` / ``outputTokens``.
+    """
+    usage = body.get("usage")
+    if not usage:
+        return None
+
+    prompt_tokens = usage.get("inputTokens", 0)
+    completion_tokens = usage.get("outputTokens", 0)
+
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+    }
 
 
 def _parse_usage(body: dict) -> Optional[dict]:
@@ -128,6 +174,40 @@ def _try_record(
     callback(record)
 
 
+def _try_record_bedrock(
+    url: str,
+    request_body: dict,
+    response_body: dict,
+    latency_seconds: float,
+    callback: Callable,
+    cached: bool = False,
+) -> None:
+    """Attempt to parse a Bedrock response and create a CallRecord."""
+    from .models import CallRecord
+
+    parsed = _parse_bedrock_usage(response_body)
+    if parsed is None:
+        return
+
+    model = _extract_bedrock_model(url) or "unknown"
+
+    record = CallRecord(
+        data_id=_data_id_var.get(),
+        combo_id=_combo_id_var.get(),
+        agent_id=_agent_id_var.get(),
+        model=model,
+        prompt_tokens=parsed["prompt_tokens"],
+        completion_tokens=parsed["completion_tokens"],
+        latency_seconds=latency_seconds,
+        request_url=url,
+        request_body=request_body,
+        response_body=response_body,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        cached=cached,
+    )
+    callback(record)
+
+
 def _try_cache_lookup(
     request: httpx.Request,
 ) -> Optional[tuple[httpx.Response, float]]:
@@ -190,14 +270,59 @@ def _try_cache_store(
 # ---------------------------------------------------------------------------
 
 
+def _try_bedrock_cache_lookup(
+    url: str,
+    request_body: dict,
+) -> Optional[tuple[dict, float]]:
+    """Check for a cached Bedrock response.
+
+    Returns ``(response_body_dict, original_latency)`` on hit, ``None`` on miss.
+    """
+    if _cache is None or not _cache_enabled:
+        return None
+
+    key = _make_cache_key(request_body)
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+
+    try:
+        body = json.loads(entry.response_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    return body, entry.latency_seconds
+
+
+def _try_bedrock_cache_store(
+    request_body: dict,
+    response_bytes: bytes,
+    latency_seconds: float = 0.0,
+) -> None:
+    """Store a Bedrock response in the cache."""
+    if _cache is None or not _cache_enabled:
+        return
+
+    key = _make_cache_key(request_body)
+    _cache.put(
+        key,
+        CacheEntry(
+            response_bytes=response_bytes,
+            response_headers={},
+            latency_seconds=latency_seconds,
+        ),
+    )
+
+
 def install(
     callback: Callable,
     cache: Optional[ResponseCache] = None,
     cache_enabled: bool = True,
 ) -> None:
-    """Monkey-patch httpx.Client.send and httpx.AsyncClient.send."""
-    global _original_sync_send, _original_async_send, _installed
-    global _cache, _cache_enabled
+    """Monkey-patch httpx.Client.send, httpx.AsyncClient.send, and
+    optionally botocore.httpsession.URLLib3Session.send."""
+    global _original_sync_send, _original_async_send, _original_botocore_send
+    global _installed, _cache, _cache_enabled
 
     if _installed:
         return
@@ -270,13 +395,73 @@ def install(
 
     httpx.Client.send = _patched_sync_send  # type: ignore[assignment]
     httpx.AsyncClient.send = _patched_async_send  # type: ignore[assignment]
+
+    # --- Botocore patch (optional) ---
+    if _HAS_BOTOCORE:
+        _original_botocore_send = _botocore_http.URLLib3Session.send
+
+        def _patched_botocore_send(self: Any, request: Any) -> Any:
+            import io
+
+            import botocore.awsrequest
+            import urllib3
+
+            url = request.url
+            if not _is_bedrock_request(url):
+                return _original_botocore_send(self, request)
+
+            # Parse request body
+            try:
+                req_body = json.loads(request.body) if request.body else {}
+            except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+                req_body = {}
+
+            # Cache lookup
+            cache_hit = _try_bedrock_cache_lookup(url, req_body)
+            if cache_hit is not None:
+                cached_body, original_latency = cache_hit
+                _try_record_bedrock(
+                    url, req_body, cached_body, original_latency, callback, cached=True,
+                )
+                # Build a synthetic AWSResponse for botocore
+                cached_bytes = json.dumps(cached_body).encode("utf-8")
+                raw = urllib3.HTTPResponse(
+                    body=io.BytesIO(cached_bytes),
+                    headers={"Content-Type": "application/json"},
+                    status=200,
+                    preload_content=False,
+                )
+                aws_resp = botocore.awsrequest.AWSResponse(
+                    url, 200, {"Content-Type": "application/json"}, raw,
+                )
+                return aws_resp
+
+            t0 = time.monotonic()
+            response = _original_botocore_send(self, request)
+            latency = time.monotonic() - t0
+
+            if response.status_code == 200:
+                try:
+                    # .content reads and caches the body bytes
+                    resp_bytes = response.content
+                    resp_body = json.loads(resp_bytes)
+
+                    _try_bedrock_cache_store(req_body, resp_bytes, latency)
+                    _try_record_bedrock(url, req_body, resp_body, latency, callback)
+                except Exception:
+                    pass
+
+            return response
+
+        _botocore_http.URLLib3Session.send = _patched_botocore_send  # type: ignore[assignment]
+
     _installed = True
 
 
 def uninstall() -> None:
-    """Restore original httpx send methods."""
-    global _original_sync_send, _original_async_send, _installed
-    global _cache, _cache_enabled
+    """Restore original httpx and botocore send methods."""
+    global _original_sync_send, _original_async_send, _original_botocore_send
+    global _installed, _cache, _cache_enabled
 
     if not _installed:
         return
@@ -285,9 +470,12 @@ def uninstall() -> None:
         httpx.Client.send = _original_sync_send  # type: ignore[assignment]
     if _original_async_send is not None:
         httpx.AsyncClient.send = _original_async_send  # type: ignore[assignment]
+    if _HAS_BOTOCORE and _original_botocore_send is not None:
+        _botocore_http.URLLib3Session.send = _original_botocore_send  # type: ignore[assignment]
 
     _original_sync_send = None
     _original_async_send = None
+    _original_botocore_send = None
     _cache = None
     _cache_enabled = True
     _installed = False

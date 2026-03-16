@@ -16,7 +16,7 @@ from .models import CallRecord
 
 
 class LLMTracker:
-    """Tracks LLM API calls via httpx interception.
+    """Tracks LLM API calls via httpx and botocore interception.
 
     Parameters
     ----------
@@ -85,7 +85,7 @@ class LLMTracker:
             self._response_cache.clear()
 
     def start(self) -> None:
-        """Install httpx patches. Idempotent."""
+        """Install httpx (and optionally botocore) patches. Idempotent."""
         if self._active:
             return
         install(
@@ -96,7 +96,7 @@ class LLMTracker:
         self._active = True
 
     def stop(self) -> None:
-        """Remove httpx patches. Idempotent."""
+        """Remove httpx (and botocore) patches. Idempotent."""
         if not self._active:
             return
         uninstall()

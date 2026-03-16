@@ -12,7 +12,7 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 
 def _make_cache_key(request_body: dict) -> str:

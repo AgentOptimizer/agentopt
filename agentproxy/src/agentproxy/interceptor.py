@@ -144,9 +144,7 @@ def _try_cache_lookup(request: httpx.Request) -> Optional[httpx.Response]:
 
     # Build a synthetic httpx.Response from cached bytes
     return httpx.Response(
-        status_code=200,
-        content=entry.response_bytes,
-        headers=entry.response_headers,
+        status_code=200, content=entry.response_bytes, headers=entry.response_headers,
     )
 
 
@@ -163,8 +161,7 @@ def _try_cache_store(request: httpx.Request, response: httpx.Response) -> None:
     _cache.put(
         key,
         CacheEntry(
-            response_bytes=response.content,
-            response_headers=dict(response.headers),
+            response_bytes=response.content, response_headers=dict(response.headers),
         ),
     )
 
@@ -174,8 +171,11 @@ def _try_cache_store(request: httpx.Request, response: httpx.Response) -> None:
 # ---------------------------------------------------------------------------
 
 
-def install(callback: Callable, cache: Optional[ResponseCache] = None,
-            cache_enabled: bool = True) -> None:
+def install(
+    callback: Callable,
+    cache: Optional[ResponseCache] = None,
+    cache_enabled: bool = True,
+) -> None:
     """Monkey-patch httpx.Client.send and httpx.AsyncClient.send."""
     global _original_sync_send, _original_async_send, _installed
     global _cache, _cache_enabled

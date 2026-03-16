@@ -84,10 +84,13 @@ class ResponseCache:
     def put(self, key: str, entry: CacheEntry) -> None:
         """Store a response in the cache."""
         with self._lock:
-            if self._max_size > 0 and len(self._store) >= self._max_size:
-                # Evict least recently used entry
-                self._store.popitem(last=False)
-            self._store[key] = entry
+            if key in self._store:
+                self._store.move_to_end(key)
+                self._store[key] = entry
+            else:
+                if self._max_size > 0 and len(self._store) >= self._max_size:
+                    self._store.popitem(last=False)
+                self._store[key] = entry
 
     def clear(self) -> None:
         """Remove all cached entries and reset stats."""

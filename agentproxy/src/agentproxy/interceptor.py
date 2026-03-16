@@ -8,6 +8,8 @@ from typing import Any, Callable, Optional
 
 import httpx
 
+from .cache import CacheEntry, ResponseCache, _make_cache_key
+
 # ---------------------------------------------------------------------------
 # ContextVars for attribution
 # ---------------------------------------------------------------------------
@@ -27,6 +29,10 @@ _agent_id_var: ContextVar[Optional[str]] = ContextVar(
 _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
 _installed = False
+
+# Cache and its enabled flag (set by LLMTracker)
+_cache: Optional[ResponseCache] = None
+_cache_enabled = True
 
 # URL path patterns that indicate LLM API endpoints
 _LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages")
@@ -63,11 +69,31 @@ def _parse_usage(body: dict) -> Optional[dict]:
     }
 
 
+def _get_request_body(request: httpx.Request) -> Optional[dict]:
+    """Parse and cache the JSON body of an httpx.Request.
+
+    The parsed body is stored in request.extensions so that repeated calls
+    for the same request instance do not re-deserialize the content.
+    """
+    cache_key = "_agentproxy_json_body"
+    if cache_key in request.extensions:
+        return request.extensions[cache_key]
+
+    try:
+        body = json.loads(request.content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+
+    request.extensions[cache_key] = body
+    return body
+
+
 def _try_record(
     request: httpx.Request,
     response: httpx.Response,
     latency_seconds: float,
     callback: Callable,
+    cached: bool = False,
 ) -> None:
     """Attempt to parse the response and create a CallRecord."""
     from .models import CallRecord
@@ -81,10 +107,7 @@ def _try_record(
     if parsed is None:
         return
 
-    try:
-        request_body = json.loads(request.content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        request_body = {}
+    request_body = _get_request_body(request) or {}
 
     model = request_body.get("model") or parsed["model"]
 
@@ -100,8 +123,66 @@ def _try_record(
         request_body=request_body,
         response_body=body,
         timestamp=datetime.now(timezone.utc).isoformat(),
+        cached=cached,
     )
     callback(record)
+
+
+def _try_cache_lookup(
+    request: httpx.Request,
+) -> Optional[tuple[httpx.Response, float]]:
+    """Check if a cached response exists for this request.
+
+    Returns ``(response, original_latency_seconds)`` on hit, ``None`` on miss.
+    """
+    if _cache is None or not _cache_enabled:
+        return None
+
+    request_body = _get_request_body(request)
+    if request_body is None:
+        return None
+
+    key = _make_cache_key(request_body)
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+
+    # Build a synthetic httpx.Response from cached bytes.
+    # Strip content-encoding/transfer-encoding: the stored bytes are
+    # already decoded, so re-applying these headers causes httpx to
+    # attempt double-decompression.
+    headers = {
+        k: v
+        for k, v in entry.response_headers.items()
+        if k.lower() not in ("content-encoding", "transfer-encoding")
+    }
+    response = httpx.Response(
+        status_code=200, content=entry.response_bytes, headers=headers,
+    )
+    response.request = request
+    return response, entry.latency_seconds
+
+
+def _try_cache_store(
+    request: httpx.Request, response: httpx.Response, latency_seconds: float = 0.0,
+) -> None:
+    """Store a successful response in the cache."""
+    if _cache is None or not _cache_enabled:
+        return
+
+    request_body = _get_request_body(request)
+    if request_body is None:
+        return
+
+    key = _make_cache_key(request_body)
+    _cache.put(
+        key,
+        CacheEntry(
+            response_bytes=response.content,
+            response_headers=dict(response.headers),
+            latency_seconds=latency_seconds,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +190,20 @@ def _try_record(
 # ---------------------------------------------------------------------------
 
 
-def install(callback: Callable) -> None:
+def install(
+    callback: Callable,
+    cache: Optional[ResponseCache] = None,
+    cache_enabled: bool = True,
+) -> None:
     """Monkey-patch httpx.Client.send and httpx.AsyncClient.send."""
     global _original_sync_send, _original_async_send, _installed
+    global _cache, _cache_enabled
 
     if _installed:
         return
+
+    _cache = cache
+    _cache_enabled = cache_enabled
 
     _original_sync_send = httpx.Client.send
     _original_async_send = httpx.AsyncClient.send
@@ -125,6 +214,16 @@ def install(callback: Callable) -> None:
         if not _is_llm_request(request):
             return _original_sync_send(self, request, stream=stream, **kwargs)
 
+        # Cache lookup (only for non-streaming requests)
+        if not stream:
+            cache_hit = _try_cache_lookup(request)
+            if cache_hit is not None:
+                cached_response, original_latency = cache_hit
+                _try_record(
+                    request, cached_response, original_latency, callback, cached=True
+                )
+                return cached_response
+
         t0 = time.monotonic()
         response = _original_sync_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
@@ -132,6 +231,7 @@ def install(callback: Callable) -> None:
         if not stream and response.status_code == 200:
             try:
                 response.read()
+                _try_cache_store(request, response, latency)
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass
@@ -144,6 +244,16 @@ def install(callback: Callable) -> None:
         if not _is_llm_request(request):
             return await _original_async_send(self, request, stream=stream, **kwargs)
 
+        # Cache lookup (only for non-streaming requests)
+        if not stream:
+            cache_hit = _try_cache_lookup(request)
+            if cache_hit is not None:
+                cached_response, original_latency = cache_hit
+                _try_record(
+                    request, cached_response, original_latency, callback, cached=True
+                )
+                return cached_response
+
         t0 = time.monotonic()
         response = await _original_async_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
@@ -151,6 +261,7 @@ def install(callback: Callable) -> None:
         if not stream and response.status_code == 200:
             try:
                 await response.aread()
+                _try_cache_store(request, response, latency)
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass
@@ -165,6 +276,7 @@ def install(callback: Callable) -> None:
 def uninstall() -> None:
     """Restore original httpx send methods."""
     global _original_sync_send, _original_async_send, _installed
+    global _cache, _cache_enabled
 
     if not _installed:
         return
@@ -176,4 +288,6 @@ def uninstall() -> None:
 
     _original_sync_send = None
     _original_async_send = None
+    _cache = None
+    _cache_enabled = True
     _installed = False

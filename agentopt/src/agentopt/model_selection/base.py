@@ -447,7 +447,11 @@ class BaseModelSelector(ABC):
                 with self._tracker.track(data_id=dp_id, combo_id=label):
                     start_time = time.time()
                     actual_result = self._invoke_agent(agent, input_data)
-                    latency = time.time() - start_time
+                    wall_clock = time.time() - start_time
+                    # Add back time saved by cache hits so latency
+                    # reflects what a real (uncached) run would cost.
+                    cached_latency = self._tracker.get_cached_latency(data_id=dp_id)
+                    latency = wall_clock + cached_latency
                 score = float(self.eval_fn(expected_answer, actual_result))
                 scores.append(score)
                 latencies.append(latency)
@@ -508,7 +512,11 @@ class BaseModelSelector(ABC):
                             actual_result = await loop.run_in_executor(
                                 None, ctx.run, self._invoke_agent, agent, input_data
                             )
-                        latency = time.time() - start_time
+                        wall_clock = time.time() - start_time
+                        # Add back time saved by cache hits so latency
+                        # reflects what a real (uncached) run would cost.
+                        cached_latency = self._tracker.get_cached_latency(data_id=dp_id)
+                        latency = wall_clock + cached_latency
                     score = float(self.eval_fn(expected_answer, actual_result))
                     results[idx] = {"score": score, "latency": latency, "dp_id": dp_id}
                 except Exception as e:

@@ -30,6 +30,13 @@ SELECTORS = {
     "hyperband": HyperbandModelSelector,
 }
 
+try:
+    from agentopt import BayesianOptimizationModelSelector
+
+    SELECTORS["bayesian_optimization"] = BayesianOptimizationModelSelector
+except ImportError:
+    pass
+
 
 def agent_maker(models: Dict[str, str]):
     """Factory: builds a simple planner+solver agent for the given models."""

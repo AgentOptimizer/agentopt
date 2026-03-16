@@ -29,6 +29,13 @@ SELECTORS = {
     "hyperband": HyperbandModelSelector,
 }
 
+try:
+    from agentopt import BayesianOptimizationModelSelector
+
+    SELECTORS["bayesian_optimization"] = BayesianOptimizationModelSelector
+except ImportError:
+    pass
+
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]

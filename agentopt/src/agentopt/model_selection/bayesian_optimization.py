@@ -24,7 +24,7 @@ def _require_botorch() -> None:
     except ImportError as e:
         raise ImportError(
             "Bayesian optimization requires optional dependencies: "
-            "Install with `pip install agentopt[bayesian]`"
+            """Install with `pip install "agentopt[bayesian]"`"""
         ) from e
 
 

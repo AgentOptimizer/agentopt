@@ -11,10 +11,19 @@ agentopt/                    # repo root
 ├── agentproxy/              # HTTP-layer LLM call tracking (standalone)
 │   ├── pyproject.toml       # depends only on httpx
 │   └── src/agentproxy/
+│       ├── tracker.py       # LLMTracker — context management + record storage
+│       ├── interceptor.py   # httpx monkey-patching + usage extraction
+│       ├── cache.py         # API-level response caching (LRU, thread-safe)
+│       └── models.py        # CallRecord dataclass
 ├── agentopt/                # Model selection optimizer
 │   ├── pyproject.toml       # depends on pydantic + agentproxy
 │   └── src/agentopt/
-├── examples/
+│       ├── model_selection/ # 6 selection algorithms
+│       ├── model_topology.py
+│       ├── model_price.py
+│       └── base_models.py
+├── docs/                    # Design documents
+├── examples/                # Framework integration examples
 └── model_price.json
 ```
 
@@ -78,6 +87,12 @@ Attribution is handled via Python's `contextvars` — each thread and async task
 
 ### LLMTracker API
 
+```python
+tracker = LLMTracker()                          # cache on (default), unlimited size
+tracker = LLMTracker(cache=True, cache_max_size=1000)  # cache on, max 1000 entries
+tracker = LLMTracker(cache=False)               # cache off
+```
+
 | Method | Description |
 |--------|-------------|
 | `start()` | Install httpx patches (idempotent) |
@@ -86,7 +101,30 @@ Attribution is handled via Python's `contextvars` — each thread and async task
 | `track_agent(agent_id)` | Context manager — sets only agent_id, keeps data_id/combo_id |
 | `get_records(data_id=None, combo_id=None, agent_id=None)` | Filtered list of `CallRecord` |
 | `get_usage(data_id=None, combo_id=None, agent_id=None)` | `{model: (input_tokens, output_tokens)}` |
+| `get_cached_latency(data_id=None, combo_id=None, agent_id=None)` | Total latency (seconds) saved by cache hits |
+| `cache_enabled` (property) | Get/set whether response caching is active at runtime |
+| `cache_stats` (property) | `CacheStats` with `hits`, `misses`, `hit_rate` |
+| `clear_cache()` | Clear all cached responses and reset stats |
 | `clear()` | Clear all recorded data |
+
+### CallRecord fields
+
+```python
+@dataclass
+class CallRecord:
+    data_id:           Optional[str]    # datapoint id
+    combo_id:          Optional[str]    # model combination id
+    agent_id:          Optional[str]    # agent role (optional)
+    model:             str
+    prompt_tokens:     int
+    completion_tokens: int
+    latency_seconds:   float
+    request_url:       str
+    request_body:      Dict[str, Any]
+    response_body:     Dict[str, Any]
+    timestamp:         str
+    cached:            bool
+```
 
 ---
 
@@ -157,6 +195,17 @@ selector = ModelSelector(
 )
 ```
 
+Custom model pricing can be provided via `model_prices`:
+
+```python
+selector = ModelSelector(
+    ...,
+    model_prices={
+        "my-custom-model": {"input_price": 2.50, "output_price": 10.00},
+    },
+)
+```
+
 ### Selection algorithms
 
 | Selector | Description |
@@ -184,6 +233,19 @@ results.export_config("config.yaml")  # export best combo as YAML
 
 ---
 
+## Examples
+
+| Example | Framework | File |
+|---------|-----------|------|
+| Custom agent | Raw OpenAI SDK | `examples/custom_agent_example.py` |
+| OpenAI Agents SDK | `openai-agents` | `examples/openai_sdk_example.py` |
+| LangChain | `langchain` | `examples/langchain_example.py` |
+| LangGraph | `langgraph` | `examples/langgraph_example.py` |
+| CrewAI | `crewai` | `examples/crewai_example.py` |
+| AG2 | `ag2` | `examples/ag2_example.py` |
+
+---
+
 ## Framework compatibility
 
 agentproxy works with any framework that uses `httpx` for HTTP calls:
@@ -191,6 +253,7 @@ agentproxy works with any framework that uses `httpx` for HTTP calls:
 | Framework | Compatible | Notes |
 |-----------|-----------|-------|
 | OpenAI SDK | Yes | |
+| OpenAI Agents SDK | Yes | Uses `openai-agents` package |
 | LangChain / LangGraph | Yes | |
 | CrewAI | Yes | |
 | LlamaIndex | Yes | |

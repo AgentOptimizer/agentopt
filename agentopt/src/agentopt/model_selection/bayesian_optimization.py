@@ -10,7 +10,7 @@ import logging
 import random
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from ..base_models import Dataset, EvalFn
+from ..base_models import Dataset, EvalFn, ModelCandidate
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, str]], Any],
-        models: Dict[str, List[str]],
+        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
+        models: Dict[str, List[ModelCandidate]],
         eval_fn: EvalFn,
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
@@ -89,7 +89,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         Y_list: List[float] = []
         all_results: List[ModelResult] = []
 
-        def index_combo_to_dict(combo: Tuple[int, ...]) -> Dict[str, str]:
+        def index_combo_to_dict(combo: Tuple[int, ...]) -> Dict[str, ModelCandidate]:
             return {node_names[i]: candidate_lists[i][combo[i]] for i in range(n_nodes)}
 
         def evaluate_combo(

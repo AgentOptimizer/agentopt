@@ -9,7 +9,7 @@ import logging
 import math
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from ..base_models import Dataset, EvalFn
+from ..base_models import Dataset, EvalFn, ModelCandidate
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
 logger = logging.getLogger(__name__)
@@ -20,8 +20,8 @@ class ArmEliminationModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, str]], Any],
-        models: Dict[str, List[str]],
+        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
+        models: Dict[str, List[ModelCandidate]],
         eval_fn: EvalFn,
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
@@ -326,7 +326,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         self,
         dominated_idx: int,
         active_remaining: Set[int],
-        all_combos: List[Dict[str, str]],
+        all_combos: List[Dict[str, ModelCandidate]],
         combo_scores: Dict[int, List[float]],
     ) -> Optional[str]:
         for j in active_remaining:

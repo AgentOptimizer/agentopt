@@ -7,8 +7,9 @@ from typing import Any, Callable, Dict, List, Sequence, Tuple, Union
 
 # Type aliases
 EvalFn = Callable[[str, Any], Union[bool, float]]
-AgentFn = Callable[[Dict[str, str]], Any]
-ModelsConfig = Dict[str, List[str]]
+ModelCandidate = Any
+AgentFn = Callable[[Dict[str, ModelCandidate]], Any]
+ModelsConfig = Dict[str, List[ModelCandidate]]
 
 # Dataset: any Sequence of (input_data, expected_answer) pairs.
 # Accepts list, tuple, or any custom class with __getitem__ and __len__.

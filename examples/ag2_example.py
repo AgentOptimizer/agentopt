@@ -11,7 +11,7 @@ caller's thread and is required for agentproxy compatibility.
 """
 
 import argparse
-from typing import Dict
+from typing import Any, Dict
 
 import autogen
 
@@ -39,18 +39,28 @@ except ImportError:
     pass
 
 
-def agent_maker(models: Dict[str, str]):
+def agent_maker(models: Dict[str, Any]):
     """Factory: builds an AG2 planner+solver agent pair."""
+    planner_config = (
+        models["planner"]
+        if isinstance(models["planner"], dict)
+        else {"model": models["planner"]}
+    )
+    solver_config = (
+        models["solver"]
+        if isinstance(models["solver"], dict)
+        else {"model": models["solver"]}
+    )
 
     planner = autogen.AssistantAgent(
         name="Planner",
         system_message="You are a planning assistant. Create a brief plan to answer the question. End your response with PLAN_DONE.",
-        llm_config={"model": models["planner"]},
+        llm_config=planner_config,
     )
     solver = autogen.AssistantAgent(
         name="Solver",
         system_message="You are a solver. Given a plan, produce a concise final answer. End your response with TERMINATE.",
-        llm_config={"model": models["solver"]},
+        llm_config=solver_config,
     )
     user_proxy = autogen.UserProxyAgent(
         name="UserProxy",
@@ -95,17 +105,25 @@ def main():
     parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--max-concurrent", type=int, default=20)
+    parser.add_argument(
+        "--use-instances",
+        action="store_true",
+        help="Pass config dicts instead of model name strings",
+    )
     args = parser.parse_args()
+
+    candidates = ["gpt-4o", "gpt-4o-mini"]
+    if args.use_instances:
+        models = {
+            "planner": [{"model": m} for m in candidates],
+            "solver": [{"model": m} for m in candidates],
+        }
+    else:
+        models = {"planner": candidates, "solver": candidates}
 
     selector_cls = SELECTORS[args.selector]
     selector = selector_cls(
-        agent_fn=agent_maker,
-        models={
-            "planner": ["gpt-4o", "gpt-4o-mini"],
-            "solver": ["gpt-4o", "gpt-4o-mini"],
-        },
-        eval_fn=eval_fn,
-        dataset=dataset,
+        agent_fn=agent_maker, models=models, eval_fn=eval_fn, dataset=dataset,
     )
 
     results = selector.select_best(

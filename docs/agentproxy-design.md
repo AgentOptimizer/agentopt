@@ -259,7 +259,11 @@ tracker.stop()    # restores original httpx
 | `track(data_id, combo_id, agent_id=None)` | Context manager. Sets all IDs for the duration of the block. |
 | `track_agent(agent_id)` | Context manager. Flips only `agent_id`, keeps `data_id` and `combo_id`. For use inside agent nodes. |
 | `get_records(data_id=None, combo_id=None, agent_id=None)` | Return `CallRecord` list, filtered by any combination of IDs. |
-| `get_usage(data_id=None, combo_id=None, agent_id=None)` | Return aggregated `{model: {input_tokens, output_tokens}}`. |
+| `get_usage(data_id=None, combo_id=None, agent_id=None)` | Return aggregated `{model: (input_tokens, output_tokens)}`. |
+| `get_cached_latency(data_id=None, combo_id=None, agent_id=None)` | Total latency (seconds) saved by cached responses. |
+| `cache_enabled` (property) | Get/set whether response caching is active at runtime. |
+| `cache_stats` (property) | Returns `CacheStats(hits, misses)` with `.hit_rate`. |
+| `clear_cache()` | Clear all cached responses and reset statistics. |
 | `clear()` | Clear all recorded data. |
 
 ### `CallRecord`
@@ -267,21 +271,23 @@ tracker.stop()    # restores original httpx
 ```python
 @dataclass
 class CallRecord:
-    # Attribution
+    # Attribution (from ContextVars)
     data_id:   Optional[str]   # datapoint id
     combo_id:  Optional[str]   # model combination id
     agent_id:  Optional[str]   # agent role (optional)
 
-    # LLM call
-    model:         str
-    input_tokens:  int
-    output_tokens: int
-    latency_ms:    float
+    # LLM call metrics
+    model:              str
+    prompt_tokens:      int
+    completion_tokens:  int
+    latency_seconds:    float
 
     # Full fidelity
-    request_body:  dict        # full prompt sent
-    response_body: dict        # full response received
-    timestamp:     str
+    request_url:   str
+    request_body:  Dict[str, Any]   # full prompt sent
+    response_body: Dict[str, Any]   # full response received
+    timestamp:     str = ""
+    cached:        bool = False
 ```
 
 ---
@@ -293,9 +299,10 @@ agentproxy/
 ├── pyproject.toml
 └── src/
     └── agentproxy/
-        ├── __init__.py        # Public API: LLMTracker, CallRecord
-        ├── tracker.py         # LLMTracker — context management + record storage
-        ├── interceptor.py     # httpx monkey-patching + usage extraction
+        ├── __init__.py        # Public API: LLMTracker, CallRecord, ResponseCache, CacheStats
+        ├── tracker.py         # LLMTracker — context management + record storage + cache control
+        ├── interceptor.py     # httpx monkey-patching + usage extraction + cache integration
+        ├── cache.py           # ResponseCache, CacheEntry, CacheStats, _make_cache_key
         └── models.py          # CallRecord dataclass
 ```
 
@@ -309,11 +316,11 @@ agentproxy/
 - **Cost attribution** — estimated cost from token counts × price table, per trajectory or per agent role.
 - **Latency measurement** — wall-clock time per LLM call, scoped to trajectory.
 - **Full request/response logging** — complete capture of prompts and completions, scoped to trajectory.
-
-### Available via interception — request control
-
-- **Caching** — hash `(model, messages)` as cache key; return cached response on hit. Makes repeated eval runs significantly cheaper.
+- **API-level response caching** — SHA256 hash of `(model, messages, ...)` as cache key; return cached response on hit. Thread-safe LRU cache with configurable max size. See `docs/cache-design.md`.
 - **Request deduplication** — within a trajectory, identical requests return cached responses without hitting the API.
+
+### Available via interception — request control (future)
+
 - **Rate limiting** — queue outgoing requests when over a per-model rate limit.
 - **Retry / fallback** — on non-200 response, retry or substitute a fallback model transparently.
 

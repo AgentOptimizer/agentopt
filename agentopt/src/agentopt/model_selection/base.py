@@ -15,7 +15,13 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from agentproxy import LLMTracker
 
-from ..base_models import Dataset, EvalFn, validate_dataset
+from ..base_models import (
+    Dataset,
+    EvalFn,
+    ModelCandidate,
+    ModelsConfig,
+    validate_dataset,
+)
 from ..model_price import compute_price
 
 logger = logging.getLogger(__name__)
@@ -304,8 +310,8 @@ class BaseModelSelector(ABC):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, str]], Any],
-        models: Dict[str, List[str]],
+        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
+        models: ModelsConfig,
         eval_fn: EvalFn,
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
@@ -317,9 +323,12 @@ class BaseModelSelector(ABC):
 
         Args:
             agent_fn: Factory function ``(combo_dict) -> agent``. Takes a dict
-                mapping node names to model names and returns a runnable agent.
-            models: Dict mapping node names to lists of candidate model name
-                strings, e.g. ``{"planner": ["gpt-4o", "gpt-4o-mini"]}``.
+                mapping node names to model candidates (string names or
+                framework-specific model instances) and returns a runnable
+                agent.
+            models: Dict mapping node names to candidate model specs, e.g.
+                ``{"planner": ["gpt-4o", "gpt-4o-mini"]}`` or prebuilt
+                LLM instances.
             eval_fn: Function ``(expected, actual) -> bool | float``
                 (higher is better).
             dataset: Sequence of ``(input_data, expected_answer)`` pairs.
@@ -360,19 +369,42 @@ class BaseModelSelector(ABC):
     # Combo generation
     # ------------------------------------------------------------------
 
-    def _generate_combos(self) -> Generator[Dict[str, str], None, None]:
-        """Yield all combinations as ``{node_name: model_name}`` dicts."""
+    def _generate_combos(
+        self,
+    ) -> Generator[Dict[str, ModelCandidate], None, None]:
+        """Yield all combinations as ``{node_name: model_candidate}`` dicts."""
         for combo_tuple in itertools.product(*self._models.values()):
             yield dict(zip(self._node_names, combo_tuple))
 
-    def _all_combos(self) -> List[Dict[str, str]]:
+    def _all_combos(self) -> List[Dict[str, ModelCandidate]]:
         """Return all combinations as a list."""
         return list(self._generate_combos())
 
     @staticmethod
-    def _combo_name(combo: Dict[str, str]) -> str:
+    def _candidate_label(candidate: ModelCandidate) -> str:
+        """Return a readable, mostly stable label for a model candidate."""
+        if isinstance(candidate, str):
+            return candidate
+
+        if isinstance(candidate, dict):
+            for key in ("model", "model_name", "id", "name"):
+                value = candidate.get(key)
+                if value is not None:
+                    return str(value)
+
+        for attr in ("model", "model_name", "id", "name"):
+            value = getattr(candidate, attr, None)
+            if value is not None:
+                return str(value)
+
+        return f"{type(candidate).__name__}@{id(candidate):x}"
+
+    @staticmethod
+    def _combo_name(combo: Dict[str, ModelCandidate]) -> str:
         """Generate display name for a combination."""
-        return " + ".join(f"{k}={v}" for k, v in combo.items())
+        return " + ".join(
+            f"{k}={BaseModelSelector._candidate_label(v)}" for k, v in combo.items()
+        )
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -385,7 +417,10 @@ class BaseModelSelector(ABC):
         return agent(input_data)
 
     def _evaluate_combo(
-        self, combo: Dict[str, str], evaluation_tasks: Dataset, label: str = "",
+        self,
+        combo: Dict[str, ModelCandidate],
+        evaluation_tasks: Dataset,
+        label: str = "",
     ) -> Tuple[List[float], List[float], List[str]]:
         """Build an agent for combo and evaluate it on tasks.
 
@@ -424,7 +459,7 @@ class BaseModelSelector(ABC):
 
     async def _evaluate_combo_async(
         self,
-        combo: Dict[str, str],
+        combo: Dict[str, ModelCandidate],
         evaluation_tasks: Dataset,
         label: str = "",
         max_concurrent: int = 20,

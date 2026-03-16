@@ -8,7 +8,7 @@ neighbours so that each iteration makes an informed single-step move.
 import random
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from ..base_models import Dataset, EvalFn
+from ..base_models import Dataset, EvalFn, ModelCandidate
 from ..model_topology import get_faster_neighbor, get_higher_quality_neighbor
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
@@ -18,8 +18,8 @@ class HillClimbingModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, str]], Any],
-        models: Dict[str, List[str]],
+        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
+        models: Dict[str, List[ModelCandidate]],
         eval_fn: EvalFn,
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
@@ -57,7 +57,9 @@ class HillClimbingModelSelector(BaseModelSelector):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _random_combination(self, seen: Set[str]) -> Optional[Dict[str, str]]:
+    def _random_combination(
+        self, seen: Set[str]
+    ) -> Optional[Dict[str, ModelCandidate]]:
         """Pick a random unseen combination, or ``None`` if all exhausted."""
         unseen = [c for c in self._all_combo_list if self._combo_name(c) not in seen]
         if unseen:
@@ -68,7 +70,9 @@ class HillClimbingModelSelector(BaseModelSelector):
     # Move operators
     # ------------------------------------------------------------------
 
-    def _try_improve_quality(self, combo: Dict[str, str], seen: Set[str]) -> bool:
+    def _try_improve_quality(
+        self, combo: Dict[str, ModelCandidate], seen: Set[str]
+    ) -> bool:
         """Swap a random node's model to the next-higher-quality neighbour.
 
         Modifies *combo* in-place. Returns ``True`` if a move was made.
@@ -86,7 +90,9 @@ class HillClimbingModelSelector(BaseModelSelector):
                 combo[node] = old
         return False
 
-    def _try_improve_speed(self, combo: Dict[str, str], seen: Set[str]) -> bool:
+    def _try_improve_speed(
+        self, combo: Dict[str, ModelCandidate], seen: Set[str]
+    ) -> bool:
         """Swap a random node's model to the next-faster neighbour.
 
         Modifies *combo* in-place. Returns ``True`` if a move was made.
@@ -110,7 +116,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
     def _hill_climb_once(
         self, seen: Set[str]
-    ) -> Optional[Tuple[Dict[str, str], float, float, List[ModelResult]]]:
+    ) -> Optional[Tuple[Dict[str, ModelCandidate], float, float, List[ModelResult]]]:
         """Run one hill-climbing pass from a random starting point."""
         combo = self._random_combination(seen)
         if combo is None:
@@ -222,7 +228,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         ), "HillClimbingModelSelector does not support parallel evaluation."
 
         all_results: List[ModelResult] = []
-        global_best_combo: Optional[Dict[str, str]] = None
+        global_best_combo: Optional[Dict[str, ModelCandidate]] = None
         global_best_accuracy = float("-inf")
         global_best_latency = float("inf")
         tol = 1e-9

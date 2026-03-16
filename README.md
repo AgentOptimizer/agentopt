@@ -141,6 +141,22 @@ best = results.get_best_combo()
 # {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
 ```
 
+You can also pass prebuilt LLM instances as candidates:
+
+```python
+from langchain_openai import ChatOpenAI
+
+selector = ModelSelector(
+    agent_fn=agent_maker,  # receives actual instances in models["planner"], etc.
+    models={
+        "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
+        "solver": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
+    },
+    eval_fn=eval_fn,
+    dataset=dataset,
+)
+```
+
 ### Selection algorithms
 
 | Selector | Description |

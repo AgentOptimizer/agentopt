@@ -6,7 +6,7 @@ candidate models across all nodes.
 import asyncio
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..base_models import Dataset, EvalFn
+from ..base_models import Dataset, EvalFn, ModelCandidate
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
 
@@ -19,8 +19,8 @@ class BruteForceModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, str]], Any],
-        models: Dict[str, List[str]],
+        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
+        models: Dict[str, List[ModelCandidate]],
         eval_fn: EvalFn,
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
@@ -123,7 +123,9 @@ class BruteForceModelSelector(BaseModelSelector):
         )
         print(f"{'='*60}\n")
 
-        async def _eval_combo(combo: Dict[str, str]) -> Tuple[str, ModelResult]:
+        async def _eval_combo(
+            combo: Dict[str, ModelCandidate],
+        ) -> Tuple[str, ModelResult]:
             combo_name = self._combo_name(combo)
             print(f"  Evaluating: {combo_name}")
 

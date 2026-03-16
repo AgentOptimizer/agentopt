@@ -9,7 +9,7 @@ import math
 import random
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..base_models import Dataset, EvalFn
+from ..base_models import Dataset, EvalFn, ModelCandidate
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
 logger = logging.getLogger(__name__)
@@ -22,8 +22,8 @@ class RandomSearchModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, str]], Any],
-        models: Dict[str, List[str]],
+        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
+        models: Dict[str, List[ModelCandidate]],
         eval_fn: EvalFn,
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
@@ -53,7 +53,7 @@ class RandomSearchModelSelector(BaseModelSelector):
 
     def _get_sampled_combinations(
         self,
-    ) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    ) -> Tuple[List[Dict[str, ModelCandidate]], List[Dict[str, ModelCandidate]]]:
         """Return (all_combos, sampled_combos)."""
         all_combos = self._all_combos()
         total = len(all_combos)
@@ -155,7 +155,9 @@ class RandomSearchModelSelector(BaseModelSelector):
         )
         print(f"{'='*60}\n")
 
-        async def _eval_combo(combo: Dict[str, str]) -> Tuple[str, ModelResult]:
+        async def _eval_combo(
+            combo: Dict[str, ModelCandidate],
+        ) -> Tuple[str, ModelResult]:
             combo_name = self._combo_name(combo)
             print(f"  Evaluating: {combo_name}")
             scores, latencies, dp_ids = await self._evaluate_combo_async(

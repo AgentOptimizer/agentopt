@@ -1,9 +1,9 @@
 """
 agentopt — Framework-agnostic LLM model selection optimizer for agents.
 
-Uses the factory pattern: define an ``agent_fn(models: Dict[str, str])``
-that builds your agent with the given model names, then let a ModelSelector
-find the best combination.
+Uses the factory pattern: define an ``agent_fn(models: Dict[str, Any])``
+that builds your agent with the given model candidates (string names or
+LLM instances), then let a ModelSelector find the best combination.
 """
 
 from agentproxy import CallRecord, LLMTracker

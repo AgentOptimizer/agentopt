@@ -276,5 +276,4 @@ class HillClimbingModelSelector(BaseModelSelector):
             print("\nNo combinations succeeded\n")
 
         results = SelectionResults(results=all_results)
-        print(results)
         return results

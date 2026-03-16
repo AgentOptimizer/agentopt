@@ -192,7 +192,6 @@ class HyperbandModelSelector(BaseModelSelector):
             print("\n  No combinations succeeded.")
 
         results = SelectionResults(results=all_results)
-        print(results)
         return results
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
@@ -337,5 +336,4 @@ class HyperbandModelSelector(BaseModelSelector):
             print("\n  No combinations succeeded.")
 
         results = SelectionResults(results=all_results)
-        print(results)
         return results

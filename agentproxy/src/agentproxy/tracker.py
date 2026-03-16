@@ -171,6 +171,23 @@ class LLMTracker:
             totals[r.model][1] += r.completion_tokens
         return {k: (v[0], v[1]) for k, v in totals.items()}
 
+    def get_cached_latency(
+        self,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> float:
+        """Return total latency (seconds) from cached responses.
+
+        Sums ``latency_seconds`` for all ``cached=True`` records matching
+        the given filters.  This represents the time that *would* have been
+        spent on real API calls but was saved by the cache.
+        """
+        records = self.get_records(
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id
+        )
+        return sum(r.latency_seconds for r in records if r.cached)
+
     def clear(self) -> None:
         """Clear all recorded data."""
         with self._lock:

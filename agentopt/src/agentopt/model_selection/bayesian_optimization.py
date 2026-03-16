@@ -260,5 +260,4 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             logger.warning("No successful evaluations.")
 
         results = SelectionResults(results=all_results)
-        print(results)
         return results

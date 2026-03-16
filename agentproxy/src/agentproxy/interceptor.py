@@ -128,8 +128,13 @@ def _try_record(
     callback(record)
 
 
-def _try_cache_lookup(request: httpx.Request) -> Optional[httpx.Response]:
-    """Check if a cached response exists for this request."""
+def _try_cache_lookup(
+    request: httpx.Request,
+) -> Optional[tuple[httpx.Response, float]]:
+    """Check if a cached response exists for this request.
+
+    Returns ``(response, original_latency_seconds)`` on hit, ``None`` on miss.
+    """
     if _cache is None or not _cache_enabled:
         return None
 
@@ -142,13 +147,25 @@ def _try_cache_lookup(request: httpx.Request) -> Optional[httpx.Response]:
     if entry is None:
         return None
 
-    # Build a synthetic httpx.Response from cached bytes
-    return httpx.Response(
-        status_code=200, content=entry.response_bytes, headers=entry.response_headers,
+    # Build a synthetic httpx.Response from cached bytes.
+    # Strip content-encoding/transfer-encoding: the stored bytes are
+    # already decoded, so re-applying these headers causes httpx to
+    # attempt double-decompression.
+    headers = {
+        k: v
+        for k, v in entry.response_headers.items()
+        if k.lower() not in ("content-encoding", "transfer-encoding")
+    }
+    response = httpx.Response(
+        status_code=200, content=entry.response_bytes, headers=headers,
     )
+    response.request = request
+    return response, entry.latency_seconds
 
 
-def _try_cache_store(request: httpx.Request, response: httpx.Response) -> None:
+def _try_cache_store(
+    request: httpx.Request, response: httpx.Response, latency_seconds: float = 0.0,
+) -> None:
     """Store a successful response in the cache."""
     if _cache is None or not _cache_enabled:
         return
@@ -161,7 +178,9 @@ def _try_cache_store(request: httpx.Request, response: httpx.Response) -> None:
     _cache.put(
         key,
         CacheEntry(
-            response_bytes=response.content, response_headers=dict(response.headers),
+            response_bytes=response.content,
+            response_headers=dict(response.headers),
+            latency_seconds=latency_seconds,
         ),
     )
 
@@ -197,9 +216,12 @@ def install(
 
         # Cache lookup (only for non-streaming requests)
         if not stream:
-            cached_response = _try_cache_lookup(request)
-            if cached_response is not None:
-                _try_record(request, cached_response, 0.0, callback, cached=True)
+            cache_hit = _try_cache_lookup(request)
+            if cache_hit is not None:
+                cached_response, original_latency = cache_hit
+                _try_record(
+                    request, cached_response, original_latency, callback, cached=True
+                )
                 return cached_response
 
         t0 = time.monotonic()
@@ -209,7 +231,7 @@ def install(
         if not stream and response.status_code == 200:
             try:
                 response.read()
-                _try_cache_store(request, response)
+                _try_cache_store(request, response, latency)
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass
@@ -224,9 +246,12 @@ def install(
 
         # Cache lookup (only for non-streaming requests)
         if not stream:
-            cached_response = _try_cache_lookup(request)
-            if cached_response is not None:
-                _try_record(request, cached_response, 0.0, callback, cached=True)
+            cache_hit = _try_cache_lookup(request)
+            if cache_hit is not None:
+                cached_response, original_latency = cache_hit
+                _try_record(
+                    request, cached_response, original_latency, callback, cached=True
+                )
                 return cached_response
 
         t0 = time.monotonic()
@@ -236,7 +261,7 @@ def install(
         if not stream and response.status_code == 200:
             try:
                 await response.aread()
-                _try_cache_store(request, response)
+                _try_cache_store(request, response, latency)
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass

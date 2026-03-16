@@ -52,6 +52,7 @@ class CacheEntry:
 
     response_bytes: bytes
     response_headers: Dict[str, str] = field(default_factory=dict)
+    latency_seconds: float = 0.0
 
 
 class ResponseCache:

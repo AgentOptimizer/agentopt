@@ -44,17 +44,13 @@ def _fake_handler(request: httpx.Request) -> httpx.Response:
 def _make_client() -> httpx.Client:
     """Create an httpx client with a mock transport targeting an LLM endpoint."""
     return httpx.Client(
-        transport=httpx.MockTransport(_fake_handler),
-        base_url="https://api.openai.com",
+        transport=httpx.MockTransport(_fake_handler), base_url="https://api.openai.com",
     )
 
 
 def _post(client: httpx.Client, body: dict | None = None) -> httpx.Response:
     """Send a chat completion request through the client."""
-    return client.post(
-        "/v1/chat/completions",
-        json=body or _REQUEST_BODY,
-    )
+    return client.post("/v1/chat/completions", json=body or _REQUEST_BODY,)
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +96,7 @@ class TestResponseCache:
     def test_hit_rate(self):
         cache = ResponseCache()
         cache.put("k", CacheEntry(response_bytes=b"v"))
-        cache.get("k")       # hit
+        cache.get("k")  # hit
         cache.get("missing")  # miss
         assert cache.stats.hit_rate == 0.5
 
@@ -158,7 +154,7 @@ class TestCacheIntegration:
         assert resp1.json() == resp2.json()
         assert resp1.status_code == resp2.status_code == 200
 
-    def test_cache_hit_recorded_with_zero_latency(self):
+    def test_cache_hit_recorded_with_original_latency(self):
         client = _make_client()
 
         _post(client)  # miss
@@ -169,7 +165,8 @@ class TestCacheIntegration:
         assert records[0].cached is False
         assert records[0].latency_seconds > 0
         assert records[1].cached is True
-        assert records[1].latency_seconds == 0.0
+        # Cached hit replays the original call's latency, not 0.0
+        assert records[1].latency_seconds == records[0].latency_seconds
 
     def test_cache_hit_records_tokens(self):
         client = _make_client()
@@ -198,8 +195,14 @@ class TestCacheIntegration:
     def test_different_requests_no_hit(self):
         client = _make_client()
 
-        body1 = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "q1"}]}
-        body2 = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "q2"}]}
+        body1 = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "q1"}],
+        }
+        body2 = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "q2"}],
+        }
         _post(client, body1)
         _post(client, body2)
 
@@ -344,6 +347,7 @@ class TestCacheAsync:
             tracker = LLMTracker(cache=True)
             tracker.start()
             try:
+
                 async def _fake_async_handler(request: httpx.Request) -> httpx.Response:
                     return httpx.Response(200, json=_RESPONSE_BODY)
 
@@ -359,7 +363,8 @@ class TestCacheAsync:
                 assert len(records) == 2
                 assert records[0].cached is False
                 assert records[1].cached is True
-                assert records[1].latency_seconds == 0.0
+                # Cached hit replays the original call's latency
+                assert records[1].latency_seconds == records[0].latency_seconds
                 assert resp1.json() == resp2.json()
 
                 assert tracker.cache_stats.hits == 1

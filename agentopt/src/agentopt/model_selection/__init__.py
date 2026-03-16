@@ -1,7 +1,7 @@
 """Model selection algorithms."""
 
 from .arm_elimination import ArmEliminationModelSelector
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 from .bayesian_optimization import BayesianOptimizationModelSelector
 from .brute_force import BruteForceModelSelector
 from .hill_climbing import HillClimbingModelSelector
@@ -16,6 +16,7 @@ __all__ = [
     "ArmEliminationModelSelector",
     "HyperbandModelSelector",
     "BayesianOptimizationModelSelector",
+    "DatapointResult",
     "ModelResult",
     "SelectionResults",
 ]

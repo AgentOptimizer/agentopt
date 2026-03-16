@@ -1,13 +1,12 @@
 """
-Example: LangGraph agent with agentopt + LiteLLM.
+Example: LangGraph agent with agentopt.
 
 Prerequisites:
-    1. pip install langchain-openai langgraph agentopt
-    2. Start LiteLLM proxy: litellm --config litellm_config.yaml --port 4000
+    1. pip install langchain-openai langgraph agentopt agentproxy
+    2. Set OPENAI_API_KEY environment variable
 """
 
 import argparse
-import os
 from typing import Annotated, Dict, TypedDict
 
 from langchain_openai import ChatOpenAI
@@ -30,8 +29,6 @@ SELECTORS = {
     "hyperband": HyperbandModelSelector,
 }
 
-LITELLM_BASE_URL = "http://localhost:4000/v1"
-
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
@@ -41,16 +38,8 @@ class AgentState(TypedDict):
 
 def agent_maker(models: Dict[str, str]):
     """Factory: builds a LangGraph planner+solver agent."""
-    planner_llm = ChatOpenAI(
-        model=models["planner"],
-        base_url=LITELLM_BASE_URL,
-        api_key=os.environ.get("OPENAI_API_KEY"),
-    )
-    solver_llm = ChatOpenAI(
-        model=models["solver"],
-        base_url=LITELLM_BASE_URL,
-        api_key=os.environ.get("OPENAI_API_KEY"),
-    )
+    planner_llm = ChatOpenAI(model=models["planner"])
+    solver_llm = ChatOpenAI(model=models["solver"])
 
     def planner_node(state: AgentState) -> dict:
         response = planner_llm.invoke(

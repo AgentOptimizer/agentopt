@@ -94,16 +94,17 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
         def evaluate_combo(
             combo: Tuple[int, ...]
-        ) -> Tuple[float, float, Dict[str, int], Dict[str, int]]:
+        ) -> Tuple[float, float, Dict[str, int], Dict[str, int], List[DatapointResult]]:
             combo_dict = index_combo_to_dict(combo)
-            start_ts = self._now_iso()
-            scores, latencies = self._evaluate_combo(
-                combo_dict, self.dataset, label=self._combo_name(combo_dict)
+            combo_name = self._combo_name(combo_dict)
+            scores, latencies, dp_ids = self._evaluate_combo(
+                combo_dict, self.dataset, label=combo_name
             )
-            input_tokens, output_tokens = self._fetch_tokens(start_ts)
+            input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
             latency = sum(latencies) / len(latencies) if latencies else 0.0
-            return accuracy, latency, input_tokens, output_tokens
+            dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
+            return accuracy, latency, input_tokens, output_tokens, dp_results
 
         print(f"\n{'='*60}")
         print(
@@ -123,7 +124,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             combo_dict = index_combo_to_dict(combo)
             combo_name = self._combo_name(combo_dict)
             try:
-                accuracy, latency, input_tokens, output_tokens = evaluate_combo(combo)
+                (
+                    accuracy,
+                    latency,
+                    input_tokens,
+                    output_tokens,
+                    dp_results,
+                ) = evaluate_combo(combo)
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
                 result = self._make_result(
@@ -134,6 +141,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     output_tokens=output_tokens,
                     attribute="combination",
                     is_best=False,
+                    datapoint_results=dp_results,
                 )
                 all_results.append(result)
                 print(f"  {result}")
@@ -162,9 +170,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 combo_dict = index_combo_to_dict(combo)
                 combo_name = self._combo_name(combo_dict)
                 try:
-                    accuracy, latency, input_tokens, output_tokens = evaluate_combo(
-                        combo
-                    )
+                    (
+                        accuracy,
+                        latency,
+                        input_tokens,
+                        output_tokens,
+                        dp_results,
+                    ) = evaluate_combo(combo)
                     X_list.append(list(combo))
                     Y_list.append(accuracy)
                     result = self._make_result(
@@ -175,6 +187,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                         output_tokens=output_tokens,
                         attribute="combination",
                         is_best=False,
+                        datapoint_results=dp_results,
                     )
                     all_results.append(result)
                     print(f"  {result}")
@@ -211,7 +224,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             combo_dict = index_combo_to_dict(combo)
             combo_name = self._combo_name(combo_dict)
             try:
-                accuracy, latency, input_tokens, output_tokens = evaluate_combo(combo)
+                (
+                    accuracy,
+                    latency,
+                    input_tokens,
+                    output_tokens,
+                    dp_results,
+                ) = evaluate_combo(combo)
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
                 result = self._make_result(
@@ -222,6 +241,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     output_tokens=output_tokens,
                     attribute="combination",
                     is_best=False,
+                    datapoint_results=dp_results,
                 )
                 all_results.append(result)
                 print(f"  [BO {it+1}/{n_iterations}] {result}")

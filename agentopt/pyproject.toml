@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentopt"
-version = "0.2.0"
+version = "0.3.0"
 description = "Framework-agnostic LLM model selection optimizer for agents"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0.0",
-    "litellm",
+    "agentproxy",
 ]
 
 [project.optional-dependencies]

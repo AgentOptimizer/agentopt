@@ -1,16 +1,15 @@
 """
-Example: Custom agent (no framework) with agentopt + LiteLLM.
+Example: Custom agent (no framework) with agentopt.
 
 This example shows how to use agentopt with a plain Python agent
-that makes OpenAI SDK calls through a LiteLLM proxy. No framework needed.
+that makes OpenAI SDK calls directly. No framework or proxy needed.
 
 Prerequisites:
-    1. pip install openai agentopt
-    2. Start LiteLLM proxy: litellm --config litellm_config.yaml --port 4000
+    1. pip install openai agentopt agentproxy
+    2. Set OPENAI_API_KEY environment variable
 """
 
 import argparse
-import os
 from typing import Dict
 
 from openai import OpenAI
@@ -31,13 +30,10 @@ SELECTORS = {
     "hyperband": HyperbandModelSelector,
 }
 
-# LiteLLM proxy URL
-LITELLM_BASE_URL = "http://localhost:4000/v1"
-
 
 def agent_maker(models: Dict[str, str]):
     """Factory: builds a simple planner+solver agent for the given models."""
-    client = OpenAI(base_url=LITELLM_BASE_URL, api_key=os.environ.get("OPENAI_API_KEY"))
+    client = OpenAI()
 
     def run(input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
@@ -109,7 +105,7 @@ def main():
     )
     results.print_summary()
 
-    # Export optimized config for LiteLLM
+    # Export optimized config
     best = results.get_best_combo()
     if best:
         print(f"\nBest combination: {best}")

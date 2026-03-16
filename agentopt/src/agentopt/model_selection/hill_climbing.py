@@ -47,9 +47,10 @@ class HillClimbingModelSelector(BaseModelSelector):
         # Pre-compute all combinations for random starts.
         self._all_combo_list = self._all_combos()
 
-        # Cache: combo_name -> (accuracy, latency, input_tokens, output_tokens).
+        # Cache: combo_name -> (accuracy, latency, input_tokens, output_tokens, datapoint_results).
         self._eval_cache: Dict[
-            str, Tuple[float, float, Dict[str, int], Dict[str, int]]
+            str,
+            Tuple[float, float, Dict[str, int], Dict[str, int], List[DatapointResult]],
         ] = {}
 
     # ------------------------------------------------------------------
@@ -130,23 +131,28 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             # Re-use cached result if available.
             if combo_name in self._eval_cache:
-                accuracy, latency, input_tokens, output_tokens = self._eval_cache[
-                    combo_name
-                ]
+                (
+                    accuracy,
+                    latency,
+                    input_tokens,
+                    output_tokens,
+                    dp_results,
+                ) = self._eval_cache[combo_name]
                 cached = True
             else:
-                start_ts = self._now_iso()
-                scores, latencies = self._evaluate_combo(
+                scores, latencies, dp_ids = self._evaluate_combo(
                     combo, self.dataset, label=combo_name
                 )
-                input_tokens, output_tokens = self._fetch_tokens(start_ts)
+                input_tokens, output_tokens = self._fetch_tokens(combo_name)
                 accuracy, _ = self._compute_stats(scores)
                 latency = sum(latencies) / len(latencies) if latencies else 0.0
+                dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
                 self._eval_cache[combo_name] = (
                     accuracy,
                     latency,
                     input_tokens,
                     output_tokens,
+                    dp_results,
                 )
                 cached = False
 
@@ -158,6 +164,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                 output_tokens=output_tokens,
                 attribute="combination",
                 is_best=False,
+                datapoint_results=dp_results,
             )
             suffix = " (cached)" if cached else ""
             print(f"  Iter {iteration + 1}: {result}{suffix}")

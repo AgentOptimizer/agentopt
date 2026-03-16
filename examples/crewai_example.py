@@ -1,13 +1,12 @@
 """
-Example: CrewAI agent with agentopt + LiteLLM.
+Example: CrewAI agent with agentopt.
 
 Prerequisites:
-    1. pip install crewai agentopt
-    2. Start LiteLLM proxy: litellm --config litellm_config.yaml --port 4000
+    1. pip install crewai agentopt agentproxy
+    2. Set OPENAI_API_KEY environment variable
 """
 
 import argparse
-import os
 from typing import Dict
 
 from crewai import Agent, Crew, LLM, Task
@@ -28,8 +27,6 @@ SELECTORS = {
     "hyperband": HyperbandModelSelector,
 }
 
-LITELLM_BASE_URL = "http://localhost:4000/v1"
-
 
 def agent_maker(models: Dict[str, str]):
     """Factory: builds a CrewAI crew with researcher + writer agents."""
@@ -37,21 +34,13 @@ def agent_maker(models: Dict[str, str]):
         role="Researcher",
         goal="Research the topic and provide accurate information",
         backstory="You are a knowledgeable researcher.",
-        llm=LLM(
-            model=f"openai/{models['researcher']}",
-            base_url=LITELLM_BASE_URL,
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        ),
+        llm=LLM(model=models["researcher"]),
     )
     writer = Agent(
         role="Writer",
         goal="Write a concise answer based on research",
         backstory="You are a skilled writer who distills information.",
-        llm=LLM(
-            model=f"openai/{models['writer']}",
-            base_url=LITELLM_BASE_URL,
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        ),
+        llm=LLM(model=models["writer"]),
     )
 
     def run(input_data):
@@ -97,8 +86,8 @@ def main():
     selector = selector_cls(
         agent_fn=agent_maker,
         models={
-            "researcher": ["gpt-5.1", "gpt-4o-mini", "gpt-4.1"],
-            "writer": ["gpt-5.1", "gpt-4o-mini", "gpt-4.1"],
+            "researcher": ["gpt-5.2", "gpt-4o-mini", "gpt-4.1"],
+            "writer": ["gpt-5.2", "gpt-4o-mini", "gpt-4.1"],
         },
         eval_fn=eval_fn,
         dataset=dataset,

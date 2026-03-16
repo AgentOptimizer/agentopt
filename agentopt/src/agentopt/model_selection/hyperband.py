@@ -70,10 +70,10 @@ class HyperbandModelSelector(BaseModelSelector):
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
         total_configs = len(all_combos)
-        start_ts = self._now_iso()
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
         combo_latencies: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
+        combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(total_configs)}
 
         print(f"\n{'='*60}")
         print(
@@ -113,11 +113,12 @@ class HyperbandModelSelector(BaseModelSelector):
                 for idx in current_indices:
                     combo = all_combos[idx]
                     combo_name = self._combo_name(combo)
-                    scores, latencies = self._evaluate_combo(
+                    scores, latencies, dp_ids = self._evaluate_combo(
                         combo, batch, label=combo_name
                     )
                     combo_scores[idx].extend(scores)
                     combo_latencies[idx].extend(latencies)
+                    combo_dp_ids[idx].extend(dp_ids)
                     mu = (
                         sum(combo_scores[idx]) / len(combo_scores[idx])
                         if combo_scores[idx]
@@ -150,17 +151,23 @@ class HyperbandModelSelector(BaseModelSelector):
                 n_i = len(bracket_indices)
 
         # Build final results.
-        input_tokens, output_tokens = self._fetch_tokens(start_ts)
         all_results: List[ModelResult] = []
         for idx, combo in enumerate(all_combos):
             combo_name = self._combo_name(combo)
             scores = combo_scores[idx]
             latencies = combo_latencies[idx]
+            dp_ids = combo_dp_ids[idx]
             if scores:
                 accuracy = sum(scores) / len(scores)
                 avg_latency = sum(latencies) / len(latencies)
             else:
                 accuracy, avg_latency = 0.0, 0.0
+            input_tokens, output_tokens = self._fetch_tokens(combo_name)
+            dp_results = (
+                self._build_datapoint_results(scores, latencies, dp_ids)
+                if dp_ids
+                else []
+            )
             all_results.append(
                 self._make_result(
                     model_name=combo_name,
@@ -170,6 +177,7 @@ class HyperbandModelSelector(BaseModelSelector):
                     output_tokens=output_tokens,
                     attribute="combination",
                     is_best=False,
+                    datapoint_results=dp_results,
                 )
             )
 
@@ -191,10 +199,10 @@ class HyperbandModelSelector(BaseModelSelector):
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
         total_configs = len(all_combos)
-        start_ts = self._now_iso()
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
         combo_latencies: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
+        combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(total_configs)}
 
         print(f"\n{'='*60}")
         print(
@@ -232,13 +240,15 @@ class HyperbandModelSelector(BaseModelSelector):
                 if not batch:
                     break
 
-                async def _eval_batch(idx: int) -> Tuple[int, List[float], List[float]]:
+                async def _eval_batch(
+                    idx: int,
+                ) -> Tuple[int, List[float], List[float], List[str]]:
                     combo = all_combos[idx]
                     combo_name = self._combo_name(combo)
-                    scores, latencies = await self._evaluate_combo_async(
+                    scores, latencies, dp_ids = await self._evaluate_combo_async(
                         combo, batch, label=combo_name, max_concurrent=max_concurrent
                     )
-                    return idx, scores, latencies
+                    return idx, scores, latencies, dp_ids
 
                 stage_results = await asyncio.gather(
                     *[_eval_batch(idx) for idx in current_indices],
@@ -249,9 +259,10 @@ class HyperbandModelSelector(BaseModelSelector):
                     if isinstance(res, Exception):
                         logger.warning("Stage evaluation error: %s", res)
                         continue
-                    idx, scores, latencies = res
+                    idx, scores, latencies, dp_ids = res
                     combo_scores[idx].extend(scores)
                     combo_latencies[idx].extend(latencies)
+                    combo_dp_ids[idx].extend(dp_ids)
                     mu = (
                         sum(combo_scores[idx]) / len(combo_scores[idx])
                         if combo_scores[idx]
@@ -285,17 +296,23 @@ class HyperbandModelSelector(BaseModelSelector):
                 bracket_indices = new_indices
                 n_i = len(bracket_indices)
 
-        input_tokens, output_tokens = self._fetch_tokens(start_ts)
         all_results: List[ModelResult] = []
         for idx, combo in enumerate(all_combos):
             combo_name = self._combo_name(combo)
             scores = combo_scores[idx]
             latencies = combo_latencies[idx]
+            dp_ids = combo_dp_ids[idx]
             if scores:
                 accuracy = sum(scores) / len(scores)
                 avg_latency = sum(latencies) / len(latencies)
             else:
                 accuracy, avg_latency = 0.0, 0.0
+            input_tokens, output_tokens = self._fetch_tokens(combo_name)
+            dp_results = (
+                self._build_datapoint_results(scores, latencies, dp_ids)
+                if dp_ids
+                else []
+            )
             all_results.append(
                 self._make_result(
                     model_name=combo_name,
@@ -305,6 +322,7 @@ class HyperbandModelSelector(BaseModelSelector):
                     output_tokens=output_tokens,
                     attribute="combination",
                     is_best=False,
+                    datapoint_results=dp_results,
                 )
             )
 

@@ -9,15 +9,26 @@ import logging
 import math
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, PrivateAttr
+
+from agentproxy import LLMTracker
 
 from ..base_models import Dataset, EvalFn, validate_dataset
 from ..model_price import compute_price
 
 logger = logging.getLogger(__name__)
+
+
+class DatapointResult(BaseModel):
+    """Metrics for a single datapoint evaluation."""
+
+    datapoint_index: int
+    score: float
+    latency_seconds: float
+    input_tokens: Dict[str, int] = Field(default_factory=dict)
+    output_tokens: Dict[str, int] = Field(default_factory=dict)
 
 
 class ModelResult(BaseModel):
@@ -30,6 +41,7 @@ class ModelResult(BaseModel):
     output_tokens: Dict[str, int] = Field(default_factory=dict)
     attribute: str
     is_best: bool = False
+    datapoint_results: List[DatapointResult] = Field(default_factory=list)
     _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
 
     @property
@@ -104,14 +116,57 @@ class SelectionResults(BaseModel):
         """Get all results for a specific attribute."""
         return [r for r in self.results if r.attribute == attribute]
 
-    def export_config(self, output_path: str) -> None:
-        """Export the best combination as a LiteLLM config YAML."""
-        from ..litellm_utils import export_litellm_config
-
+    def export_config(
+        self, output_path: str, api_key_env_vars: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Export the best combination as a config YAML."""
         best_combo = self.get_best_combo()
         if best_combo is None:
             raise ValueError("No best combination found to export.")
-        export_litellm_config(best_combo, output_path)
+
+        if api_key_env_vars is None:
+            api_key_env_vars = {
+                "openai": "OPENAI_API_KEY",
+                "anthropic": "ANTHROPIC_API_KEY",
+                "google": "GOOGLE_API_KEY",
+            }
+
+        def _detect_provider(model_name: str) -> str:
+            if "/" in model_name:
+                return model_name.split("/")[0]
+            lower = model_name.lower()
+            if "gpt" in lower or lower.startswith("o3") or lower.startswith("o4"):
+                return "openai"
+            elif "claude" in lower:
+                return "anthropic"
+            elif "gemini" in lower:
+                return "google"
+            return "openai"
+
+        def _full_model_name(model_name: str) -> str:
+            if "/" in model_name:
+                return model_name
+            return f"{_detect_provider(model_name)}/{model_name}"
+
+        unique_models = set(best_combo.values())
+        lines = ["model_list:"]
+        for model in sorted(unique_models):
+            full_name = _full_model_name(model)
+            provider = _detect_provider(model)
+            env_var = api_key_env_vars.get(provider, "API_KEY")
+            lines.append(f"  - model_name: {model}")
+            lines.append(f"    litellm_params:")
+            lines.append(f"      model: {full_name}")
+            lines.append(f"      api_key: os.environ/{env_var}")
+            lines.append("")
+
+        lines.append("# Optimized model mapping (from agentopt):")
+        for node, model in best_combo.items():
+            lines.append(f"#   {node}: {model}")
+        lines.append("")
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
 
     def to_csv(self, path: str) -> None:
         """Save results to CSV file."""
@@ -255,7 +310,7 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
-        token_log_file: str = ".cache/token_usage.jsonl",
+        tracker: Optional[LLMTracker] = None,
     ) -> None:
         """
         Initialize the model selector.
@@ -274,8 +329,8 @@ class BaseModelSelector(ABC):
             model_prices: Optional custom pricing overrides. Maps model names
                 to dicts with ``'input_price'`` and ``'output_price'`` keys
                 ($/MTok).
-            token_log_file: Path to the JSONL token log file written by
-                the LiteLLM proxy callback.
+            tracker: Optional :class:`LLMTracker` instance. If not provided,
+                one is created and started automatically.
         """
         validate_dataset(dataset)
 
@@ -294,7 +349,12 @@ class BaseModelSelector(ABC):
         self._models = models
         self._node_names = list(models.keys())
         self.invoke_fn = invoke_fn
-        self._token_log_file = token_log_file
+
+        if tracker is not None:
+            self._tracker = tracker
+        else:
+            self._tracker = LLMTracker()
+        self._tracker.start()
 
     # ------------------------------------------------------------------
     # Combo generation
@@ -326,37 +386,41 @@ class BaseModelSelector(ABC):
 
     def _evaluate_combo(
         self, combo: Dict[str, str], evaluation_tasks: Dataset, label: str = "",
-    ) -> Tuple[List[float], List[float]]:
+    ) -> Tuple[List[float], List[float], List[str]]:
         """Build an agent for combo and evaluate it on tasks.
 
-        Returns (scores, latencies).
+        Returns (scores, latencies, datapoint_ids).
         """
         agent = self.agent_fn(combo)
         return self._evaluate_agent(agent, evaluation_tasks, label)
 
     def _evaluate_agent(
         self, agent: Any, evaluation_tasks: Dataset, label: str = "",
-    ) -> Tuple[List[float], List[float]]:
+    ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent against tasks.
 
-        Returns (scores, latencies).
+        Returns (scores, latencies, datapoint_ids).
         """
         scores: List[float] = []
         latencies: List[float] = []
+        datapoint_ids: List[str] = []
         total = len(evaluation_tasks)
 
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
+            dp_id = f"{label}::dp_{i}"
             try:
-                start_time = time.time()
-                actual_result = self._invoke_agent(agent, input_data)
-                latency = time.time() - start_time
+                with self._tracker.track(data_id=dp_id, combo_id=label):
+                    start_time = time.time()
+                    actual_result = self._invoke_agent(agent, input_data)
+                    latency = time.time() - start_time
                 score = float(self.eval_fn(expected_answer, actual_result))
                 scores.append(score)
                 latencies.append(latency)
+                datapoint_ids.append(dp_id)
             except Exception as e:
                 logger.warning("[%s] sample %d/%d error: %s", label, i, total, e)
 
-        return scores, latencies
+        return scores, latencies, datapoint_ids
 
     async def _evaluate_combo_async(
         self,
@@ -364,10 +428,10 @@ class BaseModelSelector(ABC):
         evaluation_tasks: Dataset,
         label: str = "",
         max_concurrent: int = 20,
-    ) -> Tuple[List[float], List[float]]:
+    ) -> Tuple[List[float], List[float], List[str]]:
         """Build an agent for combo and evaluate async.
 
-        Returns (scores, latencies).
+        Returns (scores, latencies, datapoint_ids).
         """
         agent = self.agent_fn(combo)
         return await self._evaluate_agent_async(
@@ -380,11 +444,13 @@ class BaseModelSelector(ABC):
         evaluation_tasks: Dataset,
         label: str = "",
         max_concurrent: int = 20,
-    ) -> Tuple[List[float], List[float]]:
+    ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent asynchronously.
 
-        Returns (scores, latencies).
+        Returns (scores, latencies, datapoint_ids).
         """
+        import contextvars as _ctx
+
         semaphore = asyncio.Semaphore(max_concurrent)
         total = len(evaluation_tasks)
         results: List[Optional[dict]] = [None] * total
@@ -394,19 +460,22 @@ class BaseModelSelector(ABC):
         )
 
         async def _eval_single(idx: int, input_data: Any, expected_answer: Any) -> None:
+            dp_id = f"{label}::dp_{idx + 1}"
             async with semaphore:
                 try:
-                    start_time = time.time()
-                    if is_async:
-                        actual_result = await self._invoke_agent(agent, input_data)
-                    else:
-                        loop = asyncio.get_running_loop()
-                        actual_result = await loop.run_in_executor(
-                            None, self._invoke_agent, agent, input_data
-                        )
-                    latency = time.time() - start_time
+                    with self._tracker.track(data_id=dp_id, combo_id=label):
+                        start_time = time.time()
+                        if is_async:
+                            actual_result = await self._invoke_agent(agent, input_data)
+                        else:
+                            loop = asyncio.get_running_loop()
+                            ctx = _ctx.copy_context()
+                            actual_result = await loop.run_in_executor(
+                                None, ctx.run, self._invoke_agent, agent, input_data
+                            )
+                        latency = time.time() - start_time
                     score = float(self.eval_fn(expected_answer, actual_result))
-                    results[idx] = {"score": score, "latency": latency}
+                    results[idx] = {"score": score, "latency": latency, "dp_id": dp_id}
                 except Exception as e:
                     logger.warning(
                         "[%s] sample %d/%d error: %s", label, idx + 1, total, e
@@ -419,33 +488,33 @@ class BaseModelSelector(ABC):
 
         scores: List[float] = []
         latencies: List[float] = []
+        datapoint_ids: List[str] = []
         for r in results:
             if r is not None:
                 scores.append(r["score"])
                 latencies.append(r["latency"])
+                datapoint_ids.append(r["dp_id"])
 
-        return scores, latencies
+        return scores, latencies, datapoint_ids
 
     # ------------------------------------------------------------------
-    # Token tracking via LiteLLM spend logs
+    # Token tracking via agentproxy
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _now_iso() -> str:
-        """Return current local time as ISO string for token log queries."""
-        return datetime.now().isoformat()
+    def _fetch_tokens(self, combo_id: str) -> Tuple[Dict[str, int], Dict[str, int]]:
+        """Return (input_tokens, output_tokens) dicts for a combo."""
+        usage = self._tracker.get_usage(combo_id=combo_id)
+        return self._split_tokens(usage)
 
-    def _fetch_tokens(self, start_time: str) -> Tuple[Dict[str, int], Dict[str, int]]:
-        """Read token usage from the JSONL log file and return (input_tokens, output_tokens) dicts."""
-        try:
-            from ..litellm_utils import aggregate_tokens, read_token_log
-
-            logs = read_token_log(log_file=self._token_log_file, since=start_time,)
-            aggregated = aggregate_tokens(logs)
-            return self._split_tokens(aggregated)
-        except Exception as e:
-            logger.debug("Failed to read token log: %s", e)
-            return {}, {}
+    def _fetch_tokens_by_datapoint(
+        self, datapoint_ids: List[str],
+    ) -> Dict[str, Tuple[Dict[str, int], Dict[str, int]]]:
+        """Return per-datapoint token usage as ``{dp_id: (input_tokens, output_tokens)}``."""
+        result: Dict[str, Tuple[Dict[str, int], Dict[str, int]]] = {}
+        for dp_id in datapoint_ids:
+            usage = self._tracker.get_usage(data_id=dp_id)
+            result[dp_id] = self._split_tokens(usage)
+        return result
 
     # ------------------------------------------------------------------
     # Result helpers
@@ -456,6 +525,25 @@ class BaseModelSelector(ABC):
         result = ModelResult(**kwargs)
         result._custom_prices = self._custom_prices
         return result
+
+    def _build_datapoint_results(
+        self, scores: List[float], latencies: List[float], datapoint_ids: List[str],
+    ) -> List[DatapointResult]:
+        """Build per-datapoint result objects with token attribution."""
+        dp_tokens = self._fetch_tokens_by_datapoint(datapoint_ids)
+        results: List[DatapointResult] = []
+        for j, dp_id in enumerate(datapoint_ids):
+            inp_tok, out_tok = dp_tokens.get(dp_id, ({}, {}))
+            results.append(
+                DatapointResult(
+                    datapoint_index=j,
+                    score=scores[j],
+                    latency_seconds=latencies[j],
+                    input_tokens=inp_tok,
+                    output_tokens=out_tok,
+                )
+            )
+        return results
 
     @staticmethod
     def _split_tokens(

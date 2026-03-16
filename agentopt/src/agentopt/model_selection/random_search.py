@@ -90,13 +90,13 @@ class RandomSearchModelSelector(BaseModelSelector):
             print(f"  [{idx}/{len(sampled)}] Evaluating: {combo_name}")
 
             try:
-                start_ts = self._now_iso()
-                scores, latencies = self._evaluate_combo(
+                scores, latencies, dp_ids = self._evaluate_combo(
                     combo, self.dataset, label=combo_name
                 )
-                input_tokens, output_tokens = self._fetch_tokens(start_ts)
+                input_tokens, output_tokens = self._fetch_tokens(combo_name)
                 accuracy, _ = self._compute_stats(scores)
                 latency = sum(latencies) / len(latencies) if latencies else 0.0
+                dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
 
                 result = self._make_result(
                     model_name=combo_name,
@@ -106,6 +106,7 @@ class RandomSearchModelSelector(BaseModelSelector):
                     output_tokens=output_tokens,
                     attribute="combination",
                     is_best=False,
+                    datapoint_results=dp_results,
                 )
                 print(f"  {result}")
                 all_results.append(result)
@@ -158,13 +159,13 @@ class RandomSearchModelSelector(BaseModelSelector):
         async def _eval_combo(combo: Dict[str, str]) -> Tuple[str, ModelResult]:
             combo_name = self._combo_name(combo)
             print(f"  Evaluating: {combo_name}")
-            start_ts = self._now_iso()
-            scores, latencies = await self._evaluate_combo_async(
+            scores, latencies, dp_ids = await self._evaluate_combo_async(
                 combo, self.dataset, label=combo_name, max_concurrent=max_concurrent
             )
-            input_tokens, output_tokens = self._fetch_tokens(start_ts)
+            input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
             latency = sum(latencies) / len(latencies) if latencies else 0.0
+            dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
             result = self._make_result(
                 model_name=combo_name,
                 accuracy=accuracy,
@@ -173,6 +174,7 @@ class RandomSearchModelSelector(BaseModelSelector):
                 output_tokens=output_tokens,
                 attribute="combination",
                 is_best=False,
+                datapoint_results=dp_results,
             )
             print(f"  {result}")
             return combo_name, result

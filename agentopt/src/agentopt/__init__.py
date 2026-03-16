@@ -6,6 +6,8 @@ that builds your agent with the given model names, then let a ModelSelector
 find the best combination.
 """
 
+from agentproxy import CallRecord, LLMTracker
+
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
 from .model_selection import (
     ArmEliminationModelSelector,
@@ -13,6 +15,7 @@ from .model_selection import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     HyperbandModelSelector,
+    DatapointResult,
     ModelResult,
     RandomSearchModelSelector,
     SelectionResults,
@@ -31,6 +34,8 @@ __all__ = [
     # Core API
     "ModelSelector",
     "BaseModelSelector",
+    "LLMTracker",
+    "CallRecord",
     # Selectors
     "BruteForceModelSelector",
     "RandomSearchModelSelector",
@@ -39,6 +44,7 @@ __all__ = [
     "HyperbandModelSelector",
     "BayesianOptimizationModelSelector",
     # Result types
+    "DatapointResult",
     "ModelResult",
     "SelectionResults",
     # Type aliases

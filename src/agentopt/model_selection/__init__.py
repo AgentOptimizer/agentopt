@@ -9,6 +9,7 @@ from .hill_climbing import HillClimbingModelSelector
 from .arm_elimination import ArmEliminationModelSelector
 from .hyperband import HyperbandModelSelector
 from .bayesian_optimization import BayesianOptimizationModelSelector
+from .suggestion import LLMModelSuggester, ModelSuggestion
 
 __all__ = [
     "BaseModelSelector",
@@ -18,6 +19,8 @@ __all__ = [
     "ArmEliminationModelSelector",
     "HyperbandModelSelector",
     "BayesianOptimizationModelSelector",
+    "LLMModelSuggester",
+    "ModelSuggestion",
     "ModelResult",
     "SelectionResults",
 ]

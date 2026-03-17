@@ -15,6 +15,8 @@ from .model_selection import (
     ArmEliminationModelSelector,
     HyperbandModelSelector,
     BayesianOptimizationModelSelector,
+    LLMModelSuggester,
+    ModelSuggestion,
 )
 from .base_models import (
     Dataset,
@@ -39,6 +41,8 @@ __all__ = [
     "ArmEliminationModelSelector",
     "HyperbandModelSelector",
     "BayesianOptimizationModelSelector",
+    "LLMModelSuggester",
+    "ModelSuggestion",
     "ModelSelector",
     # Types
     "ModelResult",

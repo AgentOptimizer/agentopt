@@ -15,6 +15,7 @@ from .model_selection import (
     ArmEliminationModelSelector,
     HyperbandModelSelector,
     BayesianOptimizationModelSelector,
+    LMProposalModelSelector,
     LLMModelSuggester,
     ModelSuggestion,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "ArmEliminationModelSelector",
     "HyperbandModelSelector",
     "BayesianOptimizationModelSelector",
+    "LMProposalModelSelector",
     "LLMModelSuggester",
     "ModelSuggestion",
     "ModelSelector",

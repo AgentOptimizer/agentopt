@@ -2,7 +2,8 @@
 
 import threading
 from contextlib import contextmanager
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
 
 from .cache import CacheStats, ResponseCache
 from .interceptor import (
@@ -26,11 +27,17 @@ class LLMTracker:
         return cached responses instantly without hitting the API.
     cache_max_size : int
         Maximum number of cached entries. 0 means unlimited (default).
+    cache_dir : str or Path, optional
+        Directory for persisting cache entries as JSON files on disk.
+        When set, the cache is loaded from disk on init and written
+        through on every store. Enables cache survival across process
+        restarts. If ``None`` (default), the cache is in-memory only.
 
     Usage::
 
         tracker = LLMTracker()           # cache on by default
         tracker = LLMTracker(cache=False) # disable caching
+        tracker = LLMTracker(cache_dir="./llm_cache")  # persist to disk
         tracker.start()
 
         with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
@@ -41,12 +48,21 @@ class LLMTracker:
         tracker.stop()
     """
 
-    def __init__(self, cache: bool = True, cache_max_size: int = 0) -> None:
+    def __init__(
+        self,
+        cache: bool = True,
+        cache_max_size: int = 0,
+        cache_dir: Optional[Union[str, Path]] = None,
+    ) -> None:
         self._records: List[CallRecord] = []
         self._lock = threading.Lock()
         self._active = False
         self._cache_on = cache
-        self._response_cache = ResponseCache(max_size=cache_max_size) if cache else None
+        self._response_cache = (
+            ResponseCache(max_size=cache_max_size, cache_dir=cache_dir)
+            if cache
+            else None
+        )
 
     @property
     def cache_enabled(self) -> bool:

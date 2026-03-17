@@ -111,11 +111,18 @@ class LLMTracker:
         )
         self._active = True
 
+    def flush_cache(self) -> None:
+        """Flush dirty cache entries to disk immediately."""
+        if self._response_cache is not None:
+            self._response_cache.flush()
+
     def stop(self) -> None:
-        """Remove httpx patches. Idempotent."""
+        """Remove httpx patches and flush cache to disk. Idempotent."""
         if not self._active:
             return
         uninstall()
+        if self._response_cache is not None:
+            self._response_cache.close()
         self._active = False
 
     def _on_call(self, record: CallRecord) -> None:

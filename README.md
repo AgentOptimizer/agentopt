@@ -725,13 +725,16 @@ Example CLI usage:
 ```bash
 python examples/ag2_example.py single --selector random_search --sample-fraction 0.25
 
+# User-specified question-level concurrency (per model combination)
+python examples/ag2_example.py single --parallel --max-concurrent 50
+
 # Hyperband with custom reduction factor
 python examples/ag2_example.py single --selector hyperband --reduction-factor 3.0
 
 # Hill climbing with batched neighbours
 python examples/ag2_example.py single --selector hill_climbing --batch-size 4
 
-# Bayesian optimization with small batch EI
+# Bayesian optimization with small batch LogEI
 python examples/ag2_example.py single --selector bayesian_optimization --batch-size 4
 ```
 

@@ -133,6 +133,7 @@ def run_model_selection(
     invoke_fn,
     llm_proxies,
     parallel=False,
+    max_concurrent: int = 20,
     dataset_file=None,
     selector_name: str = "brute_force",
     selector_kwargs: dict | None = None,
@@ -164,7 +165,7 @@ def run_model_selection(
         base_kwargs.update(selector_kwargs)
     selector = SelectorCls(**base_kwargs)
 
-    results = selector.select_best(parallel=parallel)
+    results = selector.select_best(parallel=parallel, max_concurrent=max_concurrent)
     print(f"\nBest: {results.get_best()}")
 
     if cache:
@@ -216,6 +217,12 @@ if __name__ == "__main__":
         "--parallel",
         action="store_true",
         help="Run model selection in parallel",
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=20,
+        help="Max concurrent in-flight eval calls per model combination (question-level parallelism).",
     )
     parser.add_argument(
         "--dataset",
@@ -291,6 +298,7 @@ if __name__ == "__main__":
         invoke,
         llm_proxies,
         parallel=args.parallel,
+        max_concurrent=args.max_concurrent,
         dataset_file=args.dataset,
         selector_name=args.selector,
         selector_kwargs=selector_kwargs,

@@ -727,6 +727,12 @@ python examples/ag2_example.py single --selector random_search --sample-fraction
 
 # Hyperband with custom reduction factor
 python examples/ag2_example.py single --selector hyperband --reduction-factor 3.0
+
+# Hill climbing with batched neighbours
+python examples/ag2_example.py single --selector hill_climbing --batch-size 4
+
+# Bayesian optimization with small batch EI
+python examples/ag2_example.py single --selector bayesian_optimization --batch-size 4
 ```
 
 ### How Parallel Evaluation Works

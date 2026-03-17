@@ -79,6 +79,8 @@ class LMProposalModelSelector(BaseModelSelector):
         self.objective = objective
         self.seed = seed
         self._proposal_cache: Dict[str, List[Tuple[int, ...]]] = {}
+        self.last_proposal_stats: Dict[str, Any] = {}
+        self._last_combo_source_by_name: Dict[str, str] = {}
 
         if proposer_client is None:
             from openai import OpenAI
@@ -313,9 +315,24 @@ class LMProposalModelSelector(BaseModelSelector):
         all_combinations = list(itertools.product(*candidate_lists))
 
         if not all_combinations:
+            self.last_proposal_stats = {"total_space": 0, "selected_total": 0}
+            self._last_combo_source_by_name = {}
             return proxies, [], []
 
         if len(all_combinations) <= self.max_combinations:
+            self.last_proposal_stats = {
+                "total_space": len(all_combinations),
+                "selected_total": len(all_combinations),
+                "proposed_valid": 0,
+                "baseline_selected": 0,
+                "exploration_selected": 0,
+                "random_fill_selected": 0,
+                "full_search": True,
+            }
+            self._last_combo_source_by_name = {
+                " + ".join(self._get_model_name(m) for m in combo): "full_search"
+                for combo in all_combinations
+            }
             return proxies, all_combinations, all_combinations
 
         all_index_combinations = list(
@@ -330,12 +347,14 @@ class LMProposalModelSelector(BaseModelSelector):
 
         selected_indices: List[Tuple[int, ...]] = []
         selected_set = set()
+        source_by_index: Dict[Tuple[int, ...], str] = {}
 
-        def _add(idx_combo: Tuple[int, ...]) -> None:
+        def _add(idx_combo: Tuple[int, ...], source: str) -> None:
             if idx_combo in selected_set:
                 return
             selected_set.add(idx_combo)
             selected_indices.append(idx_combo)
+            source_by_index[idx_combo] = source
 
         # 1) Baselines.
         for idx_combo in self._build_baseline_index_combos(candidate_lists):
@@ -344,7 +363,7 @@ class LMProposalModelSelector(BaseModelSelector):
             ):
                 break
             if idx_combo in index_to_combo:
-                _add(idx_combo)
+                _add(idx_combo, "baseline")
 
         # 2) LLM proposals.
         preview = self._dataset_preview()
@@ -353,7 +372,7 @@ class LMProposalModelSelector(BaseModelSelector):
             if len(selected_indices) >= self.max_combinations:
                 break
             if idx_combo in index_to_combo:
-                _add(idx_combo)
+                _add(idx_combo, "proposed")
 
         remaining = [idx for idx in all_index_combinations if idx not in selected_set]
         rng = random.Random(self.seed)
@@ -367,7 +386,7 @@ class LMProposalModelSelector(BaseModelSelector):
         )
         if explore_count > 0:
             for idx_combo in rng.sample(remaining, explore_count):
-                _add(idx_combo)
+                _add(idx_combo, "exploration")
             remaining = [idx for idx in remaining if idx not in selected_set]
 
         # 4) Fill any leftover slots randomly.
@@ -375,9 +394,26 @@ class LMProposalModelSelector(BaseModelSelector):
         if slots_left > 0 and remaining:
             fill_count = min(slots_left, len(remaining))
             for idx_combo in rng.sample(remaining, fill_count):
-                _add(idx_combo)
+                _add(idx_combo, "random_fill")
 
         sampled = [index_to_combo[idx] for idx in selected_indices]
+        self.last_proposal_stats = {
+            "total_space": len(all_combinations),
+            "selected_total": len(sampled),
+            "proposed_valid": len(proposed_indices),
+            "baseline_selected": sum(1 for s in source_by_index.values() if s == "baseline"),
+            "exploration_selected": sum(
+                1 for s in source_by_index.values() if s == "exploration"
+            ),
+            "random_fill_selected": sum(
+                1 for s in source_by_index.values() if s == "random_fill"
+            ),
+            "full_search": False,
+        }
+        self._last_combo_source_by_name = {
+            " + ".join(self._get_model_name(m) for m in combo): source_by_index[idx]
+            for idx, combo in zip(selected_indices, sampled)
+        }
         return proxies, all_combinations, sampled
 
     # ------------------------------------------------------------------
@@ -469,6 +505,9 @@ class LMProposalModelSelector(BaseModelSelector):
                 if result.model_name == best_name:
                     result.is_best = True
                     break
+            src = self._last_combo_source_by_name.get(best_name, "unknown")
+            self.last_proposal_stats["best_source"] = src
+            self.last_proposal_stats["proposer_hit"] = src == "proposed"
         else:
             print("\n  No sampled combinations succeeded")
 
@@ -716,6 +755,9 @@ class LMProposalModelSelector(BaseModelSelector):
                 if result.model_name == best_name:
                     result.is_best = True
                     break
+            src = self._last_combo_source_by_name.get(best_name, "unknown")
+            self.last_proposal_stats["best_source"] = src
+            self.last_proposal_stats["proposer_hit"] = src == "proposed"
         else:
             print("\n  No sampled combinations succeeded")
 

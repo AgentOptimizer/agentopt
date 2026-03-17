@@ -392,6 +392,8 @@ AgentOpt includes several model selection strategies:
 
 - **`BayesianOptimizationModelSelector`** — Gaussian process-based optimization that models the accuracy surface over model combinations and uses an acquisition function to select the most promising combination to evaluate next. Efficient for large search spaces.
 
+- **`LMProposalModelSelector`** — Two-stage strategy where a proposer LLM first suggests which combinations are most promising, then AgentOpt evaluates only that subset (+ fallback baseline/exploration combinations). Useful when the full Cartesian space is too large and you want query-aware pruning.
+
 ```python
 from agentopt import (
     BaseModelSelector,
@@ -400,6 +402,7 @@ from agentopt import (
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
     HyperbandModelSelector,
+    LMProposalModelSelector,
 )
 
 # Brute force (tests all combinations)
@@ -428,6 +431,18 @@ selector = HyperbandModelSelector(
     agent=agent,
     reduction_factor=3.0,
 )
+
+# LLM proposal (use a proposer model to shortlist combinations first)
+selector = LMProposalModelSelector(
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    agent=agent,  # or invoke_fn=...
+    proposer_model="gpt-4o-mini",
+    max_combinations=12,
+    min_include_baselines=1,
+    exploration_fraction=0.2,
+)
 ```
 
 `RandomSearchModelSelector` samples without replacement from the full search space. Set `sample_fraction` to a value in `(0, 1]`; for example, `0.25` evaluates 25% of all combinations.
@@ -441,6 +456,46 @@ python examples/ag2_example.py single --selector random_search --sample-fraction
 python examples/ag2_example.py single --selector hyperband --reduction-factor 3.0
 ```
 
+### LLM-guided proposal workflow
+
+`LMProposalModelSelector` is drop-in compatible with other selectors:
+
+- same `models={proxy: [candidates...]}` format
+- same `dataset`, `eval_fn`, and `agent`/`invoke_fn`
+- same `select_best(parallel=...)` call
+
+It adds a proposer step before evaluation:
+
+1. Builds a prompt with candidate indices for each proxy (ordered) and a small dataset preview.
+2. Asks a proposer LLM (default `gpt-4o-mini`) to return JSON:
+   `{"combinations": [[idx_proxy0, idx_proxy1, ...], ...]}`.
+3. Validates and deduplicates proposed combinations.
+4. Adds baseline + random exploration fallback combinations.
+5. Evaluates only the selected subset.
+
+```python
+from agentopt import LMProposalModelSelector
+
+selector = LMProposalModelSelector(
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    invoke_fn=invoke_fn,
+    proposer_model="gpt-4o-mini",
+    max_combinations=12,
+    min_include_baselines=1,
+    exploration_fraction=0.2,
+    objective="accuracy_then_latency",
+)
+
+results = selector.select_best(parallel=True)
+print(selector.last_proposal_stats)  # proposer_hit, selected counts, fallback usage
+```
+
+Notes:
+- Requires an OpenAI-compatible client key for the proposer if you use the default client.
+- If proposer output is malformed/empty, selector falls back to baseline + random sampling.
+
 ### How Parallel Evaluation Works
 
 When `parallel=True`, `select_best()`:
@@ -452,8 +507,9 @@ When `parallel=True`, `select_best()`:
   - `RandomSearchModelSelector`
   - `ArmEliminationModelSelector`
   - `HyperbandModelSelector`
+  - `LMProposalModelSelector`
 
-> **Experimental note:** `HillClimbingModelSelector`, `ArmEliminationModelSelector`, `HyperbandModelSelector`, and `BayesianOptimizationModelSelector` are currently experimental and their parallel behavior and APIs may change in future releases.
+> **Experimental note:** `HillClimbingModelSelector`, `ArmEliminationModelSelector`, `HyperbandModelSelector`, `BayesianOptimizationModelSelector`, and `LMProposalModelSelector` are currently experimental and their parallel behavior and APIs may change in future releases.
 
 **With `agent=`:**
 1. Detects the framework via the adapter registry
@@ -575,6 +631,7 @@ agentopt/
 │   │   ├── constants.py         # Framework detection helpers + MODEL_FIELDS
 │   │   ├── token_tracking.py    # TokenAccumulator + extract_usage()
 │   │   ├── builders.py          # Generic LLM rebuild helpers
+│   │   ├── model_copy.py        # Safe model cloning for parallel evaluation
 │   │   └── framework_specific_implementation/
 │   │       ├── crewai.py        # CrewAI support + CrewAIAdapter
 │   │       ├── langchain_compat.py  # LangChain support + LangChainAdapter
@@ -589,6 +646,8 @@ agentopt/
 │       ├── arm_elimination.py   # ArmEliminationModelSelector (experimental)
 │       ├── hyperband.py         # HyperbandModelSelector (experimental)
 │       ├── bayesian_optimization.py  # BayesianOptimizationModelSelector (experimental)
+│       ├── llm_proposal.py      # LMProposalModelSelector (LLM-guided combo shortlist)
+│       ├── suggestion.py        # LLMModelSuggester utility (candidate suggestion helper)
 │       └── utils.py             # Compat re-export of extract_prompt
 ├── examples/
 │   ├── crewai_example.py        # CrewAI: single, multi-agent, multi-LLM
@@ -598,6 +657,7 @@ agentopt/
 │   ├── openai_sdk_example.py    # OpenAI SDK: single, multi-LLM
 │   ├── claude_sdk_example.py    # Claude SDK: single, multi-agent, multi-LLM
 │   ├── ag2_example.py           # AG2: single, multi-agent, multi-LLM
+│   ├── model_selection_suggestion_openai.py  # LLM-based model candidate suggestion demo
 │   └── datasets/
 │       └── math_problems.jsonl
 └── pyproject.toml
@@ -669,6 +729,9 @@ from agentopt import (
     ArmEliminationModelSelector, # Arm-elimination selector (bandit-style successive elimination)
     HyperbandModelSelector,  # Hyperband selector (bandit-style, multi-bracket successive halving over dataset samples)
     BayesianOptimizationModelSelector, # Bayesian optimization selector (Bayesian search over combinations)
+    LMProposalModelSelector, # Proposer-LLM selector (LLM suggests which combinations to test)
+    LLMModelSuggester,       # Utility that asks an LLM to rank candidate models
+    ModelSuggestion,         # Dataclass for suggestion outputs
     BaseModelSelector,       # Abstract base for custom selectors
 
     # Results

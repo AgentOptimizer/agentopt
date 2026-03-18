@@ -182,7 +182,10 @@ class ResponseCache:
         """Load all cached entries from ``cache_dir`` into memory."""
         assert self._cache_dir is not None
         loaded = 0
-        for path in sorted(self._cache_dir.glob("*.json")):
+        # Load files ordered by modification time so that the most recent
+        # entries end up last in the OrderedDict for LRU-style eviction.
+        paths = sorted(self._cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        for path in paths:
             key = path.stem
             try:
                 data = json.loads(path.read_text())

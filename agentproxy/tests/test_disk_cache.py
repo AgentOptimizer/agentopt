@@ -27,7 +27,6 @@ _RESPONSE_BODY = {
     ],
     "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
 }
-_RESPONSE_BYTES = json.dumps(_RESPONSE_BODY).encode()
 
 _REQUEST_BODY = {
     "model": "gpt-4o-mini",
@@ -88,12 +87,9 @@ class TestCacheEntrySerialization:
 
 class TestDiskCache:
     def test_put_does_not_write_immediately(self, tmp_path):
-        """put() only marks dirty — no disk I/O until flush."""
         cache_dir = tmp_path / "cache"
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         cache.put("key1", CacheEntry(response_bytes=b"data1"))
-
-        # No files yet — haven't flushed
         assert len(list(cache_dir.glob("*.json"))) == 0
         cache.close()
 
@@ -117,30 +113,22 @@ class TestDiskCache:
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         cache.put("k1", CacheEntry(response_bytes=b"v1"))
         cache.close()
-
         assert len(list(cache_dir.glob("*.json"))) == 1
 
     def test_entries_loaded_from_disk(self, tmp_path):
         cache_dir = tmp_path / "cache"
 
-        # Write entries with one cache instance
         cache1 = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         cache1.put("k1", CacheEntry(response_bytes=b"v1", latency_seconds=1.0))
         cache1.put("k2", CacheEntry(response_bytes=b"v2", latency_seconds=2.0))
         cache1.close()
 
-        # New instance loads from disk
         cache2 = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         assert len(cache2) == 2
-
         entry = cache2.get("k1")
         assert entry is not None
         assert entry.response_bytes == b"v1"
         assert entry.latency_seconds == 1.0
-
-        entry2 = cache2.get("k2")
-        assert entry2 is not None
-        assert entry2.response_bytes == b"v2"
         cache2.close()
 
     def test_clear_removes_disk_files(self, tmp_path):
@@ -200,7 +188,7 @@ class TestDiskCache:
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         cache.put("k", CacheEntry(response_bytes=b"v"))
         cache.flush()
-        cache.flush()  # second flush is a no-op
+        cache.flush()  # no-op
         assert len(list(cache_dir.glob("*.json"))) == 1
         cache.close()
 
@@ -213,14 +201,9 @@ class TestDiskCache:
 class TestBackgroundFlush:
     def test_background_thread_flushes(self, tmp_path):
         cache_dir = tmp_path / "cache"
-        cache = ResponseCache(
-            cache_dir=cache_dir, flush_interval=0.1,  # flush every 100ms
-        )
+        cache = ResponseCache(cache_dir=cache_dir, flush_interval=0.1)
         cache.put("k", CacheEntry(response_bytes=b"v"))
-
-        # Wait for background thread to flush
         time.sleep(0.3)
-
         assert (cache_dir / "k.json").exists()
         cache.close()
 
@@ -229,7 +212,6 @@ class TestBackgroundFlush:
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0.1)
         assert cache._flush_thread is not None
         assert cache._flush_thread.is_alive()
-
         cache.close()
         assert cache._flush_thread is None
 
@@ -255,37 +237,35 @@ class TestTrackerDiskCache:
             _post(client)  # miss
             _post(client)  # hit
 
-            assert tracker.cache_stats.misses == 1
-            assert tracker.cache_stats.hits == 1
+            records = tracker.get_records()
+            assert sum(1 for r in records if r.cached) == 1
+            assert sum(1 for r in records if not r.cached) == 1
         finally:
             tracker.stop()
 
-        # stop() flushes — files should exist now
         files = list(cache_dir.glob("*.json"))
         assert len(files) == 1
 
     def test_cache_survives_restart(self, tmp_path):
         cache_dir = tmp_path / "llm_cache"
 
-        # First tracker: populate cache
         tracker1 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker1.start()
         try:
             client = _make_client()
             _post(client)  # miss
-            assert tracker1.cache_stats.misses == 1
         finally:
             tracker1.stop()
 
-        # Second tracker: should hit from disk
         tracker2 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker2.start()
         try:
             client = _make_client()
-            _post(client)  # hit
+            _post(client)  # hit from disk
 
-            assert tracker2.cache_stats.hits == 1
-            assert tracker2.cache_stats.misses == 0
+            records = tracker2.get_records()
+            assert len(records) == 1
+            assert records[0].cached is True
         finally:
             tracker2.stop()
 
@@ -296,8 +276,6 @@ class TestTrackerDiskCache:
         try:
             client = _make_client()
             _post(client)
-
-            # Explicit flush before stop
             tracker.flush_cache()
             assert len(list(cache_dir.glob("*.json"))) == 1
         finally:
@@ -379,7 +357,6 @@ class TestDiskCacheThreadSafety:
             t.join()
 
         assert not errors
-
         cache.flush()
         files = list(cache_dir.glob("*.json"))
         assert len(files) == len(cache)

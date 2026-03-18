@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from .cache import CacheStats, ResponseCache
+from .cache import ResponseCache
 from .interceptor import (
     _agent_id_var,
     _combo_id_var,
@@ -28,22 +28,18 @@ class LLMTracker:
     cache_dir : str or Path, optional
         Directory for persisting cache entries as JSON files on disk.
         When set, the cache is loaded from disk on init and flushed
-        periodically and on ``stop()``. Enables cache survival across
-        process restarts. If ``None`` (default), the cache is
-        in-memory only.
+        periodically and on ``stop()``. If ``None`` (default), the
+        cache is in-memory only.
 
     Usage::
 
-        tracker = LLMTracker()           # cache on by default
-        tracker = LLMTracker(cache=False) # disable caching
-        tracker = LLMTracker(cache_dir="./llm_cache")  # persist to disk
+        tracker = LLMTracker(cache_dir="./llm_cache")
         tracker.start()
 
         with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
             result = agent(input_data)
 
         usage = tracker.get_usage(combo_id="gpt4o+haiku")
-        print(tracker.cache_stats)       # CacheStats(hits=3, misses=2)
         tracker.stop()
     """
 
@@ -60,42 +56,6 @@ class LLMTracker:
             ResponseCache(cache_dir=cache_dir) if cache else None
         )
 
-    @property
-    def cache_enabled(self) -> bool:
-        """Whether response caching is currently active."""
-        return self._cache_on
-
-    @cache_enabled.setter
-    def cache_enabled(self, value: bool) -> None:
-        """Enable or disable caching at runtime."""
-        import agentproxy.interceptor as _int
-
-        # If no cache was initialized (e.g. constructed with cache=False),
-        # enabling caching would silently not work because the interceptor
-        # has no cache instance to use. Fail fast instead of misrepresenting
-        # the state.
-        if value and self._response_cache is None:
-            raise RuntimeError(
-                "Cannot enable caching: LLMTracker was constructed with "
-                "cache=False and no ResponseCache was initialized. "
-                "Create the tracker with cache=True to use caching."
-            )
-
-        self._cache_on = value
-        _int._cache_enabled = value
-
-    @property
-    def cache_stats(self) -> CacheStats:
-        """Return cache hit/miss statistics."""
-        if self._response_cache is not None:
-            return self._response_cache.stats
-        return CacheStats()
-
-    def clear_cache(self) -> None:
-        """Clear all cached responses and reset stats."""
-        if self._response_cache is not None:
-            self._response_cache.clear()
-
     def start(self) -> None:
         """Install httpx patches. Idempotent."""
         if self._active:
@@ -103,14 +63,8 @@ class LLMTracker:
         install(
             callback=self._on_call,
             cache=self._response_cache,
-            cache_enabled=self._cache_on,
         )
         self._active = True
-
-    def flush_cache(self) -> None:
-        """Flush dirty cache entries to disk immediately."""
-        if self._response_cache is not None:
-            self._response_cache.flush()
 
     def stop(self) -> None:
         """Remove httpx patches and flush cache to disk. Idempotent."""
@@ -120,6 +74,16 @@ class LLMTracker:
         if self._response_cache is not None:
             self._response_cache.close()
         self._active = False
+
+    def flush_cache(self) -> None:
+        """Flush dirty cache entries to disk immediately."""
+        if self._response_cache is not None:
+            self._response_cache.flush()
+
+    def clear_cache(self) -> None:
+        """Clear all cached responses and delete disk files."""
+        if self._response_cache is not None:
+            self._response_cache.clear()
 
     def _on_call(self, record: CallRecord) -> None:
         """Callback from interceptor — appends record thread-safely."""
@@ -196,12 +160,7 @@ class LLMTracker:
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> float:
-        """Return total latency (seconds) from cached responses.
-
-        Sums ``latency_seconds`` for all ``cached=True`` records matching
-        the given filters.  This represents the time that *would* have been
-        spent on real API calls but was saved by the cache.
-        """
+        """Return total latency (seconds) from cached responses."""
         records = self.get_records(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id
         )

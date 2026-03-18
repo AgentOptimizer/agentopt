@@ -4,8 +4,7 @@ Caches responses keyed by a hash of the request body (model + messages +
 other parameters). On a cache hit the original response bytes are returned
 directly, skipping the network round-trip.
 
-Enabled by default; can be disabled via ``LLMTracker(cache=False)`` or at
-runtime with ``tracker.cache_enabled = False``.
+Enabled by default; can be disabled via ``LLMTracker(cache=False)``.
 
 When ``cache_dir`` is provided, entries are loaded from disk on init and
 flushed back periodically (and on ``close()``) so the cache survives
@@ -30,31 +29,12 @@ _DEFAULT_FLUSH_INTERVAL = 60.0
 def _make_cache_key(request_body: dict) -> str:
     """Deterministic hash of the request payload.
 
-    We include every field that affects the response (model, messages,
-    temperature, etc.) but exclude ephemeral metadata like ``stream``.
-    Callers should already have ensured ``stream`` is False before
-    reaching the cache.
+    Includes every field that affects the response (model, messages,
+    temperature, etc.) but excludes ephemeral metadata like ``stream``.
     """
-    # Copy and remove fields that should not affect cache identity
     body = {k: v for k, v in request_body.items() if k not in ("stream",)}
     canonical = json.dumps(body, sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-@dataclass
-class CacheStats:
-    """Running counters for cache performance."""
-
-    hits: int = 0
-    misses: int = 0
-
-    @property
-    def total(self) -> int:
-        return self.hits + self.misses
-
-    @property
-    def hit_rate(self) -> float:
-        return self.hits / self.total if self.total > 0 else 0.0
 
 
 @dataclass
@@ -86,9 +66,9 @@ class CacheEntry:
 class ResponseCache:
     """Thread-safe in-memory response cache with lazy disk persistence.
 
-    Every entry is kept in memory for the lifetime of the cache (no
-    explicit clear). When ``cache_dir`` is set, entries are loaded from disk
-    on init and dirty entries are flushed to disk:
+    Every entry is kept in memory until explicitly cleared.
+    When ``cache_dir`` is set, entries are loaded from disk on init and
+    dirty entries are flushed to disk:
 
     * Periodically by a background daemon thread (every ``flush_interval``
       seconds, default 60).
@@ -116,7 +96,6 @@ class ResponseCache:
     ) -> None:
         self._store: Dict[str, CacheEntry] = {}
         self._lock = threading.Lock()
-        self.stats = CacheStats()
         self._cache_dir: Optional[Path] = Path(cache_dir) if cache_dir else None
 
         # Dirty tracking — keys that need to be written on next flush
@@ -145,7 +124,6 @@ class ResponseCache:
         self._flush_thread.start()
 
     def _flush_loop(self) -> None:
-        """Periodically flush dirty entries to disk."""
         while not self._flush_stop.wait(timeout=self._flush_interval):
             self.flush()
 
@@ -158,7 +136,6 @@ class ResponseCache:
         return self._cache_dir / f"{key}.json"
 
     def _write_entry(self, key: str, entry: CacheEntry) -> None:
-        """Write a single entry to disk (called outside the main lock)."""
         try:
             path = self._entry_path(key)
             path.write_text(json.dumps(entry.to_dict(), ensure_ascii=True))
@@ -166,22 +143,19 @@ class ResponseCache:
             logger.warning("Failed to write cache entry %s: %s", key, exc)
 
     def _remove_entry_file(self, key: str) -> None:
-        """Delete a single entry file from disk (called outside the main lock)."""
         try:
             self._entry_path(key).unlink(missing_ok=True)
         except OSError as exc:
             logger.warning("Failed to delete cache entry %s: %s", key, exc)
 
     def _load_from_disk(self) -> None:
-        """Load all cached entries from ``cache_dir`` into memory."""
         assert self._cache_dir is not None
         loaded = 0
         for path in self._cache_dir.glob("*.json"):
             key = path.stem
             try:
                 data = json.loads(path.read_text())
-                entry = CacheEntry.from_dict(data)
-                self._store[key] = entry
+                self._store[key] = CacheEntry.from_dict(data)
                 loaded += 1
             except (json.JSONDecodeError, KeyError, OSError) as exc:
                 logger.warning("Skipping corrupt cache file %s: %s", path, exc)
@@ -195,12 +169,7 @@ class ResponseCache:
     def get(self, key: str) -> Optional[CacheEntry]:
         """Look up a cached response. Returns ``None`` on miss."""
         with self._lock:
-            entry = self._store.get(key)
-            if entry is not None:
-                self.stats.hits += 1
-            else:
-                self.stats.misses += 1
-            return entry
+            return self._store.get(key)
 
     def put(self, key: str, entry: CacheEntry) -> None:
         """Store a response in the cache. Disk write is deferred to flush."""
@@ -210,12 +179,7 @@ class ResponseCache:
                 self._dirty.add(key)
 
     def flush(self) -> None:
-        """Write all dirty entries to disk.
-
-        Safe to call from any thread. The main lock is held only briefly
-        to snapshot dirty/deleted sets and entry data; actual I/O happens
-        outside the lock.
-        """
+        """Write all dirty entries to disk."""
         if self._cache_dir is None:
             return
 
@@ -230,18 +194,15 @@ class ResponseCache:
             logger.debug("Flushed %d cache entries to disk", len(to_write))
 
     def clear(self) -> None:
-        """Remove all cached entries, reset stats, and delete disk files."""
+        """Remove all cached entries and delete disk files."""
         with self._lock:
             keys_to_delete = set(self._store.keys())
             self._store.clear()
             self._dirty.clear()
-            self.stats = CacheStats()
 
-        # Delete disk files outside the lock
         if self._cache_dir is not None:
             for key in keys_to_delete:
                 self._remove_entry_file(key)
-            # Also remove any leftover files not in memory
             for path in self._cache_dir.glob("*.json"):
                 try:
                     path.unlink()

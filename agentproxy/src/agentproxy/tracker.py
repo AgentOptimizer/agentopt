@@ -26,10 +26,9 @@ class LLMTracker:
         When enabled, identical requests (same model, messages, etc.)
         return cached responses instantly without hitting the API.
     cache_dir : str or Path, optional
-        Directory for persisting cache entries as JSON files on disk.
-        When set, the cache is loaded from disk on init and flushed
-        periodically and on ``stop()``. If ``None`` (default), the
-        cache is in-memory only.
+        Directory for the SQLite cache database. Defaults to
+        ``"./.agentopt_cache"`` so the cache persists across runs.
+        Set to ``None`` to disable disk persistence (in-memory only).
 
     Usage::
 
@@ -43,10 +42,12 @@ class LLMTracker:
         tracker.stop()
     """
 
+    _DEFAULT_CACHE_DIR = ".agentopt_cache"
+
     def __init__(
         self,
         cache: bool = True,
-        cache_dir: Optional[Union[str, Path]] = None,
+        cache_dir: Optional[Union[str, Path]] = _DEFAULT_CACHE_DIR,
     ) -> None:
         self._records: List[CallRecord] = []
         self._lock = threading.Lock()

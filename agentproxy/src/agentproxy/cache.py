@@ -6,15 +6,18 @@ directly, skipping the network round-trip.
 
 Enabled by default; can be disabled via ``LLMTracker(cache=False)``.
 
-When ``cache_dir`` is provided, entries are loaded from disk on init and
-flushed back periodically (and on ``close()``) so the cache survives
-process restarts without blocking the hot path with synchronous I/O.
+When ``cache_dir`` is provided, entries are persisted to a SQLite database
+inside that directory.  The DB is loaded into memory on init and dirty
+entries are flushed back periodically (and on ``close()``) so the cache
+survives process restarts without blocking the hot path with synchronous
+I/O.
 """
 
 import base64
 import hashlib
 import json
 import logging
+import sqlite3
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,7 +26,10 @@ from typing import Dict, Optional, Set, Union
 logger = logging.getLogger(__name__)
 
 # Default interval (seconds) between automatic background flushes.
-_DEFAULT_FLUSH_INTERVAL = 60.0
+_DEFAULT_FLUSH_INTERVAL = 10.0
+
+# Name of the SQLite database file inside the cache directory.
+_DB_FILENAME = "cache.db"
 
 
 def _make_cache_key(request_body: dict) -> str:
@@ -64,11 +70,11 @@ class CacheEntry:
 
 
 class ResponseCache:
-    """Thread-safe in-memory response cache with lazy disk persistence.
+    """Thread-safe in-memory response cache with lazy SQLite persistence.
 
     Every entry is kept in memory until explicitly cleared.
-    When ``cache_dir`` is set, entries are loaded from disk on init and
-    dirty entries are flushed to disk:
+    When ``cache_dir`` is set, entries are loaded from a SQLite database on
+    init and dirty entries are flushed to the DB:
 
     * Periodically by a background daemon thread (every ``flush_interval``
       seconds, default 60).
@@ -81,7 +87,7 @@ class ResponseCache:
     Parameters
     ----------
     cache_dir : str or Path, optional
-        Directory for persisting cache entries as JSON files.
+        Directory for the SQLite cache database (``cache.db``).
         If ``None`` (default), the cache is in-memory only.
     flush_interval : float, optional
         Seconds between automatic background flushes (default 60).
@@ -108,9 +114,61 @@ class ResponseCache:
 
         if self._cache_dir is not None:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
-            self._load_from_disk()
+            self._init_db()
+            self._load_from_db()
             if flush_interval > 0:
                 self._start_flush_thread()
+
+    # ------------------------------------------------------------------
+    # SQLite helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def _db_path(self) -> Path:
+        assert self._cache_dir is not None
+        return self._cache_dir / _DB_FILENAME
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open a connection to the cache database."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    def _init_db(self) -> None:
+        """Create the cache table if it does not exist."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cache (
+                    key         TEXT PRIMARY KEY,
+                    data_json   TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _load_from_db(self) -> None:
+        """Load all entries from the SQLite database into memory."""
+        conn = self._connect()
+        try:
+            cursor = conn.execute("SELECT key, data_json FROM cache")
+            loaded = 0
+            for key, data_json in cursor:
+                try:
+                    data = json.loads(data_json)
+                    self._store[key] = CacheEntry.from_dict(data)
+                    loaded += 1
+                except (json.JSONDecodeError, KeyError) as exc:
+                    logger.warning("Skipping corrupt cache row %s: %s", key, exc)
+            if loaded:
+                logger.debug(
+                    "Loaded %d cache entries from %s", loaded, self._db_path
+                )
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Background flush thread
@@ -128,41 +186,6 @@ class ResponseCache:
             self.flush()
 
     # ------------------------------------------------------------------
-    # Disk persistence helpers
-    # ------------------------------------------------------------------
-
-    def _entry_path(self, key: str) -> Path:
-        assert self._cache_dir is not None
-        return self._cache_dir / f"{key}.json"
-
-    def _write_entry(self, key: str, entry: CacheEntry) -> None:
-        try:
-            path = self._entry_path(key)
-            path.write_text(json.dumps(entry.to_dict(), ensure_ascii=True))
-        except OSError as exc:
-            logger.warning("Failed to write cache entry %s: %s", key, exc)
-
-    def _remove_entry_file(self, key: str) -> None:
-        try:
-            self._entry_path(key).unlink(missing_ok=True)
-        except OSError as exc:
-            logger.warning("Failed to delete cache entry %s: %s", key, exc)
-
-    def _load_from_disk(self) -> None:
-        assert self._cache_dir is not None
-        loaded = 0
-        for path in self._cache_dir.glob("*.json"):
-            key = path.stem
-            try:
-                data = json.loads(path.read_text())
-                self._store[key] = CacheEntry.from_dict(data)
-                loaded += 1
-            except (json.JSONDecodeError, KeyError, OSError) as exc:
-                logger.warning("Skipping corrupt cache file %s: %s", path, exc)
-        if loaded:
-            logger.debug("Loaded %d cache entries from %s", loaded, self._cache_dir)
-
-    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -172,14 +195,14 @@ class ResponseCache:
             return self._store.get(key)
 
     def put(self, key: str, entry: CacheEntry) -> None:
-        """Store a response in the cache. Disk write is deferred to flush."""
+        """Store a response in the cache. DB write is deferred to flush."""
         with self._lock:
             self._store[key] = entry
             if self._cache_dir is not None:
                 self._dirty.add(key)
 
     def flush(self) -> None:
-        """Write all dirty entries to disk."""
+        """Write all dirty entries to the database in a single transaction."""
         if self._cache_dir is None:
             return
 
@@ -187,27 +210,36 @@ class ResponseCache:
             to_write = {k: self._store[k] for k in self._dirty if k in self._store}
             self._dirty.clear()
 
-        for key, entry in to_write.items():
-            self._write_entry(key, entry)
+        if not to_write:
+            return
 
-        if to_write:
-            logger.debug("Flushed %d cache entries to disk", len(to_write))
+        conn = self._connect()
+        try:
+            conn.executemany(
+                "INSERT OR REPLACE INTO cache (key, data_json) VALUES (?, ?)",
+                [
+                    (key, json.dumps(entry.to_dict(), ensure_ascii=True))
+                    for key, entry in to_write.items()
+                ],
+            )
+            conn.commit()
+            logger.debug("Flushed %d cache entries to database", len(to_write))
+        finally:
+            conn.close()
 
     def clear(self) -> None:
-        """Remove all cached entries and delete disk files."""
+        """Remove all cached entries and clear the database."""
         with self._lock:
-            keys_to_delete = set(self._store.keys())
             self._store.clear()
             self._dirty.clear()
 
         if self._cache_dir is not None:
-            for key in keys_to_delete:
-                self._remove_entry_file(key)
-            for path in self._cache_dir.glob("*.json"):
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM cache")
+                conn.commit()
+            finally:
+                conn.close()
 
     def close(self) -> None:
         """Flush pending writes and stop the background thread."""

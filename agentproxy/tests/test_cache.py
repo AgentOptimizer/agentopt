@@ -110,7 +110,7 @@ class TestMakeCacheKey:
 
 class TestCacheIntegration:
     def setup_method(self):
-        self.tracker = LLMTracker(cache=True)
+        self.tracker = LLMTracker(cache=True, cache_dir=None)
         self.tracker.start()
 
     def teardown_method(self):
@@ -236,7 +236,7 @@ class TestCacheThreadSafety:
         assert len(cache) == 800  # 8 threads × 100 keys
 
     def test_concurrent_tracker_with_cache(self):
-        tracker = LLMTracker(cache=True)
+        tracker = LLMTracker(cache=True, cache_dir=None)
         tracker.start()
         errors = []
 
@@ -268,7 +268,7 @@ class TestCacheThreadSafety:
 class TestCacheAsync:
     def test_async_cache_hit(self):
         async def _run():
-            tracker = LLMTracker(cache=True)
+            tracker = LLMTracker(cache=True, cache_dir=None)
             tracker.start()
             try:
                 async def _fake_async_handler(request: httpx.Request) -> httpx.Response:

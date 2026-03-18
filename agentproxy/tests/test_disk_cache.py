@@ -1,6 +1,7 @@
-"""Tests for JSON file-based disk persistence of the response cache."""
+"""Tests for SQLite-based disk persistence of the response cache."""
 
 import json
+import sqlite3
 import threading
 import time
 
@@ -8,7 +9,7 @@ import httpx
 import pytest
 
 from agentproxy import LLMTracker
-from agentproxy.cache import CacheEntry, ResponseCache
+from agentproxy.cache import CacheEntry, ResponseCache, _DB_FILENAME
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,6 +50,19 @@ def _post(client: httpx.Client, body: dict | None = None) -> httpx.Response:
     return client.post("/v1/chat/completions", json=body or _REQUEST_BODY)
 
 
+def _db_row_count(cache_dir) -> int:
+    """Return number of rows in the cache table."""
+    db_path = cache_dir / _DB_FILENAME
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(str(db_path))
+    try:
+        (count,) = conn.execute("SELECT COUNT(*) FROM cache").fetchone()
+        return count
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Unit tests: CacheEntry serialization
 # ---------------------------------------------------------------------------
@@ -81,7 +95,7 @@ class TestCacheEntrySerialization:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: ResponseCache with disk persistence (lazy flush)
+# Unit tests: ResponseCache with SQLite persistence (lazy flush)
 # ---------------------------------------------------------------------------
 
 
@@ -90,7 +104,7 @@ class TestDiskCache:
         cache_dir = tmp_path / "cache"
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         cache.put("key1", CacheEntry(response_bytes=b"data1"))
-        assert len(list(cache_dir.glob("*.json"))) == 0
+        assert _db_row_count(cache_dir) == 0
         cache.close()
 
     def test_flush_writes_dirty_entries(self, tmp_path):
@@ -99,11 +113,15 @@ class TestDiskCache:
         cache.put("key1", CacheEntry(response_bytes=b"data1", latency_seconds=0.5))
         cache.flush()
 
-        files = list(cache_dir.glob("*.json"))
-        assert len(files) == 1
-        assert files[0].stem == "key1"
+        assert _db_row_count(cache_dir) == 1
 
-        data = json.loads(files[0].read_text())
+        # Verify stored data
+        conn = sqlite3.connect(str(cache_dir / _DB_FILENAME))
+        row = conn.execute(
+            "SELECT data_json FROM cache WHERE key = ?", ("key1",)
+        ).fetchone()
+        conn.close()
+        data = json.loads(row[0])
         assert "response_bytes_b64" in data
         assert data["latency_seconds"] == 0.5
         cache.close()
@@ -113,7 +131,7 @@ class TestDiskCache:
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         cache.put("k1", CacheEntry(response_bytes=b"v1"))
         cache.close()
-        assert len(list(cache_dir.glob("*.json"))) == 1
+        assert _db_row_count(cache_dir) == 1
 
     def test_entries_loaded_from_disk(self, tmp_path):
         cache_dir = tmp_path / "cache"
@@ -131,26 +149,40 @@ class TestDiskCache:
         assert entry.latency_seconds == 1.0
         cache2.close()
 
-    def test_clear_removes_disk_files(self, tmp_path):
+    def test_clear_removes_db_entries(self, tmp_path):
         cache_dir = tmp_path / "cache"
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         cache.put("k1", CacheEntry(response_bytes=b"v1"))
         cache.put("k2", CacheEntry(response_bytes=b"v2"))
         cache.flush()
-        assert len(list(cache_dir.glob("*.json"))) == 2
+        assert _db_row_count(cache_dir) == 2
 
         cache.clear()
         assert len(cache) == 0
-        assert len(list(cache_dir.glob("*.json"))) == 0
+        assert _db_row_count(cache_dir) == 0
         cache.close()
 
-    def test_corrupt_file_skipped(self, tmp_path):
+    def test_corrupt_row_skipped(self, tmp_path):
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        valid = CacheEntry(response_bytes=b"good")
-        (cache_dir / "good.json").write_text(json.dumps(valid.to_dict()))
-        (cache_dir / "bad.json").write_text("not valid json{{{")
+        # Manually create the DB with one good and one corrupt row
+        db_path = cache_dir / _DB_FILENAME
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE cache (key TEXT PRIMARY KEY, data_json TEXT NOT NULL)"
+        )
+        good = CacheEntry(response_bytes=b"good")
+        conn.execute(
+            "INSERT INTO cache VALUES (?, ?)",
+            ("good", json.dumps(good.to_dict())),
+        )
+        conn.execute(
+            "INSERT INTO cache VALUES (?, ?)",
+            ("bad", "not valid json{{{"),
+        )
+        conn.commit()
+        conn.close()
 
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0)
         assert len(cache) == 1
@@ -161,7 +193,8 @@ class TestDiskCache:
         cache = ResponseCache()
         cache.put("k", CacheEntry(response_bytes=b"v"))
         assert cache.get("k") is not None
-        assert len(list(tmp_path.glob("**/*.json"))) == 0
+        # No DB files created anywhere
+        assert len(list(tmp_path.glob("**/*.db"))) == 0
 
     def test_cache_dir_created_automatically(self, tmp_path):
         cache_dir = tmp_path / "deep" / "nested" / "cache"
@@ -189,7 +222,7 @@ class TestDiskCache:
         cache.put("k", CacheEntry(response_bytes=b"v"))
         cache.flush()
         cache.flush()  # no-op
-        assert len(list(cache_dir.glob("*.json"))) == 1
+        assert _db_row_count(cache_dir) == 1
         cache.close()
 
     def test_flush_without_cache_dir_is_noop(self):
@@ -204,7 +237,7 @@ class TestBackgroundFlush:
         cache = ResponseCache(cache_dir=cache_dir, flush_interval=0.1)
         cache.put("k", CacheEntry(response_bytes=b"v"))
         time.sleep(0.3)
-        assert (cache_dir / "k.json").exists()
+        assert _db_row_count(cache_dir) == 1
         cache.close()
 
     def test_close_stops_background_thread(self, tmp_path):
@@ -243,8 +276,7 @@ class TestTrackerDiskCache:
         finally:
             tracker.stop()
 
-        files = list(cache_dir.glob("*.json"))
-        assert len(files) == 1
+        assert _db_row_count(cache_dir) == 1
 
     def test_cache_survives_restart(self, tmp_path):
         cache_dir = tmp_path / "llm_cache"
@@ -277,11 +309,11 @@ class TestTrackerDiskCache:
             client = _make_client()
             _post(client)
             tracker.flush_cache()
-            assert len(list(cache_dir.glob("*.json"))) == 1
+            assert _db_row_count(cache_dir) == 1
         finally:
             tracker.stop()
 
-    def test_clear_cache_clears_disk(self, tmp_path):
+    def test_clear_cache_clears_db(self, tmp_path):
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker.start()
@@ -289,10 +321,10 @@ class TestTrackerDiskCache:
             client = _make_client()
             _post(client)
             tracker.flush_cache()
-            assert len(list(cache_dir.glob("*.json"))) == 1
+            assert _db_row_count(cache_dir) == 1
 
             tracker.clear_cache()
-            assert len(list(cache_dir.glob("*.json"))) == 0
+            assert _db_row_count(cache_dir) == 0
         finally:
             tracker.stop()
 
@@ -358,8 +390,7 @@ class TestDiskCacheThreadSafety:
 
         assert not errors
         cache.flush()
-        files = list(cache_dir.glob("*.json"))
-        assert len(files) == len(cache)
+        assert _db_row_count(cache_dir) == len(cache)
         cache.close()
 
     def test_concurrent_flush_safe(self, tmp_path):

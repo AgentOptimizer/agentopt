@@ -644,12 +644,15 @@ class BaseModelSelector(ABC):
         variance = sum((s - mean) ** 2 for s in scores) / (n - 1)
         return mean, math.sqrt(variance)
 
-    @abstractmethod
     def select_best(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         """
         Select the best model combination.
+
+        Calls :meth:`_run_selection` (implemented by each subclass) and
+        ensures the tracker is stopped afterwards so that any disk cache
+        is flushed.
 
         Args:
             parallel: If True, evaluate combinations concurrently.
@@ -658,4 +661,14 @@ class BaseModelSelector(ABC):
         Returns:
             SelectionResults containing all model evaluation results.
         """
+        try:
+            return self._run_selection(parallel, max_concurrent)
+        finally:
+            self._tracker.stop()
+
+    @abstractmethod
+    def _run_selection(
+        self, parallel: bool = False, max_concurrent: int = 20,
+    ) -> SelectionResults:
+        """Subclass hook — implement the actual selection algorithm."""
         ...

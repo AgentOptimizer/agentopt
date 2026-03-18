@@ -156,34 +156,6 @@ class TestDiskCache:
         assert len(list(cache_dir.glob("*.json"))) == 0
         cache.close()
 
-    def test_eviction_deletes_on_flush(self, tmp_path):
-        cache_dir = tmp_path / "cache"
-        cache = ResponseCache(max_size=2, cache_dir=cache_dir, flush_interval=0)
-        cache.put("a", CacheEntry(response_bytes=b"1"))
-        cache.put("b", CacheEntry(response_bytes=b"2"))
-        cache.flush()
-
-        cache.put("c", CacheEntry(response_bytes=b"3"))  # evicts "a"
-        cache.flush()
-
-        assert cache.get("a") is None
-        assert not (cache_dir / "a.json").exists()
-        assert (cache_dir / "b.json").exists()
-        assert (cache_dir / "c.json").exists()
-        cache.close()
-
-    def test_max_size_enforced_on_load(self, tmp_path):
-        cache_dir = tmp_path / "cache"
-
-        cache1 = ResponseCache(cache_dir=cache_dir, flush_interval=0)
-        for i in range(5):
-            cache1.put(f"k{i}", CacheEntry(response_bytes=f"v{i}".encode()))
-        cache1.close()
-
-        cache2 = ResponseCache(max_size=3, cache_dir=cache_dir, flush_interval=0)
-        assert len(cache2) == 3
-        cache2.close()
-
     def test_corrupt_file_skipped(self, tmp_path):
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()

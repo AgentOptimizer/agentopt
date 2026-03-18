@@ -74,16 +74,6 @@ class TestResponseCache:
         assert result.response_bytes == b"hello"
         assert cache.stats.hits == 1
 
-    def test_max_size_eviction(self):
-        cache = ResponseCache(max_size=2)
-        cache.put("a", CacheEntry(response_bytes=b"1"))
-        cache.put("b", CacheEntry(response_bytes=b"2"))
-        cache.put("c", CacheEntry(response_bytes=b"3"))  # evicts "a"
-        assert cache.get("a") is None
-        assert cache.get("b") is not None
-        assert cache.get("c") is not None
-        assert len(cache) == 2
-
     def test_clear(self):
         cache = ResponseCache()
         cache.put("k", CacheEntry(response_bytes=b"v"))

@@ -25,13 +25,12 @@ class LLMTracker:
         Enable API-level response caching (default ``True``).
         When enabled, identical requests (same model, messages, etc.)
         return cached responses instantly without hitting the API.
-    cache_max_size : int
-        Maximum number of cached entries. 0 means unlimited (default).
     cache_dir : str or Path, optional
         Directory for persisting cache entries as JSON files on disk.
-        When set, the cache is loaded from disk on init and written
-        through on every store. Enables cache survival across process
-        restarts. If ``None`` (default), the cache is in-memory only.
+        When set, the cache is loaded from disk on init and flushed
+        periodically and on ``stop()``. Enables cache survival across
+        process restarts. If ``None`` (default), the cache is
+        in-memory only.
 
     Usage::
 
@@ -51,7 +50,6 @@ class LLMTracker:
     def __init__(
         self,
         cache: bool = True,
-        cache_max_size: int = 0,
         cache_dir: Optional[Union[str, Path]] = None,
     ) -> None:
         self._records: List[CallRecord] = []
@@ -59,9 +57,7 @@ class LLMTracker:
         self._active = False
         self._cache_on = cache
         self._response_cache = (
-            ResponseCache(max_size=cache_max_size, cache_dir=cache_dir)
-            if cache
-            else None
+            ResponseCache(cache_dir=cache_dir) if cache else None
         )
 
     @property

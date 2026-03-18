@@ -17,7 +17,6 @@ import hashlib
 import json
 import logging
 import threading
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Set, Union
@@ -85,11 +84,11 @@ class CacheEntry:
 
 
 class ResponseCache:
-    """Thread-safe in-memory LRU response cache with lazy disk persistence.
+    """Thread-safe in-memory response cache with lazy disk persistence.
 
-    The in-memory ``OrderedDict`` is the source of truth for lookups.
-    When ``cache_dir`` is set, entries are loaded from disk on init and
-    dirty entries are flushed to disk:
+    Every entry is kept in memory for the lifetime of the cache (no
+    explicit clear). When ``cache_dir`` is set, entries are loaded from disk
+    on init and dirty entries are flushed to disk:
 
     * Periodically by a background daemon thread (every ``flush_interval``
       seconds, default 60).
@@ -97,12 +96,10 @@ class ResponseCache:
     * Automatically when :meth:`close` is called (which ``LLMTracker.stop``
       calls for you).
 
-    This keeps ``put`` and ``get`` lock-free of disk I/O.
+    This keeps ``put`` and ``get`` free of disk I/O.
 
     Parameters
     ----------
-    max_size : int, optional
-        Maximum number of entries. 0 means unlimited (default).
     cache_dir : str or Path, optional
         Directory for persisting cache entries as JSON files.
         If ``None`` (default), the cache is in-memory only.
@@ -114,19 +111,16 @@ class ResponseCache:
 
     def __init__(
         self,
-        max_size: int = 0,
         cache_dir: Optional[Union[str, Path]] = None,
         flush_interval: float = _DEFAULT_FLUSH_INTERVAL,
     ) -> None:
-        self._store: OrderedDict[str, CacheEntry] = OrderedDict()
+        self._store: Dict[str, CacheEntry] = {}
         self._lock = threading.Lock()
-        self._max_size = max_size
         self.stats = CacheStats()
         self._cache_dir: Optional[Path] = Path(cache_dir) if cache_dir else None
 
-        # Dirty tracking — keys that need to be written/deleted on next flush
+        # Dirty tracking — keys that need to be written on next flush
         self._dirty: Set[str] = set()
-        self._deleted: Set[str] = set()
 
         # Background flush thread
         self._flush_interval = flush_interval
@@ -182,10 +176,7 @@ class ResponseCache:
         """Load all cached entries from ``cache_dir`` into memory."""
         assert self._cache_dir is not None
         loaded = 0
-        # Load files ordered by modification time so that the most recent
-        # entries end up last in the OrderedDict for LRU-style eviction.
-        paths = sorted(self._cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
-        for path in paths:
+        for path in self._cache_dir.glob("*.json"):
             key = path.stem
             try:
                 data = json.loads(path.read_text())
@@ -194,11 +185,6 @@ class ResponseCache:
                 loaded += 1
             except (json.JSONDecodeError, KeyError, OSError) as exc:
                 logger.warning("Skipping corrupt cache file %s: %s", path, exc)
-        # Enforce max_size: keep only the most recent entries
-        if self._max_size > 0:
-            while len(self._store) > self._max_size:
-                evicted_key, _ = self._store.popitem(last=False)
-                self._deleted.add(evicted_key)
         if loaded:
             logger.debug("Loaded %d cache entries from %s", loaded, self._cache_dir)
 
@@ -211,7 +197,6 @@ class ResponseCache:
         with self._lock:
             entry = self._store.get(key)
             if entry is not None:
-                self._store.move_to_end(key)
                 self.stats.hits += 1
             else:
                 self.stats.misses += 1
@@ -220,22 +205,12 @@ class ResponseCache:
     def put(self, key: str, entry: CacheEntry) -> None:
         """Store a response in the cache. Disk write is deferred to flush."""
         with self._lock:
-            if key in self._store:
-                self._store.move_to_end(key)
-                self._store[key] = entry
-            else:
-                if self._max_size > 0 and len(self._store) >= self._max_size:
-                    evicted_key, _ = self._store.popitem(last=False)
-                    self._dirty.discard(evicted_key)
-                    if self._cache_dir is not None:
-                        self._deleted.add(evicted_key)
-                self._store[key] = entry
+            self._store[key] = entry
             if self._cache_dir is not None:
                 self._dirty.add(key)
-                self._deleted.discard(key)
 
     def flush(self) -> None:
-        """Write all dirty entries to disk and delete evicted files.
+        """Write all dirty entries to disk.
 
         Safe to call from any thread. The main lock is held only briefly
         to snapshot dirty/deleted sets and entry data; actual I/O happens
@@ -246,20 +221,13 @@ class ResponseCache:
 
         with self._lock:
             to_write = {k: self._store[k] for k in self._dirty if k in self._store}
-            to_delete = set(self._deleted)
             self._dirty.clear()
-            self._deleted.clear()
 
-        # Disk I/O outside the lock
         for key, entry in to_write.items():
             self._write_entry(key, entry)
-        for key in to_delete:
-            self._remove_entry_file(key)
 
-        if to_write or to_delete:
-            logger.debug(
-                "Flushed cache: %d written, %d deleted", len(to_write), len(to_delete),
-            )
+        if to_write:
+            logger.debug("Flushed %d cache entries to disk", len(to_write))
 
     def clear(self) -> None:
         """Remove all cached entries, reset stats, and delete disk files."""
@@ -267,7 +235,6 @@ class ResponseCache:
             keys_to_delete = set(self._store.keys())
             self._store.clear()
             self._dirty.clear()
-            self._deleted.clear()
             self.stats = CacheStats()
 
         # Delete disk files outside the lock

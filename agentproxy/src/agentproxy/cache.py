@@ -206,7 +206,6 @@ class ResponseCache:
 
         with self._lock:
             to_write = {k: self._store[k] for k in self._dirty if k in self._store}
-            self._dirty.clear()
 
         if not to_write:
             return
@@ -222,6 +221,9 @@ class ResponseCache:
             )
             conn.commit()
             logger.debug("Flushed %d cache entries to database", len(to_write))
+            # Dirty keys are only cleared on success. If the write fails, they stay in _dirty for the next retry.
+            with self._lock:
+                self._dirty -= to_write.keys()
         finally:
             conn.close()
 

@@ -34,6 +34,10 @@ _installed = False
 # Cache instance (None means caching disabled)
 _cache: Optional[ResponseCache] = None
 
+# Warn-once flags for streaming limitations
+_streaming_cache_warned: bool = False
+_streaming_tokens_warned: bool = False
+
 # URL path patterns that indicate LLM API endpoints
 _LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages", "/v1/responses")
 
@@ -254,7 +258,14 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                 )
                 return cached_response
         else:
-            warnings.warn("Caching does not support streaming")
+            global _streaming_cache_warned
+            if not _streaming_cache_warned:
+                warnings.warn(
+                    "Caching does not support streaming",
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                _streaming_cache_warned = True
 
         t0 = time.monotonic()
         response = await _original_async_send(self, request, stream=stream, **kwargs)
@@ -269,7 +280,14 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                 except Exception:
                     pass
         else:
-            warnings.warn("Token tracking does not support streaming")
+            global _streaming_tokens_warned
+            if not _streaming_tokens_warned:
+                warnings.warn(
+                    "Token tracking does not support streaming",
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                _streaming_tokens_warned = True
 
         return response
 

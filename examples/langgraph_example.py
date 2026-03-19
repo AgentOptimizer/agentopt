@@ -6,6 +6,10 @@ Prerequisites:
     2. Set OPENAI_API_KEY environment variable
 """
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
 from typing import Annotated, Any, Dict, TypedDict
 
@@ -140,8 +144,6 @@ def main():
         parallel=args.parallel, max_concurrent=args.max_concurrent
     )
     results.print_summary()
-
-    print(f"\nCache stats: {selector._tracker.cache_stats}")
 
     best = results.get_best_combo()
     if best:

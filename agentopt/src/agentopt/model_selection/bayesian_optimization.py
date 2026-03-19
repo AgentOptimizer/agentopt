@@ -41,6 +41,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         n_iterations: Optional[int] = None,
         n_initial_random: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        tracker=None,
     ) -> None:
         super().__init__(
             agent_fn=agent_fn,
@@ -49,12 +50,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             dataset=dataset,
             invoke_fn=invoke_fn,
             model_prices=model_prices,
+            tracker=tracker,
         )
         _require_botorch()
         self.n_iterations = n_iterations
         self.n_initial_random = n_initial_random
 
-    def select_best(
+    def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         assert (

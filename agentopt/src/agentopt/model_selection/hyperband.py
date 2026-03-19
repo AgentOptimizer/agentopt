@@ -64,9 +64,10 @@ class HyperbandModelSelector(BaseModelSelector):
     ) -> SelectionResults:
         if parallel:
             return asyncio.run(self._select_async(max_concurrent))
-        return self._select_sequential()
+        # Sequential brackets/stages, but evaluate questions concurrently within each combo.
+        return asyncio.run(self._select_sequential_async(max_concurrent))
 
-    def _select_sequential(self) -> SelectionResults:
+    async def _select_sequential_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
         total_configs = len(all_combos)
@@ -77,8 +78,9 @@ class HyperbandModelSelector(BaseModelSelector):
 
         print(f"\n{'='*60}")
         print(
-            f"Hyperband (sequential): {total_configs} combinations, "
-            f"max_resource={self.max_resource}, eta={self.reduction_factor}"
+            f"Hyperband (sequential combos, parallel questions): {total_configs} combinations, "
+            f"max_resource={self.max_resource}, eta={self.reduction_factor}, "
+            f"max {max_concurrent} concurrent per combo"
         )
         print(f"  s_max={self._s_max}, B={self._B}")
         print(f"{'='*60}")
@@ -113,8 +115,11 @@ class HyperbandModelSelector(BaseModelSelector):
                 for idx in current_indices:
                     combo = all_combos[idx]
                     combo_name = self._combo_name(combo)
-                    scores, latencies, dp_ids = self._evaluate_combo(
-                        combo, batch, label=combo_name
+                    scores, latencies, dp_ids = await self._evaluate_combo_async(
+                        combo,
+                        batch,
+                        label=combo_name,
+                        max_concurrent=max_concurrent,
                     )
                     combo_scores[idx].extend(scores)
                     combo_latencies[idx].extend(latencies)

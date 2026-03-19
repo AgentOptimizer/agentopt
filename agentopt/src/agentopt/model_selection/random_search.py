@@ -49,7 +49,8 @@ class RandomSearchModelSelector(BaseModelSelector):
     ) -> SelectionResults:
         if parallel:
             return asyncio.run(self._select_async(max_concurrent))
-        return self._select_sequential()
+        # Sequential combos, but evaluate questions concurrently within each combo.
+        return asyncio.run(self._select_sequential_async(max_concurrent))
 
     def _get_sampled_combinations(
         self,
@@ -68,7 +69,7 @@ class RandomSearchModelSelector(BaseModelSelector):
         sampled = [all_combos[i] for i in sampled_indices]
         return all_combos, sampled
 
-    def _select_sequential(self) -> SelectionResults:
+    async def _select_sequential_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos, sampled = self._get_sampled_combinations()
 
         all_results: List[ModelResult] = []
@@ -79,9 +80,10 @@ class RandomSearchModelSelector(BaseModelSelector):
 
         print(f"\n{'='*60}")
         print(
-            f"Random search (sequential): "
+            f"Random search (sequential combos, parallel questions): "
             f"{len(sampled)}/{len(all_combos)} combinations "
-            f"({self.sample_fraction:.1%} sample)"
+            f"({self.sample_fraction:.1%} sample), "
+            f"max {max_concurrent} concurrent per combo"
         )
         print(f"{'='*60}\n")
 
@@ -90,8 +92,11 @@ class RandomSearchModelSelector(BaseModelSelector):
             print(f"  [{idx}/{len(sampled)}] Evaluating: {combo_name}")
 
             try:
-                scores, latencies, dp_ids = self._evaluate_combo(
-                    combo, self.dataset, label=combo_name
+                scores, latencies, dp_ids = await self._evaluate_combo_async(
+                    combo,
+                    self.dataset,
+                    label=combo_name,
+                    max_concurrent=max_concurrent,
                 )
                 input_tokens, output_tokens = self._fetch_tokens(combo_name)
                 accuracy, _ = self._compute_stats(scores)

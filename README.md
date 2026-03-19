@@ -18,7 +18,7 @@ agentopt/                    # repo root
 ├── agentopt/                # Model selection optimizer
 │   ├── pyproject.toml       # depends on pydantic + agentproxy
 │   └── src/agentopt/
-│       ├── model_selection/ # 6 selection algorithms
+│       ├── model_selection/ # 7 selection algorithms
 │       ├── model_topology.py
 │       ├── model_price.py
 │       └── base_models.py
@@ -216,8 +216,39 @@ selector = ModelSelector(
 | `ArmEliminationModelSelector` | Successive elimination via statistical dominance |
 | `HyperbandModelSelector` | Multi-bracket successive halving |
 | `BayesianOptimizationModelSelector` | GP-based optimization (requires `torch`, `botorch`) |
+| `LMProposalModelSelector` | Uses a proposer LLM to shortlist combinations before evaluation |
 
 All selectors support `select_best(parallel=True, max_concurrent=20)` for async evaluation.
+
+### LLM proposal selector
+
+`LMProposalModelSelector` keeps the same input contract (`agent_fn`, `models`, `dataset`, `eval_fn`) and adds a proposer stage:
+
+1. Builds a prompt with candidate model indices per node (in order) + dataset preview.
+2. Calls proposer LLM (default `gpt-4o-mini`) asking for strict JSON:
+   `{"combinations": [[idx_node0, idx_node1, ...], ...]}`.
+3. Validates/deduplicates proposer output.
+4. Adds fallback baseline and exploration combinations.
+5. Evaluates only the selected subset.
+
+```python
+from agentopt import LMProposalModelSelector
+
+selector = LMProposalModelSelector(
+    agent_fn=agent_maker,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    proposer_model="gpt-4o-mini",
+    objective="accuracy_then_latency",
+    max_combinations=12,
+    min_include_baselines=1,
+    exploration_fraction=0.2,
+)
+
+results = selector.select_best(parallel=True)
+print(selector.last_proposal_stats)  # includes proposer_hit and source breakdown
+```
 
 ### Results API
 

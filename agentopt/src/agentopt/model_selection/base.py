@@ -316,6 +316,7 @@ class BaseModelSelector(ABC):
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        node_descriptions: Optional[Dict[str, str]] = None,
         tracker: Optional[LLMTracker] = None,
     ) -> None:
         """
@@ -338,6 +339,9 @@ class BaseModelSelector(ABC):
             model_prices: Optional custom pricing overrides. Maps model names
                 to dicts with ``'input_price'`` and ``'output_price'`` keys
                 ($/MTok).
+            node_descriptions: Optional dict mapping node names to human-readable
+                descriptions of what each node does, e.g.
+                ``{"planner": "Decomposes queries into sub-tasks"}``.
             tracker: Optional :class:`LLMTracker` instance. If not provided,
                 one is created and started automatically.
         """
@@ -358,6 +362,8 @@ class BaseModelSelector(ABC):
         self._models = models
         self._node_names = list(models.keys())
         self.invoke_fn = invoke_fn
+        self.model_prices = model_prices
+        self.node_descriptions = node_descriptions
 
         if tracker is not None:
             self._tracker = tracker

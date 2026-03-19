@@ -23,6 +23,7 @@ from agentopt import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     HyperbandModelSelector,
+    LMProposalModelSelector,
     RandomSearchModelSelector,
 )
 
@@ -32,6 +33,7 @@ SELECTORS = {
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "hyperband": HyperbandModelSelector,
+    "lm_proposal": LMProposalModelSelector,
 }
 
 try:

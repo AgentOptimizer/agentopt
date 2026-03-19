@@ -22,6 +22,7 @@ from agentopt import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     HyperbandModelSelector,
+    LMProposalModelSelector,
     RandomSearchModelSelector,
 )
 from agentproxy import LLMTracker, ResponseCache
@@ -32,6 +33,7 @@ SELECTORS = {
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "hyperband": HyperbandModelSelector,
+    "lm_proposal": LMProposalModelSelector,
 }
 
 try:

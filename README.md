@@ -239,14 +239,31 @@ selector = LMProposalModelSelector(
     eval_fn=eval_fn,
     dataset=dataset,
     proposer_model="gpt-4o-mini",
-    objective="accuracy_then_latency",
     max_combinations=12,
-    min_include_baselines=1,
-    exploration_fraction=0.2,
 )
 
 results = selector.select_best(parallel=True)
 print(selector.last_proposal_stats)  # includes proposer_hit and source breakdown
+```
+
+Advanced tuning is optional:
+
+```python
+from agentopt import LMProposalModelSelector, LMProposalTuning
+
+selector = LMProposalModelSelector(
+    agent_fn=agent_maker,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    tuning=LMProposalTuning(
+        objective="accuracy_then_latency",
+        min_include_baselines=1,
+        exploration_fraction=0.2,
+        dataset_preview_size=5,
+        seed=7,
+    ),
+)
 ```
 
 ### Results API

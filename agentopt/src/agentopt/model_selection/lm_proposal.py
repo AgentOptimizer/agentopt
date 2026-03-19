@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import random
+import warnings
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
@@ -29,6 +30,16 @@ class _ProposalResponse(BaseModel):
     combinations: List[List[int]] = Field(default_factory=list)
 
 
+class LMProposalTuning(BaseModel):
+    """Optional advanced knobs for LMProposalModelSelector."""
+
+    objective: str = "accuracy_then_latency"
+    min_include_baselines: int = 1
+    exploration_fraction: float = 0.2
+    dataset_preview_size: int = 5
+    seed: Optional[int] = None
+
+
 class LMProposalModelSelector(BaseModelSelector):
     """Model selector where an LLM proposes promising combinations first."""
 
@@ -40,14 +51,11 @@ class LMProposalModelSelector(BaseModelSelector):
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
         proposer_model: str = "gpt-4o-mini",
-        proposer_client: Any = None,
-        objective: str = "accuracy_then_latency",
         max_combinations: int = 12,
-        min_include_baselines: int = 1,
-        exploration_fraction: float = 0.2,
-        dataset_preview_size: int = 5,
-        seed: Optional[int] = None,
+        proposer_client: Any = None,
+        tuning: Optional[LMProposalTuning] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        **legacy_kwargs: Any,
     ) -> None:
         super().__init__(
             agent_fn=agent_fn,
@@ -59,20 +67,47 @@ class LMProposalModelSelector(BaseModelSelector):
         )
         if max_combinations < 1:
             raise ValueError("max_combinations must be >= 1.")
-        if min_include_baselines < 0:
+        if tuning is None:
+            tuning = LMProposalTuning()
+        if not isinstance(tuning, LMProposalTuning):
+            raise TypeError("tuning must be an LMProposalTuning instance.")
+
+        # Backward-compatible path for previous keyword args.
+        legacy_mapping = {
+            "objective": "objective",
+            "min_include_baselines": "min_include_baselines",
+            "exploration_fraction": "exploration_fraction",
+            "dataset_preview_size": "dataset_preview_size",
+            "seed": "seed",
+        }
+        if legacy_kwargs:
+            updates: Dict[str, Any] = {}
+            unknown = [k for k in legacy_kwargs if k not in legacy_mapping]
+            if unknown:
+                unknown_args = ", ".join(sorted(unknown))
+                raise TypeError(f"Unexpected keyword argument(s): {unknown_args}")
+            for old_key, new_key in legacy_mapping.items():
+                if old_key in legacy_kwargs:
+                    updates[new_key] = legacy_kwargs[old_key]
+            tuning = tuning.model_copy(update=updates)
+            warnings.warn(
+                "Passing objective/min_include_baselines/exploration_fraction/"
+                "dataset_preview_size/seed directly is deprecated. "
+                "Use tuning=LMProposalTuning(...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if tuning.min_include_baselines < 0:
             raise ValueError("min_include_baselines must be >= 0.")
-        if not 0.0 <= exploration_fraction <= 1.0:
+        if not 0.0 <= tuning.exploration_fraction <= 1.0:
             raise ValueError("exploration_fraction must be in [0, 1].")
-        if dataset_preview_size < 1:
+        if tuning.dataset_preview_size < 1:
             raise ValueError("dataset_preview_size must be >= 1.")
 
         self.proposer_model = proposer_model
-        self.objective = objective
         self.max_combinations = max_combinations
-        self.min_include_baselines = min_include_baselines
-        self.exploration_fraction = exploration_fraction
-        self.dataset_preview_size = dataset_preview_size
-        self.seed = seed
+        self.tuning = tuning
 
         # Introspection hooks for users.
         self.last_proposal_stats: Dict[str, Any] = {}
@@ -115,7 +150,7 @@ class LMProposalModelSelector(BaseModelSelector):
 
     def _dataset_preview(self) -> List[Dict[str, Any]]:
         preview: List[Dict[str, Any]] = []
-        for input_data, expected in list(self.dataset)[: self.dataset_preview_size]:
+        for input_data, expected in list(self.dataset)[: self.tuning.dataset_preview_size]:
             preview.append(
                 {"input": self._safe_json(input_data), "expected": str(expected)}
             )
@@ -134,7 +169,7 @@ class LMProposalModelSelector(BaseModelSelector):
 
     def _proposal_cache_key(self, preview: List[Dict[str, Any]]) -> str:
         payload = {
-            "objective": self.objective,
+            "objective": self.tuning.objective,
             "max_combinations": self.max_combinations,
             "proposer_model": self.proposer_model,
             "node_names": self._node_names,
@@ -163,7 +198,7 @@ class LMProposalModelSelector(BaseModelSelector):
 
         return (
             "Choose promising model combinations to evaluate for a multi-node agent.\n"
-            f"Objective: {self.objective}\n\n"
+            f"Objective: {self.tuning.objective}\n\n"
             "Nodes and candidate models (ordered):\n"
             f"{json.dumps(proxies, ensure_ascii=True)}\n\n"
             "Dataset preview (input + expected):\n"
@@ -215,7 +250,6 @@ class LMProposalModelSelector(BaseModelSelector):
             ):
                 response = self.proposer_client.beta.chat.completions.parse(
                     model=self.proposer_model,
-                    temperature=0.0,
                     messages=[
                         {
                             "role": "system",
@@ -235,7 +269,6 @@ class LMProposalModelSelector(BaseModelSelector):
                 # Fallback for custom clients: keep behavior but still parse through pydantic.
                 response = self.proposer_client.chat.completions.create(
                     model=self.proposer_model,
-                    temperature=0.0,
                     response_format={"type": "json_object"},
                     messages=[
                         {
@@ -314,7 +347,7 @@ class LMProposalModelSelector(BaseModelSelector):
 
         for combo in self._baseline_indices(all_index_combos):
             if len([1 for s in source_by_idx.values() if s == "baseline"]) >= min(
-                self.min_include_baselines, self.max_combinations
+                self.tuning.min_include_baselines, self.max_combinations
             ):
                 break
             add(combo, "baseline")
@@ -323,12 +356,12 @@ class LMProposalModelSelector(BaseModelSelector):
         for combo in proposed:
             add(combo, "proposed")
 
-        rng = random.Random(self.seed)
+        rng = random.Random(self.tuning.seed)
         remaining = [c for c in all_index_combos if c not in source_by_idx]
         slots_left = self.max_combinations - len(selected)
         explore_target = min(
             slots_left,
-            max(0, math.ceil(self.max_combinations * self.exploration_fraction)),
+            max(0, math.ceil(self.max_combinations * self.tuning.exploration_fraction)),
             len(remaining),
         )
         if explore_target > 0:

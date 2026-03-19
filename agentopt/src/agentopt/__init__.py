@@ -16,6 +16,7 @@ from .model_selection import (
     HillClimbingModelSelector,
     HyperbandModelSelector,
     LMProposalModelSelector,
+    LMProposalTuning,
     DatapointResult,
     ModelResult,
     RandomSearchModelSelector,
@@ -44,6 +45,7 @@ __all__ = [
     "ArmEliminationModelSelector",
     "HyperbandModelSelector",
     "LMProposalModelSelector",
+    "LMProposalTuning",
     "BayesianOptimizationModelSelector",
     # Result types
     "DatapointResult",

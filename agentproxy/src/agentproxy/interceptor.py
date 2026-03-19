@@ -219,7 +219,8 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
             if cache_hit is not None:
                 cached_response, original_latency = cache_hit
                 _try_record(
-                    request, cached_response, original_latency, callback, cached=True
+            if _cache is not None:
+                warnings.warn("Caching does not support streaming")
                 )
                 return cached_response
         else:
@@ -254,7 +255,8 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
             if cache_hit is not None:
                 cached_response, original_latency = cache_hit
                 _try_record(
-                    request, cached_response, original_latency, callback, cached=True
+            if _cache is not None:
+                warnings.warn("Caching does not support streaming")
                 )
                 return cached_response
         else:

@@ -5,6 +5,7 @@ Uses a BoTorch MixedSingleTaskGP with categorical inputs to iteratively
 select promising combinations via Expected Improvement on accuracy.
 """
 
+import asyncio
 import itertools
 import logging
 import random
@@ -61,10 +62,9 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
-        assert (
-            not parallel
-        ), "BayesianOptimizationModelSelector does not support parallel evaluation."
+        return asyncio.run(self._run_selection_async(max_concurrent))
 
+    async def _run_selection_async(self, max_concurrent: int = 20,) -> SelectionResults:
         import torch
         from botorch.acquisition.analytic import LogExpectedImprovement
         from botorch.fit import fit_gpytorch_mll
@@ -96,13 +96,16 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         def index_combo_to_dict(combo: Tuple[int, ...]) -> Dict[str, ModelCandidate]:
             return {node_names[i]: candidate_lists[i][combo[i]] for i in range(n_nodes)}
 
-        def evaluate_combo(
+        async def evaluate_combo(
             combo: Tuple[int, ...]
         ) -> Tuple[float, float, Dict[str, int], Dict[str, int], List[DatapointResult]]:
             combo_dict = index_combo_to_dict(combo)
             combo_name = self._combo_name(combo_dict)
-            scores, latencies, dp_ids = self._evaluate_combo(
-                combo_dict, self.dataset, label=combo_name
+            scores, latencies, dp_ids = await self._evaluate_combo_async(
+                combo_dict,
+                self.dataset,
+                label=combo_name,
+                max_concurrent=max_concurrent,
             )
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
@@ -134,7 +137,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     input_tokens,
                     output_tokens,
                     dp_results,
-                ) = evaluate_combo(combo)
+                ) = await evaluate_combo(combo)
                 X_list.append(list(combo))
                 Y_list.append(accuracy)
                 result = self._make_result(
@@ -180,7 +183,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                         input_tokens,
                         output_tokens,
                         dp_results,
-                    ) = evaluate_combo(combo)
+                    ) = await evaluate_combo(combo)
                     X_list.append(list(combo))
                     Y_list.append(accuracy)
                     result = self._make_result(
@@ -227,34 +230,34 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             topk = ei.squeeze(-1).topk(k=k).indices.tolist()
             batch = [unseen[i] for i in topk]
 
-            for j, combo in enumerate(batch, 1):
+            for combo in batch:
                 evaluated.add(combo)
+
+            batch_results = await asyncio.gather(
+                *(evaluate_combo(combo) for combo in batch), return_exceptions=True,
+            )
+
+            for j, (combo, res) in enumerate(zip(batch, batch_results), 1):
                 combo_dict = index_combo_to_dict(combo)
                 combo_name = self._combo_name(combo_dict)
-                try:
-                    (
-                        accuracy,
-                        latency,
-                        input_tokens,
-                        output_tokens,
-                        dp_results,
-                    ) = evaluate_combo(combo)
-                    X_list.append(list(combo))
-                    Y_list.append(accuracy)
-                    result = self._make_result(
-                        model_name=combo_name,
-                        accuracy=accuracy,
-                        latency_seconds=latency,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        attribute="combination",
-                        is_best=False,
-                        datapoint_results=dp_results,
-                    )
-                    all_results.append(result)
-                    print(f"  [BO {it+1}/{n_iterations} | {j}/{len(batch)}] {result}")
-                except Exception as e:
-                    logger.warning("[BO] [%s] failed: %s", combo_name, e)
+                if isinstance(res, Exception):
+                    logger.warning("[BO] [%s] failed: %s", combo_name, res)
+                    continue
+                accuracy, latency, input_tokens, output_tokens, dp_results = res
+                X_list.append(list(combo))
+                Y_list.append(accuracy)
+                result = self._make_result(
+                    model_name=combo_name,
+                    accuracy=accuracy,
+                    latency_seconds=latency,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    attribute="combination",
+                    is_best=False,
+                    datapoint_results=dp_results,
+                )
+                all_results.append(result)
+                print(f"  [BO {it+1}/{n_iterations} | {j}/{len(batch)}] {result}")
 
         # 3) Determine best
         best_info = self._find_best(all_results)

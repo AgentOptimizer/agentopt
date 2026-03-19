@@ -5,6 +5,7 @@ Uses the model topology (quality / speed rankings) to define
 neighbours so that each iteration makes an informed single-step move.
 """
 
+import asyncio
 import random
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -70,7 +71,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             return dict(random.choice(unseen))
         return None
 
-    def _evaluate_cached(
+    async def _evaluate_cached_async(
         self, combo: Dict[str, ModelCandidate], max_concurrent: int
     ) -> Tuple[
         str, float, float, Dict[str, int], Dict[str, int], List[DatapointResult], bool
@@ -81,8 +82,8 @@ class HillClimbingModelSelector(BaseModelSelector):
             acc, lat, in_tok, out_tok, dp_results = self._eval_cache[combo_name]
             return combo_name, acc, lat, in_tok, out_tok, dp_results, True
 
-        scores, latencies, dp_ids = self._evaluate_combo(
-            combo, self.dataset, label=combo_name
+        scores, latencies, dp_ids = await self._evaluate_combo_async(
+            combo, self.dataset, label=combo_name, max_concurrent=max_concurrent
         )
         input_tokens, output_tokens = self._fetch_tokens(combo_name)
         accuracy, _ = self._compute_stats(scores)
@@ -185,7 +186,7 @@ class HillClimbingModelSelector(BaseModelSelector):
     # Single restart
     # ------------------------------------------------------------------
 
-    def _hill_climb_once(
+    async def _hill_climb_once(
         self, seen: Set[str], max_concurrent: int
     ) -> Optional[Tuple[Dict[str, ModelCandidate], float, float, List[ModelResult]]]:
         """Run one hill-climbing pass from a random starting point."""
@@ -214,7 +215,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                 output_tokens,
                 dp_results,
                 cached,
-            ) = self._evaluate_cached(combo, max_concurrent=max_concurrent)
+            ) = await self._evaluate_cached_async(combo, max_concurrent=max_concurrent)
 
             result = self._make_result(
                 model_name=combo_name,
@@ -290,10 +291,15 @@ class HillClimbingModelSelector(BaseModelSelector):
             best_n_acc = float("-inf")
             best_n_lat = float("inf")
 
-            for neighbor in neighbors:
-                n_name, n_acc, n_lat, *_ = self._evaluate_cached(
-                    neighbor, max_concurrent=max_concurrent
+            eval_results = await asyncio.gather(
+                *(
+                    self._evaluate_cached_async(n, max_concurrent=max_concurrent)
+                    for n in neighbors
                 )
+            )
+
+            for neighbor, eval_result in zip(neighbors, eval_results):
+                n_name, n_acc, n_lat, *_ = eval_result
                 seen.add(n_name)
 
                 better = False
@@ -329,10 +335,9 @@ class HillClimbingModelSelector(BaseModelSelector):
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
-        assert (
-            not parallel
-        ), "HillClimbingModelSelector does not support parallel evaluation."
+        return asyncio.run(self._run_selection_async(max_concurrent))
 
+    async def _run_selection_async(self, max_concurrent: int = 20,) -> SelectionResults:
         all_results: List[ModelResult] = []
         global_best_combo: Optional[Dict[str, ModelCandidate]] = None
         global_best_accuracy = float("-inf")
@@ -352,7 +357,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         for restart in range(self.num_restarts):
             print(f"--- Restart {restart + 1}/{self.num_restarts} ---")
 
-            result = self._hill_climb_once(seen, max_concurrent=max_concurrent)
+            result = await self._hill_climb_once(seen, max_concurrent=max_concurrent)
             if result is None:
                 print("  All combinations exhausted. Stopping.\n")
                 break

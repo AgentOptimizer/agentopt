@@ -93,8 +93,9 @@ class LMProposalModelSelector(BaseModelSelector):
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         if parallel:
-            raise NotImplementedError(
-                "LMProposalModelSelector does not support parallel evaluation."
+            logger.warning(
+                "LMProposalModelSelector received parallel=True, but only a single "
+                "combination is evaluated; proceeding with sequential evaluation."
             )
         combo_idx = self._ask_proposer()
         if combo_idx is None:

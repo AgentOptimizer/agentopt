@@ -29,6 +29,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         growth_factor: float = 2.0,
         confidence: float = 1.0,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        tracker=None,
     ) -> None:
         super().__init__(
             agent_fn=agent_fn,
@@ -37,6 +38,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
             dataset=dataset,
             invoke_fn=invoke_fn,
             model_prices=model_prices,
+            tracker=tracker,
         )
         n = len(self.dataset)
         if n_initial is None:
@@ -46,7 +48,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         self.growth_factor = growth_factor
         self.confidence = confidence
 
-    def select_best(
+    def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         if parallel:

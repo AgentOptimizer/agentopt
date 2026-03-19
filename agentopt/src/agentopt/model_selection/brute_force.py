@@ -25,6 +25,7 @@ class BruteForceModelSelector(BaseModelSelector):
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        tracker=None,
     ) -> None:
         super().__init__(
             agent_fn=agent_fn,
@@ -33,9 +34,10 @@ class BruteForceModelSelector(BaseModelSelector):
             dataset=dataset,
             invoke_fn=invoke_fn,
             model_prices=model_prices,
+            tracker=tracker,
         )
 
-    def select_best(
+    def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         if parallel:

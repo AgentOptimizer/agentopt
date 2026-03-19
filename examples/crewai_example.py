@@ -6,7 +6,12 @@ Prerequisites:
     2. Set OPENAI_API_KEY environment variable
 """
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
+import inspect
 from typing import Any, Dict
 
 from crewai import Agent, Crew, LLM, Task
@@ -16,6 +21,7 @@ from agentopt import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     HyperbandModelSelector,
+    LMProposalModelSelector,
     RandomSearchModelSelector,
 )
 
@@ -25,6 +31,7 @@ SELECTORS = {
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "hyperband": HyperbandModelSelector,
+    "lm_proposal": LMProposalModelSelector,
 }
 
 try:
@@ -92,6 +99,13 @@ dataset = [
 ]
 
 
+def _filter_selector_kwargs(
+    selector_cls, selector_kwargs: Dict[str, Any]
+) -> Dict[str, Any]:
+    params = inspect.signature(selector_cls.__init__).parameters
+    return {k: v for k, v in selector_kwargs.items() if k in params}
+
+
 def main():
     parser = argparse.ArgumentParser(description="CrewAI model selection example")
     parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
@@ -101,6 +115,27 @@ def main():
         "--use-instances",
         action="store_true",
         help="Pass pre-built LLM instances instead of model name strings",
+    )
+    parser.add_argument(
+        "--sample-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of combinations to evaluate when --selector=random",
+    )
+    parser.add_argument(
+        "--reduction-factor",
+        type=float,
+        default=3.0,
+        help="Reduction factor η for hyperband selector (default: 3.0)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=4,
+        help=(
+            "Batch size for batched selectors "
+            "(hill_climbing neighbours and bayesian_optimization candidates)."
+        ),
     )
     args = parser.parse_args()
 
@@ -114,8 +149,20 @@ def main():
         models = {"researcher": candidates, "writer": candidates}
 
     selector_cls = SELECTORS[args.selector]
+    selector_kwargs: Dict[str, Any] = {}
+    if args.selector == "random":
+        selector_kwargs["sample_fraction"] = args.sample_fraction
+    if args.selector == "hyperband":
+        selector_kwargs["reduction_factor"] = args.reduction_factor
+    if args.selector in ("hill_climbing", "bayesian_optimization"):
+        selector_kwargs["batch_size"] = args.batch_size
+
     selector = selector_cls(
-        agent_fn=agent_maker, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent_fn=agent_maker,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
+        **_filter_selector_kwargs(selector_cls, selector_kwargs),
     )
 
     results = selector.select_best(

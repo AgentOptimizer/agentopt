@@ -9,6 +9,10 @@ Prerequisites:
     2. Set OPENAI_API_KEY environment variable
 """
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
 from typing import Any, Dict
 
@@ -19,8 +23,10 @@ from agentopt import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     HyperbandModelSelector,
+    LMProposalModelSelector,
     RandomSearchModelSelector,
 )
+from agentproxy import LLMTracker, ResponseCache
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
@@ -28,6 +34,7 @@ SELECTORS = {
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "hyperband": HyperbandModelSelector,
+    "lm_proposal": LMProposalModelSelector,
 }
 
 try:
@@ -120,8 +127,13 @@ def main():
         models = {"planner": candidates, "solver": candidates}
 
     selector_cls = SELECTORS[args.selector]
+    tracker = LLMTracker(cache_dir="./llm_cache")
     selector = selector_cls(
-        agent_fn=agent_maker, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent_fn=agent_maker,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
+        tracker=tracker,
     )
 
     results = selector.select_best(
@@ -135,6 +147,18 @@ def main():
         print(f"\nBest combination: {best}")
         results.export_config("litellm_config_optimized.yaml")
         print("Exported optimized config to litellm_config_optimized.yaml")
+
+    # Show cache DB on disk
+    from pathlib import Path
+
+    db_path = Path("./llm_cache/cache.db")
+    if db_path.exists():
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        (count,) = conn.execute("SELECT COUNT(*) FROM cache").fetchone()
+        conn.close()
+        print(f"\nCache: {count} entries saved to {db_path}")
 
 
 if __name__ == "__main__":

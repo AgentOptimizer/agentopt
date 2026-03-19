@@ -15,12 +15,13 @@ dependencies = [
 [project.optional-dependencies]
 bayesian = ["torch>=2.0.0", "botorch>=0.10.0", "gpytorch>=1.11.0"]
 crewai = ["crewai"]
-langgraph = ["langchain-openai", "langgraph"]
-examples = ["crewai", "langchain-openai", "langgraph", "openai", "python-dotenv"]
+langgraph = ["langchain-openai<1", "langgraph"]
+examples = ["crewai", "langchain<1", "langchain-openai<1", "langgraph", "openai", "openai-agents", "python-dotenv"]
 dev = ["pytest>=8.0", "httpx>=0.24.0"]
 
 [tool.uv.sources]
 agentproxy = { workspace = true }
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentopt"]

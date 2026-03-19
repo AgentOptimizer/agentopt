@@ -14,7 +14,6 @@ from agentproxy.cache import CacheEntry, ResponseCache, _make_cache_key
 # Helpers
 # ---------------------------------------------------------------------------
 
-# A minimal OpenAI-style chat completion response
 _RESPONSE_BODY = {
     "id": "chatcmpl-test",
     "object": "chat.completion",
@@ -37,20 +36,17 @@ _REQUEST_BODY = {
 
 
 def _fake_handler(request: httpx.Request) -> httpx.Response:
-    """httpx mock transport handler returning a canned response."""
     return httpx.Response(200, json=_RESPONSE_BODY)
 
 
 def _make_client() -> httpx.Client:
-    """Create an httpx client with a mock transport targeting an LLM endpoint."""
     return httpx.Client(
         transport=httpx.MockTransport(_fake_handler), base_url="https://api.openai.com",
     )
 
 
 def _post(client: httpx.Client, body: dict | None = None) -> httpx.Response:
-    """Send a chat completion request through the client."""
-    return client.post("/v1/chat/completions", json=body or _REQUEST_BODY,)
+    return client.post("/v1/chat/completions", json=body or _REQUEST_BODY)
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +58,6 @@ class TestResponseCache:
     def test_get_miss(self):
         cache = ResponseCache()
         assert cache.get("nonexistent") is None
-        assert cache.stats.misses == 1
-        assert cache.stats.hits == 0
 
     def test_put_and_get_hit(self):
         cache = ResponseCache()
@@ -72,17 +66,6 @@ class TestResponseCache:
         result = cache.get("key1")
         assert result is not None
         assert result.response_bytes == b"hello"
-        assert cache.stats.hits == 1
-
-    def test_max_size_eviction(self):
-        cache = ResponseCache(max_size=2)
-        cache.put("a", CacheEntry(response_bytes=b"1"))
-        cache.put("b", CacheEntry(response_bytes=b"2"))
-        cache.put("c", CacheEntry(response_bytes=b"3"))  # evicts "a"
-        assert cache.get("a") is None
-        assert cache.get("b") is not None
-        assert cache.get("c") is not None
-        assert len(cache) == 2
 
     def test_clear(self):
         cache = ResponseCache()
@@ -90,15 +73,6 @@ class TestResponseCache:
         cache.get("k")
         cache.clear()
         assert len(cache) == 0
-        assert cache.stats.hits == 0
-        assert cache.stats.misses == 0
-
-    def test_hit_rate(self):
-        cache = ResponseCache()
-        cache.put("k", CacheEntry(response_bytes=b"v"))
-        cache.get("k")  # hit
-        cache.get("missing")  # miss
-        assert cache.stats.hit_rate == 0.5
 
 
 class TestMakeCacheKey:
@@ -120,10 +94,9 @@ class TestMakeCacheKey:
         body1 = {"model": "gpt-4o", "messages": [], "stream": True}
         body2 = {"model": "gpt-4o", "messages": [], "stream": False}
         body3 = {"model": "gpt-4o", "messages": []}
-        key1 = _make_cache_key(body1)
-        key2 = _make_cache_key(body2)
-        key3 = _make_cache_key(body3)
-        assert key1 == key2 == key3
+        assert (
+            _make_cache_key(body1) == _make_cache_key(body2) == _make_cache_key(body3)
+        )
 
     def test_key_order_independent(self):
         body1 = {"model": "gpt-4o", "temperature": 0.5, "messages": []}
@@ -138,8 +111,7 @@ class TestMakeCacheKey:
 
 class TestCacheIntegration:
     def setup_method(self):
-        """Fresh tracker for each test."""
-        self.tracker = LLMTracker(cache=True)
+        self.tracker = LLMTracker(cache=True, cache_dir=None)
         self.tracker.start()
 
     def teardown_method(self):
@@ -147,16 +119,13 @@ class TestCacheIntegration:
 
     def test_cache_hit_returns_same_response(self):
         client = _make_client()
-
         resp1 = _post(client)
         resp2 = _post(client)
-
         assert resp1.json() == resp2.json()
         assert resp1.status_code == resp2.status_code == 200
 
     def test_cache_hit_recorded_with_original_latency(self):
         client = _make_client()
-
         _post(client)  # miss
         _post(client)  # hit
 
@@ -165,36 +134,30 @@ class TestCacheIntegration:
         assert records[0].cached is False
         assert records[0].latency_seconds > 0
         assert records[1].cached is True
-        # Cached hit replays the original call's latency, not 0.0
         assert records[1].latency_seconds == records[0].latency_seconds
 
     def test_cache_hit_records_tokens(self):
         client = _make_client()
-
-        _post(client)  # miss
-        _post(client)  # hit
+        _post(client)
+        _post(client)
 
         records = self.tracker.get_records()
-        # Both records should have the same token counts
         for r in records:
             assert r.prompt_tokens == 10
             assert r.completion_tokens == 5
 
-    def test_cache_stats(self):
+    def test_cache_hit_count(self):
         client = _make_client()
-
         _post(client)  # miss
         _post(client)  # hit
         _post(client)  # hit
 
-        stats = self.tracker.cache_stats
-        assert stats.misses == 1
-        assert stats.hits == 2
-        assert stats.hit_rate == pytest.approx(2 / 3)
+        records = self.tracker.get_records()
+        assert sum(1 for r in records if r.cached) == 2
+        assert sum(1 for r in records if not r.cached) == 1
 
     def test_different_requests_no_hit(self):
         client = _make_client()
-
         body1 = {
             "model": "gpt-4o-mini",
             "messages": [{"role": "user", "content": "q1"}],
@@ -206,24 +169,21 @@ class TestCacheIntegration:
         _post(client, body1)
         _post(client, body2)
 
-        stats = self.tracker.cache_stats
-        assert stats.misses == 2
-        assert stats.hits == 0
+        records = self.tracker.get_records()
+        assert all(not r.cached for r in records)
 
     def test_clear_cache(self):
         client = _make_client()
-
         _post(client)
-        assert self.tracker.cache_stats.misses == 1
-
         self.tracker.clear_cache()
         _post(client)  # should miss again
-        assert self.tracker.cache_stats.misses == 1  # stats reset too
-        assert self.tracker.cache_stats.hits == 0
+
+        records = self.tracker.get_records()
+        assert len(records) == 2
+        assert all(not r.cached for r in records)
 
     def test_cache_with_attribution(self):
         client = _make_client()
-
         with self.tracker.track(data_id="dp_1", combo_id="combo_a"):
             _post(client)  # miss
             _post(client)  # hit
@@ -235,12 +195,11 @@ class TestCacheIntegration:
 
     def test_non_llm_request_not_cached(self):
         client = _make_client()
-        # GET request — not an LLM endpoint
         try:
             client.get("/health")
         except Exception:
             pass
-        assert self.tracker.cache_stats.total == 0
+        assert len(self.tracker.get_records()) == 0
 
 
 class TestCacheDisabled:
@@ -255,32 +214,6 @@ class TestCacheDisabled:
             records = tracker.get_records()
             assert len(records) == 2
             assert all(r.cached is False for r in records)
-            assert tracker.cache_stats.hits == 0
-            assert tracker.cache_stats.misses == 0  # no cache => no tracking
-        finally:
-            tracker.stop()
-
-    def test_disabled_at_runtime(self):
-        tracker = LLMTracker(cache=True)
-        tracker.start()
-        try:
-            client = _make_client()
-            _post(client)  # miss, stored
-
-            tracker.cache_enabled = False
-            _post(client)  # should NOT hit cache
-
-            records = tracker.get_records()
-            assert len(records) == 2
-            assert records[0].cached is False
-            assert records[1].cached is False  # no cache hit despite stored entry
-
-            tracker.cache_enabled = True
-            _post(client)  # should hit cache now
-
-            records = tracker.get_records()
-            assert len(records) == 3
-            assert records[2].cached is True
         finally:
             tracker.stop()
 
@@ -307,11 +240,10 @@ class TestCacheThreadSafety:
             t.join()
 
         assert not errors
-        assert cache.stats.hits > 0
-        assert cache.stats.misses > 0
+        assert len(cache) == 800  # 8 threads × 100 keys
 
     def test_concurrent_tracker_with_cache(self):
-        tracker = LLMTracker(cache=True)
+        tracker = LLMTracker(cache=True, cache_dir=None)
         tracker.start()
         errors = []
 
@@ -333,10 +265,9 @@ class TestCacheThreadSafety:
 
             assert not errors
             records = tracker.get_records()
-            # 4 threads × 5 calls = 20 records (some cached)
             assert len(records) == 20
             cached_count = sum(1 for r in records if r.cached)
-            assert cached_count > 0  # at least some hits
+            assert cached_count > 0
         finally:
             tracker.stop()
 
@@ -344,7 +275,7 @@ class TestCacheThreadSafety:
 class TestCacheAsync:
     def test_async_cache_hit(self):
         async def _run():
-            tracker = LLMTracker(cache=True)
+            tracker = LLMTracker(cache=True, cache_dir=None)
             tracker.start()
             try:
 
@@ -363,12 +294,8 @@ class TestCacheAsync:
                 assert len(records) == 2
                 assert records[0].cached is False
                 assert records[1].cached is True
-                # Cached hit replays the original call's latency
                 assert records[1].latency_seconds == records[0].latency_seconds
                 assert resp1.json() == resp2.json()
-
-                assert tracker.cache_stats.hits == 1
-                assert tracker.cache_stats.misses == 1
             finally:
                 tracker.stop()
 

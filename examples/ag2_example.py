@@ -10,6 +10,10 @@ propagation. This example uses initiate_chat() which blocks in the
 caller's thread and is required for agentproxy compatibility.
 """
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
 from typing import Any, Dict
 

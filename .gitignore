@@ -204,6 +204,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# agentopt cache
+.agentopt_cache/
+llm_cache/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

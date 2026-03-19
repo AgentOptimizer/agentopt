@@ -24,25 +24,31 @@ Caching is enabled by default via `LLMTracker(cache=True)`.
 
 ## 2. Architecture
 
-Three classes in `agentproxy/src/agentproxy/cache.py`:
+Two main classes in `agentproxy/src/agentproxy/cache.py`:
 
 ### `ResponseCache`
 
-Thread-safe in-memory LRU cache built on `collections.OrderedDict`.
+Thread-safe in-memory cache with lazy SQLite persistence.
 
 ```python
 class ResponseCache:
-    def __init__(self, max_size: int = 0):  # 0 = unlimited
-        self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
+    def __init__(
+        self,
+        cache_dir: Optional[Union[str, Path]] = None,
+        flush_interval: float = 10.0,
+    ):
+        self._store: Dict[str, CacheEntry] = {}
         self._lock = threading.Lock()
-        self._max_size = max_size
-        self.stats = CacheStats()
+        self._cache_dir = Path(cache_dir) if cache_dir else None
+        self._dirty: Set[str] = set()
 ```
 
-- **`get(key)`** — returns `CacheEntry` on hit (moves to end for LRU), increments `stats.hits`. Returns `None` on miss, increments `stats.misses`.
-- **`put(key, entry)`** — stores entry, evicts oldest if over `max_size`.
-- **`clear()`** — clears all entries and resets stats.
-- All operations are protected by `threading.Lock`.
+- **`get(key)`** — returns `CacheEntry` on hit, `None` on miss. Pure in-memory lookup.
+- **`put(key, entry)`** — stores entry in memory, marks key as dirty for next flush.
+- **`flush()`** — writes all dirty entries to SQLite in a single transaction.
+- **`clear()`** — clears all entries from memory and the database.
+- **`close()`** — flushes pending writes and stops the background thread.
+- All in-memory operations are protected by `threading.Lock`.
 
 ### `CacheEntry`
 
@@ -56,23 +62,61 @@ class CacheEntry:
 
 The original latency is stored so it can be replayed on cache hits for fair metrics.
 
-### `CacheStats`
+---
+
+## 3. Persistence: SQLite Backend
+
+When `cache_dir` is provided, the cache persists entries to a SQLite database (`cache.db`) inside that directory.
+
+### Why SQLite over individual files?
+
+A typical evaluation run produces 10K–50K responses. Individual JSON files cause:
+- Slow `glob()` / `ls` at 50K+ files in a flat directory
+- Slow startup (sequential file reads)
+- Filesystem overhead on some platforms (e.g. older macOS HFS+)
+
+SQLite provides:
+- **Single file** on disk — clean, portable
+- **Fast indexed lookups** by primary key
+- **Atomic batch writes** via transactions
+- **No extra dependencies** — `sqlite3` ships with Python's standard library
+- **WAL journal mode** for better concurrent read performance
+
+### Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS cache (
+    key       TEXT PRIMARY KEY,
+    data_json TEXT NOT NULL
+)
+```
+
+Each row stores a cache key (SHA-256 hash) and the JSON-serialized `CacheEntry`.
+
+### Flush strategy
+
+Writes are **lazy** — `put()` only updates the in-memory dict and marks the key as dirty. Dirty entries are flushed to SQLite:
+
+- **Periodically** by a background daemon thread (every 10 seconds by default)
+- **Explicitly** via `flush()`
+- **Automatically** when `close()` is called (which `LLMTracker.stop()` calls)
+
+This keeps `put()` and `get()` free of disk I/O on the hot path.
+
+### Default behavior
+
+`LLMTracker` defaults to `cache_dir=".agentopt_cache"`, so the cache persists across process restarts automatically. Set `cache_dir=None` for in-memory only.
 
 ```python
-@dataclass
-class CacheStats:
-    hits: int = 0
-    misses: int = 0
-
-    @property
-    def total(self) -> int: ...      # hits + misses
-    @property
-    def hit_rate(self) -> float: ... # hits / total (0.0 if no lookups)
+tracker = LLMTracker()                          # cache on, persists to .agentopt_cache/
+tracker = LLMTracker(cache_dir="./my_cache")    # custom directory
+tracker = LLMTracker(cache_dir=None)            # in-memory only
+tracker = LLMTracker(cache=False)               # cache off entirely
 ```
 
 ---
 
-## 3. Cache Key Design
+## 4. Cache Key Design
 
 ```python
 def _make_cache_key(request_body: dict) -> str:
@@ -82,14 +126,14 @@ def _make_cache_key(request_body: dict) -> str:
 ```
 
 - **Deterministic:** `json.dumps` with `sort_keys=True` ensures identical requests produce identical keys regardless of dict ordering.
-- **Excludes `stream`:** The `stream` field is ephemeral metadata that doesn't affect the response content. A non-streaming request should match a previously cached non-streaming request with the same model/messages/parameters.
+- **Excludes `stream`:** The `stream` field is ephemeral metadata that doesn't affect the response content.
 - **SHA256:** Strong hash with negligible collision probability.
 
 **Included in the key:** model, messages, temperature, top_p, max_tokens, and all other request body fields.
 
 ---
 
-## 4. Cache Policy
+## 5. Cache Policy
 
 | Condition | Cached? | Reason |
 |-----------|---------|--------|
@@ -97,11 +141,9 @@ def _make_cache_key(request_body: dict) -> str:
 | Streaming request | No | Response body is incomplete at `send()` return time |
 | Non-200 status | No | Error responses should not be replayed |
 
-**Max size:** Configurable via `cache_max_size` constructor parameter. `0` (default) means unlimited. When a positive limit is set, the oldest entry (LRU) is evicted on overflow.
-
 ---
 
-## 5. Latency Replay
+## 6. Latency Replay
 
 A key design decision: **cached responses replay the original API call latency** in the `CallRecord`.
 
@@ -122,7 +164,7 @@ This ensures that latency metrics reflect what a **real, uncached run** would co
 
 ---
 
-## 6. Integration with Interceptor
+## 7. Integration with Interceptor
 
 The cache integrates into the patched `httpx.Client.send()` via two helper functions in `interceptor.py`:
 
@@ -167,35 +209,22 @@ Both sync (`httpx.Client.send`) and async (`httpx.AsyncClient.send`) paths use t
 
 ---
 
-## 7. LLMTracker API
+## 8. LLMTracker API
 
 ### Construction
 
 ```python
-tracker = LLMTracker()                          # cache on, unlimited size
-tracker = LLMTracker(cache=True, cache_max_size=1000)  # cache on, max 1000 entries
+tracker = LLMTracker()                          # cache on, disk persistence to .agentopt_cache/
+tracker = LLMTracker(cache_dir="./my_cache")    # custom cache directory
+tracker = LLMTracker(cache_dir=None)            # in-memory only
 tracker = LLMTracker(cache=False)               # cache off
 ```
 
 ### Runtime control
 
 ```python
-tracker.cache_enabled = False   # disable without clearing
-tracker.cache_enabled = True    # re-enable
-
-tracker.clear_cache()           # clear all entries and reset stats
-```
-
-**Constraint:** Cannot enable caching if the tracker was constructed with `cache=False`. Attempting to do so raises `RuntimeError` because no `ResponseCache` was initialized.
-
-### Statistics
-
-```python
-stats = tracker.cache_stats   # CacheStats object
-stats.hits                    # number of cache hits
-stats.misses                  # number of cache misses
-stats.total                   # hits + misses
-stats.hit_rate                # hits / total (0.0 if no lookups)
+tracker.flush_cache()           # flush dirty entries to disk immediately
+tracker.clear_cache()           # clear all entries and delete from DB
 ```
 
 ### Latency accounting
@@ -207,19 +236,19 @@ cached_latency = tracker.get_cached_latency(data_id="dp_1", combo_id="gpt4o+haik
 
 ---
 
-## 8. Thread Safety
+## 9. Thread Safety
 
 The cache is designed for concurrent access during parallel model selection:
 
-- **`ResponseCache`** uses `threading.Lock()` on all operations (`get`, `put`, `clear`, `__len__`). LRU updates (`move_to_end`) happen within the lock.
+- **`ResponseCache`** uses `threading.Lock()` on all in-memory operations (`get`, `put`, `clear`, `__len__`).
+- **SQLite writes** happen only during `flush()`, using a fresh connection per flush. SQLite's WAL mode allows concurrent reads.
 - **Global cache instance** in the interceptor module is set during `install()` and read during active patching. It is not modified during patching.
 - **ContextVars** provide per-thread/per-task isolation for attribution, so parallel evaluations with different `combo_id` values never interfere with each other's cache lookups.
 
 ---
 
-## 9. Limitations
+## 10. Limitations
 
-- **In-memory only** — cache is lost on process restart. Suitable for evaluation loops where data fits in RAM.
-- **No TTL / expiry** — entries persist until evicted by LRU or explicitly cleared. Appropriate for eval loops that run with fresh data.
+- **No TTL / expiry** — entries persist until explicitly cleared. Appropriate for eval loops that run with fresh data.
 - **No streaming** — streaming responses are incomplete at `send()` return time and cannot be cached.
 - **No selective caching** — all non-streaming, status-200 requests are cached when caching is enabled. No per-model or per-endpoint filtering.

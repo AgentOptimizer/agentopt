@@ -225,9 +225,8 @@ All selectors support `select_best(parallel=True, max_concurrent=20)` for async 
 `LMProposalModelSelector` keeps the same input contract (`agent_fn`, `models`, `dataset`, `eval_fn`) and adds a proposer stage:
 
 1. Builds a prompt with candidate model indices per node (in order) + dataset preview.
-2. Calls proposer LLM (default `gpt-4o-mini`) asking for strict JSON:
-   `{"combinations": [[idx_node0, idx_node1, ...], ...]}`.
-3. Validates/deduplicates proposer output.
+2. Calls proposer LLM (default `gpt-4o-mini`) with a Pydantic response schema.
+3. Validates/deduplicates returned combinations.
 4. Adds fallback baseline and exploration combinations.
 5. Evaluates only the selected subset.
 

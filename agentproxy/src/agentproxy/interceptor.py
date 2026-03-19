@@ -34,7 +34,7 @@ _installed = False
 _cache: Optional[ResponseCache] = None
 
 # URL path patterns that indicate LLM API endpoints
-_LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages")
+_LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages", "/v1/responses")
 
 
 def _is_llm_request(request: httpx.Request) -> bool:

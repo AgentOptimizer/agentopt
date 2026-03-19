@@ -89,7 +89,7 @@ class LMProposalModelSelector(BaseModelSelector):
     # Public API
     # ------------------------------------------------------------------
 
-    def select_best(
+    def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         combo_idx = self._ask_proposer()

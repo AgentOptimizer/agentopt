@@ -5,12 +5,13 @@ Uses the model topology (quality / speed rankings) to define
 neighbours so that each iteration makes an informed single-step move.
 """
 
+import asyncio
 import random
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..base_models import Dataset, EvalFn, ModelCandidate
 from ..model_topology import get_faster_neighbor, get_higher_quality_neighbor
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 
 
 class HillClimbingModelSelector(BaseModelSelector):
@@ -27,6 +28,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         num_restarts: int = 3,
         patience: int = 3,
         seed: Optional[int] = None,
+        batch_size: int = 1,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> None:
         super().__init__(
@@ -40,6 +42,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         self.max_iterations = max_iterations
         self.num_restarts = num_restarts
         self.patience = patience
+        self.batch_size = max(1, int(batch_size))
 
         if seed is not None:
             random.seed(seed)
@@ -65,6 +68,33 @@ class HillClimbingModelSelector(BaseModelSelector):
         if unseen:
             return dict(random.choice(unseen))
         return None
+
+    def _evaluate_cached(
+        self, combo: Dict[str, ModelCandidate], max_concurrent: int
+    ) -> Tuple[str, float, float, Dict[str, int], Dict[str, int], List[DatapointResult], bool]:
+        """Evaluate a combo, using an in-memory cache to avoid repeats."""
+        combo_name = self._combo_name(combo)
+        if combo_name in self._eval_cache:
+            acc, lat, in_tok, out_tok, dp_results = self._eval_cache[combo_name]
+            return combo_name, acc, lat, in_tok, out_tok, dp_results, True
+
+        scores, latencies, dp_ids = asyncio.run(
+            self._evaluate_combo_async(
+                combo, self.dataset, label=combo_name, max_concurrent=max_concurrent
+            )
+        )
+        input_tokens, output_tokens = self._fetch_tokens(combo_name)
+        accuracy, _ = self._compute_stats(scores)
+        latency = sum(latencies) / len(latencies) if latencies else 0.0
+        dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
+        self._eval_cache[combo_name] = (
+            accuracy,
+            latency,
+            input_tokens,
+            output_tokens,
+            dp_results,
+        )
+        return combo_name, accuracy, latency, input_tokens, output_tokens, dp_results, False
 
     # ------------------------------------------------------------------
     # Move operators
@@ -110,12 +140,44 @@ class HillClimbingModelSelector(BaseModelSelector):
                 combo[node] = old
         return False
 
+    def _generate_neighbors(
+        self,
+        combo: Dict[str, ModelCandidate],
+        seen: Set[str],
+        max_neighbors: int,
+        improve_quality: bool,
+    ) -> List[Dict[str, ModelCandidate]]:
+        """Generate up to *max_neighbors* unseen neighbors that differ by one node."""
+        neighbors: List[Dict[str, ModelCandidate]] = []
+        node_names = list(combo.keys())
+        random.shuffle(node_names)
+
+        for node in node_names:
+            current = combo[node]
+            if improve_quality:
+                neighbor = get_higher_quality_neighbor(current, self._models[node])
+            else:
+                neighbor = get_faster_neighbor(current, self._models[node])
+            if neighbor is None:
+                continue
+
+            new_combo = dict(combo)
+            new_combo[node] = neighbor
+            if self._combo_name(new_combo) in seen:
+                continue
+
+            neighbors.append(new_combo)
+            if len(neighbors) >= max_neighbors:
+                break
+
+        return neighbors
+
     # ------------------------------------------------------------------
     # Single restart
     # ------------------------------------------------------------------
 
     def _hill_climb_once(
-        self, seen: Set[str]
+        self, seen: Set[str], max_concurrent: int
     ) -> Optional[Tuple[Dict[str, ModelCandidate], float, float, List[ModelResult]]]:
         """Run one hill-climbing pass from a random starting point."""
         combo = self._random_combination(seen)
@@ -135,32 +197,15 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             print(f"  Iter {iteration + 1}: {combo_name}")
 
-            # Re-use cached result if available.
-            if combo_name in self._eval_cache:
-                (
-                    accuracy,
-                    latency,
-                    input_tokens,
-                    output_tokens,
-                    dp_results,
-                ) = self._eval_cache[combo_name]
-                cached = True
-            else:
-                scores, latencies, dp_ids = self._evaluate_combo(
-                    combo, self.dataset, label=combo_name
-                )
-                input_tokens, output_tokens = self._fetch_tokens(combo_name)
-                accuracy, _ = self._compute_stats(scores)
-                latency = sum(latencies) / len(latencies) if latencies else 0.0
-                dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
-                self._eval_cache[combo_name] = (
-                    accuracy,
-                    latency,
-                    input_tokens,
-                    output_tokens,
-                    dp_results,
-                )
-                cached = False
+            (
+                _,
+                accuracy,
+                latency,
+                input_tokens,
+                output_tokens,
+                dp_results,
+                cached,
+            ) = self._evaluate_cached(combo, max_concurrent=max_concurrent)
 
             result = self._make_result(
                 model_name=combo_name,
@@ -200,19 +245,77 @@ class HillClimbingModelSelector(BaseModelSelector):
                 )
                 break
 
-            # Attempt a move.
-            moved = False
+            # Generate a small batch of neighbor candidates and pick the best.
+            neighbors: List[Dict[str, ModelCandidate]] = []
             if accuracy < 1.0:
-                moved = self._try_improve_quality(combo, seen)
-            if not moved:
-                moved = self._try_improve_speed(combo, seen)
+                neighbors = self._generate_neighbors(
+                    combo,
+                    seen,
+                    max_neighbors=self.batch_size,
+                    improve_quality=True,
+                )
+                if not neighbors:
+                    neighbors = self._generate_neighbors(
+                        combo,
+                        seen,
+                        max_neighbors=self.batch_size,
+                        improve_quality=False,
+                    )
+            else:
+                neighbors = self._generate_neighbors(
+                    combo,
+                    seen,
+                    max_neighbors=self.batch_size,
+                    improve_quality=False,
+                )
+                if not neighbors:
+                    neighbors = self._generate_neighbors(
+                        combo,
+                        seen,
+                        max_neighbors=self.batch_size,
+                        improve_quality=True,
+                    )
 
-            if not moved:
+            if not neighbors:
                 print(
                     f"  No improving moves available at iteration {iteration + 1}. "
                     "Stopping."
                 )
                 break
+
+            best_neighbor: Optional[Dict[str, ModelCandidate]] = None
+            best_n_acc = float("-inf")
+            best_n_lat = float("inf")
+
+            for neighbor in neighbors:
+                n_name, n_acc, n_lat, *_ = self._evaluate_cached(
+                    neighbor, max_concurrent=max_concurrent
+                )
+                seen.add(n_name)
+
+                better = False
+                if n_acc > best_n_acc + tol:
+                    better = True
+                elif abs(n_acc - best_n_acc) <= tol and n_lat < best_n_lat:
+                    better = True
+
+                if better:
+                    best_neighbor = neighbor
+                    best_n_acc = n_acc
+                    best_n_lat = n_lat
+
+            # If no neighbor improves (accuracy primary, latency tiebreak), stop.
+            if best_neighbor is None or (
+                best_n_acc < accuracy - tol
+                or (abs(best_n_acc - accuracy) <= tol and best_n_lat >= latency)
+            ):
+                print(
+                    f"  No neighbor in batch of {len(neighbors)} improves on current "
+                    f"combo at iteration {iteration + 1}. Stopping."
+                )
+                break
+
+            combo = dict(best_neighbor)
 
         return best_combo, best_accuracy, best_latency, results
 
@@ -246,7 +349,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         for restart in range(self.num_restarts):
             print(f"--- Restart {restart + 1}/{self.num_restarts} ---")
 
-            result = self._hill_climb_once(seen)
+            result = self._hill_climb_once(seen, max_concurrent=max_concurrent)
             if result is None:
                 print("  All combinations exhausted. Stopping.\n")
                 break

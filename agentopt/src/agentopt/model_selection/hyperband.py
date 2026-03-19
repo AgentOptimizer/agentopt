@@ -71,6 +71,7 @@ class HyperbandModelSelector(BaseModelSelector):
     def _select_sequential(self) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
+        dp_cursor = 0  # Global cursor to avoid re-evaluating datapoints
         total_configs = len(all_combos)
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
@@ -85,7 +86,11 @@ class HyperbandModelSelector(BaseModelSelector):
         print(f"  s_max={self._s_max}, B={self._B}")
         print(f"{'='*60}")
 
+        dataset_exhausted = False
         for s in reversed(range(self._s_max + 1)):
+            if dp_cursor >= len(dataset_list):
+                dataset_exhausted = True
+                break
             r_s = int(self.max_resource * (self.reduction_factor ** (-s)))
             r_s = max(1, min(r_s, self.max_resource))
 
@@ -108,15 +113,25 @@ class HyperbandModelSelector(BaseModelSelector):
 
                 print(f"\n  Stage i={i}: n_i={n_i}, r_i={r_i}")
 
-                batch = dataset_list[prev_r:r_i]
+                stage_batch_size = r_i - prev_r
+                batch_start = dp_cursor
+                batch = dataset_list[dp_cursor : dp_cursor + stage_batch_size]
                 if not batch:
+                    dataset_exhausted = True
                     break
+                dp_cursor += len(batch)
 
                 for idx in current_indices:
                     combo = all_combos[idx]
                     combo_name = self._combo_name(combo)
+                    data_id_prefix = (
+                        f"{combo_name}::s{s}_i{i}_b{batch_start}"
+                    )
                     scores, latencies, dp_ids = self._evaluate_combo(
-                        combo, batch, label=combo_name
+                        combo,
+                        batch,
+                        label=combo_name,
+                        data_id_prefix=data_id_prefix,
                     )
                     combo_scores[idx].extend(scores)
                     combo_latencies[idx].extend(latencies)
@@ -128,7 +143,7 @@ class HyperbandModelSelector(BaseModelSelector):
                     )
                     print(f"    {combo_name}: mu={mu:.3f} (n={len(combo_scores[idx])})")
 
-                prev_r = r_i
+                prev_r += len(batch)
 
                 if i == s:
                     break
@@ -151,6 +166,8 @@ class HyperbandModelSelector(BaseModelSelector):
 
                 bracket_indices = new_indices
                 n_i = len(bracket_indices)
+            if dataset_exhausted:
+                break
 
         # Build final results.
         all_results: List[ModelResult] = []
@@ -199,6 +216,7 @@ class HyperbandModelSelector(BaseModelSelector):
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
+        dp_cursor = 0  # Global cursor to avoid re-evaluating datapoints
         total_configs = len(all_combos)
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(total_configs)}
@@ -214,7 +232,11 @@ class HyperbandModelSelector(BaseModelSelector):
         print(f"  s_max={self._s_max}, B={self._B}")
         print(f"{'='*60}")
 
+        dataset_exhausted = False
         for s in reversed(range(self._s_max + 1)):
+            if dp_cursor >= len(dataset_list):
+                dataset_exhausted = True
+                break
             r_s = int(self.max_resource * (self.reduction_factor ** (-s)))
             r_s = max(1, min(r_s, self.max_resource))
 
@@ -237,17 +259,32 @@ class HyperbandModelSelector(BaseModelSelector):
 
                 print(f"\n  Stage i={i}: n_i={n_i}, r_i={r_i}")
 
-                batch = dataset_list[prev_r:r_i]
+                stage_batch_size = r_i - prev_r
+                batch_start = dp_cursor
+                batch = dataset_list[dp_cursor : dp_cursor + stage_batch_size]
                 if not batch:
+                    dataset_exhausted = True
                     break
+                dp_cursor += len(batch)
+
+                stage_s = s
+                stage_i = i
+                stage_batch_start = batch_start
 
                 async def _eval_batch(
                     idx: int,
                 ) -> Tuple[int, List[float], List[float], List[str]]:
                     combo = all_combos[idx]
                     combo_name = self._combo_name(combo)
+                    data_id_prefix = (
+                        f"{combo_name}::s{stage_s}_i{stage_i}_b{stage_batch_start}"
+                    )
                     scores, latencies, dp_ids = await self._evaluate_combo_async(
-                        combo, batch, label=combo_name, max_concurrent=max_concurrent
+                        combo,
+                        batch,
+                        label=combo_name,
+                        data_id_prefix=data_id_prefix,
+                        max_concurrent=max_concurrent,
                     )
                     return idx, scores, latencies, dp_ids
 
@@ -274,7 +311,7 @@ class HyperbandModelSelector(BaseModelSelector):
                         f"mu={mu:.3f} (n={len(combo_scores[idx])})"
                     )
 
-                prev_r = r_i
+                prev_r += len(batch)
 
                 if i == s:
                     break
@@ -296,6 +333,8 @@ class HyperbandModelSelector(BaseModelSelector):
 
                 bracket_indices = new_indices
                 n_i = len(bracket_indices)
+            if dataset_exhausted:
+                break
 
         all_results: List[ModelResult] = []
         for idx, combo in enumerate(all_combos):

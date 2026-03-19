@@ -149,11 +149,21 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         evaluated: Set[Tuple[int, ...]],
     ) -> Optional[List[Tuple[int, ...]]]:
         """Fit GP, compute EI, return top-k batch of unseen combos or None."""
+        from botorch.models.transforms.outcome import Standardize  # type: ignore[reportMissingImports]
+
         train_X = torch_mod.tensor(X_list, dtype=torch_mod.float64)
         train_Y = torch_mod.tensor(Y_list, dtype=torch_mod.float64).unsqueeze(-1)
         cat_dims = list(range(n_nodes))
 
-        model = MixedSingleTaskGP(train_X=train_X, train_Y=train_Y, cat_dims=cat_dims,)
+        # Standardize the objective values for more stable GP fitting.
+        # For acquisition, BoTorch will handle mapping back to the original scale.
+        outcome_transform = Standardize(m=1)
+        model = MixedSingleTaskGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            cat_dims=cat_dims,
+            outcome_transform=outcome_transform,
+        )
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         fit_gpytorch_mll(mll)
 

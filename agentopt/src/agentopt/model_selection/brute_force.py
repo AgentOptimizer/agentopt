@@ -42,9 +42,10 @@ class BruteForceModelSelector(BaseModelSelector):
     ) -> SelectionResults:
         if parallel:
             return asyncio.run(self._select_async(max_concurrent))
-        return self._select_sequential()
+        # Sequential combos, but evaluate questions concurrently within each combo.
+        return asyncio.run(self._select_sequential_async(max_concurrent))
 
-    def _select_sequential(self) -> SelectionResults:
+    async def _select_sequential_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
 
         all_results: List[ModelResult] = []
@@ -54,7 +55,10 @@ class BruteForceModelSelector(BaseModelSelector):
         tol = 1e-9
 
         print(f"\n{'='*60}")
-        print(f"Brute force (sequential): {len(all_combos)} combinations")
+        print(
+            f"Brute force (sequential combos, parallel questions): {len(all_combos)} combinations, "
+            f"max {max_concurrent} concurrent per combo"
+        )
         print(f"{'='*60}\n")
 
         for idx, combo in enumerate(all_combos, 1):
@@ -62,8 +66,11 @@ class BruteForceModelSelector(BaseModelSelector):
             print(f"  [{idx}/{len(all_combos)}] Evaluating: {combo_name}")
 
             try:
-                scores, latencies, dp_ids = self._evaluate_combo(
-                    combo, self.dataset, label=combo_name
+                scores, latencies, dp_ids = await self._evaluate_combo_async(
+                    combo,
+                    self.dataset,
+                    label=combo_name,
+                    max_concurrent=max_concurrent,
                 )
                 input_tokens, output_tokens = self._fetch_tokens(combo_name)
                 accuracy, _ = self._compute_stats(scores)

@@ -56,7 +56,9 @@ class ArmEliminationModelSelector(BaseModelSelector):
         # Sequential rounds/combos, but evaluate questions concurrently within each combo.
         return asyncio.run(self._select_sequential_async(max_concurrent))
 
-    async def _select_sequential_async(self, max_concurrent: int = 20) -> SelectionResults:
+    async def _select_sequential_async(
+        self, max_concurrent: int = 20
+    ) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
         n_total = len(dataset_list)
@@ -92,10 +94,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 combo = all_combos[idx]
                 combo_name = self._combo_name(combo)
                 scores, latencies, dp_ids = await self._evaluate_combo_async(
-                    combo,
-                    batch,
-                    label=combo_name,
-                    max_concurrent=max_concurrent,
+                    combo, batch, label=combo_name, max_concurrent=max_concurrent,
                 )
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)

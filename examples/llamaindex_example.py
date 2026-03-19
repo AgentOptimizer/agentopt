@@ -95,10 +95,7 @@ def single_agent_example():
         ),
     )
 
-    workflow = AgentWorkflow(
-        agents=[agent],
-        root_agent="MathAgent",
-    )
+    workflow = AgentWorkflow(agents=[agent], root_agent="MathAgent",)
 
     return llm_proxy, workflow
 
@@ -142,10 +139,7 @@ def multi_agent_example():
         can_handoff_to=["MathAgent"],
     )
 
-    workflow = AgentWorkflow(
-        agents=[math_agent, review_agent],
-        root_agent="MathAgent",
-    )
+    workflow = AgentWorkflow(agents=[math_agent, review_agent], root_agent="MathAgent",)
 
     return llm_proxy, workflow
 
@@ -191,10 +185,7 @@ def multi_agent_multi_llm_example():
         can_handoff_to=["MathAgent"],
     )
 
-    workflow = AgentWorkflow(
-        agents=[math_agent, review_agent],
-        root_agent="MathAgent",
-    )
+    workflow = AgentWorkflow(agents=[math_agent, review_agent], root_agent="MathAgent",)
 
     return (math_proxy, reviewer_proxy), workflow
 
@@ -273,14 +264,10 @@ EXAMPLES = {
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LlamaIndex model selection example")
     parser.add_argument(
-        "example",
-        choices=EXAMPLES.keys(),
-        help="Which example to run",
+        "example", choices=EXAMPLES.keys(), help="Which example to run",
     )
     parser.add_argument(
-        "--parallel",
-        action="store_true",
-        help="Run model selection in parallel",
+        "--parallel", action="store_true", help="Run model selection in parallel",
     )
     parser.add_argument(
         "--max-concurrent",
@@ -370,7 +357,5 @@ if __name__ == "__main__":
     )
 
     plot_results(
-        results,
-        f"LlamaIndex {label} Results",
-        "examples/llamaindex_results.png",
+        results, f"LlamaIndex {label} Results", "examples/llamaindex_results.png",
     )

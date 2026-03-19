@@ -209,14 +209,10 @@ if __name__ == "__main__":
         description="Claude Agent SDK model selection example"
     )
     parser.add_argument(
-        "example",
-        choices=EXAMPLES.keys(),
-        help="Which example to run",
+        "example", choices=EXAMPLES.keys(), help="Which example to run",
     )
     parser.add_argument(
-        "--parallel",
-        action="store_true",
-        help="Run model selection in parallel",
+        "--parallel", action="store_true", help="Run model selection in parallel",
     )
     parser.add_argument(
         "--max-concurrent",
@@ -308,7 +304,5 @@ if __name__ == "__main__":
     if not args.no_plot:
         print("\n[3] Saving results plot...")
         plot_results(
-            results,
-            f"Claude {label} Results",
-            "examples/claude_results.png",
+            results, f"Claude {label} Results", "examples/claude_results.png",
         )

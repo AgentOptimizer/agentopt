@@ -106,7 +106,10 @@ dataset = [
     ("What color is the sky on a clear day?", "blue"),
 ]
 
-def _filter_selector_kwargs(selector_cls, selector_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+
+def _filter_selector_kwargs(
+    selector_cls, selector_kwargs: Dict[str, Any]
+) -> Dict[str, Any]:
     params = inspect.signature(selector_cls.__init__).parameters
     return {k: v for k, v in selector_kwargs.items() if k in params}
 
@@ -120,6 +123,7 @@ def main():
         "--use-instances",
         action="store_true",
         help="Pass config dicts instead of model name strings",
+    )
     parser.add_argument(
         "--sample-fraction",
         type=float,
@@ -140,7 +144,6 @@ def main():
             "Batch size for batched selectors "
             "(hill_climbing neighbours and bayesian_optimization candidates)."
         ),
-    )
     )
     args = parser.parse_args()
 

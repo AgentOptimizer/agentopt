@@ -73,7 +73,9 @@ class HillClimbingModelSelector(BaseModelSelector):
 
     def _evaluate_cached(
         self, combo: Dict[str, ModelCandidate], max_concurrent: int
-    ) -> Tuple[str, float, float, Dict[str, int], Dict[str, int], List[DatapointResult], bool]:
+    ) -> Tuple[
+        str, float, float, Dict[str, int], Dict[str, int], List[DatapointResult], bool
+    ]:
         """Evaluate a combo, using an in-memory cache to avoid repeats."""
         combo_name = self._combo_name(combo)
         if combo_name in self._eval_cache:
@@ -96,7 +98,15 @@ class HillClimbingModelSelector(BaseModelSelector):
             output_tokens,
             dp_results,
         )
-        return combo_name, accuracy, latency, input_tokens, output_tokens, dp_results, False
+        return (
+            combo_name,
+            accuracy,
+            latency,
+            input_tokens,
+            output_tokens,
+            dp_results,
+            False,
+        )
 
     # ------------------------------------------------------------------
     # Move operators
@@ -251,10 +261,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             neighbors: List[Dict[str, ModelCandidate]] = []
             if accuracy < 1.0:
                 neighbors = self._generate_neighbors(
-                    combo,
-                    seen,
-                    max_neighbors=self.batch_size,
-                    improve_quality=True,
+                    combo, seen, max_neighbors=self.batch_size, improve_quality=True,
                 )
                 if not neighbors:
                     neighbors = self._generate_neighbors(
@@ -265,10 +272,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                     )
             else:
                 neighbors = self._generate_neighbors(
-                    combo,
-                    seen,
-                    max_neighbors=self.batch_size,
-                    improve_quality=False,
+                    combo, seen, max_neighbors=self.batch_size, improve_quality=False,
                 )
                 if not neighbors:
                     neighbors = self._generate_neighbors(

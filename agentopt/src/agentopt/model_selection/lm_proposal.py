@@ -92,6 +92,10 @@ class LMProposalModelSelector(BaseModelSelector):
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
+        if parallel:
+            raise NotImplementedError(
+                "LMProposalModelSelector does not support parallel evaluation."
+            )
         combo_idx = self._ask_proposer()
         if combo_idx is None:
             combo_idx = tuple(0 for _ in self._node_names)

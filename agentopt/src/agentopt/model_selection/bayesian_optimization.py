@@ -258,9 +258,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                         datapoint_results=dp_results,
                     )
                     all_results.append(result)
-                    print(
-                        f"  [BO {it+1}/{n_iterations} | {j}/{len(batch)}] {result}"
-                    )
+                    print(f"  [BO {it+1}/{n_iterations} | {j}/{len(batch)}] {result}")
                 except Exception as e:
                     logger.warning("[BO] [%s] failed: %s", combo_name, e)
 

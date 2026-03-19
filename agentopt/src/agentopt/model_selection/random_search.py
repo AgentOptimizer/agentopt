@@ -71,7 +71,9 @@ class RandomSearchModelSelector(BaseModelSelector):
         sampled = [all_combos[i] for i in sampled_indices]
         return all_combos, sampled
 
-    async def _select_sequential_async(self, max_concurrent: int = 20) -> SelectionResults:
+    async def _select_sequential_async(
+        self, max_concurrent: int = 20
+    ) -> SelectionResults:
         all_combos, sampled = self._get_sampled_combinations()
 
         all_results: List[ModelResult] = []

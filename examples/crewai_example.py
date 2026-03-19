@@ -98,7 +98,10 @@ dataset = [
     ("What color is the sky on a clear day?", "blue"),
 ]
 
-def _filter_selector_kwargs(selector_cls, selector_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+
+def _filter_selector_kwargs(
+    selector_cls, selector_kwargs: Dict[str, Any]
+) -> Dict[str, Any]:
     params = inspect.signature(selector_cls.__init__).parameters
     return {k: v for k, v in selector_kwargs.items() if k in params}
 

@@ -225,13 +225,14 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
         response = _original_sync_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
 
-        if not stream and response.status_code == 200:
-            try:
-                response.read()
-                _try_cache_store(request, response, latency)
-                _try_record(request, response, latency, callback)
-            except Exception:
-                pass
+        if not stream:
+            if response.status_code == 200:
+                try:
+                    response.read()
+                    _try_cache_store(request, response, latency)
+                    _try_record(request, response, latency, callback)
+                except Exception:
+                    pass
         else:
             warnings.warn("Token tracking does not support streaming")
 
@@ -259,13 +260,14 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
         response = await _original_async_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
 
-        if not stream and response.status_code == 200:
-            try:
-                await response.aread()
-                _try_cache_store(request, response, latency)
-                _try_record(request, response, latency, callback)
-            except Exception:
-                pass
+        if not stream:
+            if response.status_code == 200:
+                try:
+                    await response.aread()
+                    _try_cache_store(request, response, latency)
+                    _try_record(request, response, latency, callback)
+                except Exception:
+                    pass
         else:
             warnings.warn("Token tracking does not support streaming")
 

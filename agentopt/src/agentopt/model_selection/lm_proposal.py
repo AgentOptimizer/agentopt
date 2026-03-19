@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
@@ -33,6 +34,14 @@ class ProposalResponse(BaseModel):
     )
 
 
+class LMProposalTuning(BaseModel):
+    """Optional advanced knobs for LMProposalModelSelector."""
+
+    objective: str = "maximize accuracy and then minimize latency and cost"
+    dataset_preview_size: int = 10
+    max_retries: int = 3
+
+
 class LMProposalModelSelector(BaseModelSelector):
     """Model selector where an LLM proposes the single best combination."""
 
@@ -45,10 +54,10 @@ class LMProposalModelSelector(BaseModelSelector):
         invoke_fn: Optional[Callable] = None,
         proposer_model: str = "gpt-4.1",
         proposer_client: Any = None,
-        objective: str = "maximize accuracy and then minimize atency and cost",
-        dataset_preview_size: int = 10,
+        tuning: Optional[LMProposalTuning] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
+        **legacy_kwargs: Any,
     ) -> None:
         super().__init__(
             agent_fn=agent_fn,
@@ -59,12 +68,41 @@ class LMProposalModelSelector(BaseModelSelector):
             model_prices=model_prices,
             node_descriptions=node_descriptions,
         )
-        if dataset_preview_size < 1:
+        if tuning is None:
+            tuning = LMProposalTuning()
+        if not isinstance(tuning, LMProposalTuning):
+            raise TypeError("tuning must be an LMProposalTuning instance.")
+
+        # Backward-compatible path for previous keyword args.
+        legacy_mapping = {
+            "objective": "objective",
+            "dataset_preview_size": "dataset_preview_size",
+            "max_retries": "max_retries",
+        }
+        if legacy_kwargs:
+            updates: Dict[str, Any] = {}
+            unknown = [k for k in legacy_kwargs if k not in legacy_mapping]
+            if unknown:
+                unknown_args = ", ".join(sorted(unknown))
+                raise TypeError(f"Unexpected keyword argument(s): {unknown_args}")
+            for old_key, new_key in legacy_mapping.items():
+                if old_key in legacy_kwargs:
+                    updates[new_key] = legacy_kwargs[old_key]
+            tuning = tuning.model_copy(update=updates)
+            warnings.warn(
+                "Passing objective/dataset_preview_size/max_retries directly is deprecated. "
+                "Use tuning=LMProposalTuning(...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if tuning.dataset_preview_size < 1:
             raise ValueError("dataset_preview_size must be >= 1.")
+        if tuning.max_retries < 1:
+            raise ValueError("max_retries must be >= 1.")
 
         self.proposer_model = proposer_model
-        self.objective = objective
-        self.dataset_preview_size = dataset_preview_size
+        self.tuning = tuning
 
         # Build label→index lookup per node for parsing LLM responses.
         self._label_to_index: Dict[str, Dict[str, int]] = {}
@@ -152,7 +190,7 @@ class LMProposalModelSelector(BaseModelSelector):
 
     def _dataset_preview(self) -> List[Dict[str, Any]]:
         preview: List[Dict[str, Any]] = []
-        for input_data, expected in list(self.dataset)[: self.dataset_preview_size]:
+        for input_data, expected in list(self.dataset)[: self.tuning.dataset_preview_size]:
             preview.append(
                 {"input": self._safe_json(input_data), "expected": str(expected)}
             )
@@ -204,7 +242,7 @@ class LMProposalModelSelector(BaseModelSelector):
             "Your job is to select the best combination of models for the nodes.\n",
             # Objective
             "# The objective to target when selecting the model combination:\n"
-            f"{self.objective}\n",
+            f"{self.tuning.objective}\n",
             # Agent Pipeline
             "# Agent Pipeline\n"
             "The agent has the following nodes and each can be assigned one of its candidate models.\n"
@@ -234,23 +272,7 @@ class LMProposalModelSelector(BaseModelSelector):
     # Parsing & proposer
     # ------------------------------------------------------------------
 
-    def _parse_proposed_combination(self, text: str,) -> Optional[Tuple[int, ...]]:
-        if not text.strip():
-            return None
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            logger.warning(
-                "LMProposalModelSelector: proposer returned non-JSON output."
-            )
-            return None
-
-        try:
-            response = ProposalResponse.model_validate(payload)
-        except ValidationError as e:
-            logger.warning("LMProposalModelSelector: invalid response structure: %s", e)
-            return None
-
+    def _parse_proposed_response(self, response: ProposalResponse) -> Optional[Tuple[int, ...]]:
         if set(response.combination.keys()) != set(self._node_names):
             logger.warning(
                 "LMProposalModelSelector: response nodes don't match pipeline nodes."
@@ -272,7 +294,7 @@ class LMProposalModelSelector(BaseModelSelector):
 
         return tuple(indices)
 
-    def _ask_proposer(self, max_retries: int = 3) -> Optional[Tuple[int, ...]]:
+    def _ask_proposer(self) -> Optional[Tuple[int, ...]]:
         preview = self._dataset_preview()
         prompt = self._build_prompt(preview)
         messages = [
@@ -288,22 +310,47 @@ class LMProposalModelSelector(BaseModelSelector):
             {"role": "user", "content": prompt},
         ]
 
+        max_retries = self.tuning.max_retries
         for attempt in range(1, max_retries + 1):
             try:
-                response = self.proposer_client.chat.completions.create(
-                    model=self.proposer_model,
-                    temperature=0.0,
-                    response_format={"type": "json_object"},
-                    messages=messages,
-                )
-                raw = response.choices[0].message.content or ""
-                proposed = self._parse_proposed_combination(raw)
+                if (
+                    hasattr(self.proposer_client, "beta")
+                    and hasattr(self.proposer_client.beta, "chat")
+                    and hasattr(self.proposer_client.beta.chat, "completions")
+                    and hasattr(self.proposer_client.beta.chat.completions, "parse")
+                ):
+                    response = self.proposer_client.beta.chat.completions.parse(
+                        model=self.proposer_model,
+                        messages=messages,
+                        response_format=ProposalResponse,
+                    )
+                    parsed = response.choices[0].message.parsed
+                    proposed = (
+                        self._parse_proposed_response(parsed) if parsed is not None else None
+                    )
+                else:
+                    response = self.proposer_client.chat.completions.create(
+                        model=self.proposer_model,
+                        response_format={"type": "json_object"},
+                        messages=messages,
+                    )
+                    raw = response.choices[0].message.content or ""
+                    payload = json.loads(raw)
+                    parsed = ProposalResponse.model_validate(payload)
+                    proposed = self._parse_proposed_response(parsed)
                 if proposed is not None:
                     return proposed
                 logger.warning(
                     "LM proposer attempt %d/%d: invalid response, retrying...",
                     attempt,
                     max_retries,
+                )
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.warning(
+                    "LM proposer attempt %d/%d: invalid structured response (%s), retrying...",
+                    attempt,
+                    max_retries,
+                    e,
                 )
             except Exception as e:
                 logger.warning(

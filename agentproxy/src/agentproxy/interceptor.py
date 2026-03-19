@@ -2,6 +2,7 @@
 
 import json
 import time
+import warnings
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -217,6 +218,8 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                     request, cached_response, original_latency, callback, cached=True
                 )
                 return cached_response
+        else:
+            warnings.warn("Caching does not support streaming")
 
         t0 = time.monotonic()
         response = _original_sync_send(self, request, stream=stream, **kwargs)
@@ -229,6 +232,8 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass
+        else:
+            warnings.warn("Token tracking does not support streaming")
 
         return response
 
@@ -247,6 +252,8 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                     request, cached_response, original_latency, callback, cached=True
                 )
                 return cached_response
+        else:
+            warnings.warn("Caching does not support streaming")
 
         t0 = time.monotonic()
         response = await _original_async_send(self, request, stream=stream, **kwargs)
@@ -259,6 +266,8 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                 _try_record(request, response, latency, callback)
             except Exception:
                 pass
+        else:
+            warnings.warn("Token tracking does not support streaming")
 
         return response
 

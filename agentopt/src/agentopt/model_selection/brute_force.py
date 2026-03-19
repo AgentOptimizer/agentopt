@@ -45,7 +45,9 @@ class BruteForceModelSelector(BaseModelSelector):
         # Sequential combos, but evaluate questions concurrently within each combo.
         return asyncio.run(self._select_sequential_async(max_concurrent))
 
-    async def _select_sequential_async(self, max_concurrent: int = 20) -> SelectionResults:
+    async def _select_sequential_async(
+        self, max_concurrent: int = 20
+    ) -> SelectionResults:
         all_combos = self._all_combos()
 
         all_results: List[ModelResult] = []

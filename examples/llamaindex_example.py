@@ -1,54 +1,46 @@
+"""
+Example: LlamaIndex agent with agentopt.
+
+Prerequisites:
+    1. pip install llama-index-core llama-index-llms-openai agentopt agentproxy
+    2. Set OPENAI_API_KEY environment variable
+"""
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
-import json
-from pathlib import Path
+import inspect
+from typing import Any, Dict
 
 from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from agentopt import EvalCache, ModelProxy
-from agentopt.model_selection import (
-    BruteForceModelSelector,
-    RandomSearchModelSelector,
-    HillClimbingModelSelector,
-    ArmEliminationModelSelector,
-    HyperbandModelSelector,
-    BayesianOptimizationModelSelector,
-)
 from llama_index.llms.openai import OpenAI as LlamaOpenAI
-from llama_index.llms.anthropic import Anthropic as LlamaAnthropic
+
+from agentopt import (
+    ArmEliminationModelSelector,
+    BruteForceModelSelector,
+    HillClimbingModelSelector,
+    HyperbandModelSelector,
+    LMProposalModelSelector,
+    RandomSearchModelSelector,
+)
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
-    "random_search": RandomSearchModelSelector,
+    "random": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "hyperband": HyperbandModelSelector,
-    "bayesian_optimization": BayesianOptimizationModelSelector,
+    "lm_proposal": LMProposalModelSelector,
 }
 
+try:
+    from agentopt import BayesianOptimizationModelSelector
 
-def load_dataset(dataset_dir, filename):
-    """Load JSONL dataset and return (input_data, expected_answer) tuples for LlamaIndex."""
-    dataset_path = Path(dataset_dir)
-    jsonl_file = dataset_path / filename
-
-    tasks = []
-    with open(jsonl_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            item = json.loads(line)
-            tasks.append(({"user_msg": item["question"]}, item["output"]))
-    return tasks
-
-
-def eval_fn(expected, actual):
-    """Check if expected answer appears in the agent's response."""
-    return expected.lower() in str(actual).lower()
+    SELECTORS["bayesian_optimization"] = BayesianOptimizationModelSelector
+except ImportError:
+    pass
 
 
 # Tools
@@ -74,224 +66,75 @@ def divide(a: float, b: float) -> float:
     return a / b
 
 
-def single_agent_example():
-    """Single LlamaIndex FunctionAgent wrapped in AgentWorkflow.
+class _AsyncRunner:
+    """Callable wrapper whose async __call__ is detected by the framework."""
 
-    LlamaIndex agents use strict Pydantic validation, so ModelProxy cannot
-    be passed as llm= directly. Instead we create the agent with a real LLM.
-    The selector auto-registers agents for sync on model swap.
-    """
-    initial_llm = LlamaOpenAI(model="gpt-4o-mini")
-    llm_proxy = ModelProxy(initial_llm)
+    def __init__(self, workflow):
+        self._workflow = workflow
+
+    async def __call__(self, input_data):
+        question = input_data if isinstance(input_data, str) else input_data["question"]
+        response = await self._workflow.run(user_msg=question)
+        return str(response)
+
+
+def agent_maker(models: Dict[str, Any]):
+    """Factory: builds a LlamaIndex math agent with the given model."""
+    llm = (
+        models["agent"]
+        if not isinstance(models["agent"], str)
+        else LlamaOpenAI(model=models["agent"])
+    )
 
     agent = FunctionAgent(
         name="MathAgent",
         description="Solves math problems using calculator tools",
         tools=[multiply, add, subtract, divide],
-        llm=initial_llm,
+        llm=llm,
         system_prompt=(
             "You are a helpful assistant that can perform mathematical operations. "
             "When asked to calculate something, use the available tools to compute the result."
         ),
     )
 
-    workflow = AgentWorkflow(agents=[agent], root_agent="MathAgent",)
+    workflow = AgentWorkflow(agents=[agent], root_agent="MathAgent")
 
-    return llm_proxy, workflow
-
-
-def multi_agent_example():
-    """Multi-agent LlamaIndex AgentWorkflow.
-
-    Uses AgentWorkflow — LlamaIndex's native multi-agent orchestrator.
-    Agent 1 (Math): Solves the problem using tools, hands off to Reviewer.
-    Agent 2 (Reviewer): Verifies the answer and returns the final result.
-
-    Shared LLM proxy so both agents are optimized together.
-    """
-    initial_llm = LlamaOpenAI(model="gpt-4o-mini")
-    llm_proxy = ModelProxy(initial_llm)
-
-    math_agent = FunctionAgent(
-        name="MathAgent",
-        description="Solves math problems using calculator tools",
-        tools=[multiply, add, subtract, divide],
-        llm=initial_llm,
-        system_prompt=(
-            "You are a math assistant. Use the available tools to solve "
-            "the calculation. Once you have the answer, hand off to "
-            "ReviewAgent for verification."
-        ),
-        can_handoff_to=["ReviewAgent"],
-    )
-
-    review_agent = FunctionAgent(
-        name="ReviewAgent",
-        description="Reviews and verifies math answers",
-        tools=[],
-        llm=initial_llm,
-        system_prompt=(
-            "You are a reviewer. You receive a math question and a proposed "
-            "answer. Verify the answer is correct and return the final numeric result. "
-            "If the answer looks wrong, hand back to MathAgent. "
-            "Reply with just the number."
-        ),
-        can_handoff_to=["MathAgent"],
-    )
-
-    workflow = AgentWorkflow(agents=[math_agent, review_agent], root_agent="MathAgent",)
-
-    return llm_proxy, workflow
+    return _AsyncRunner(workflow)
 
 
-def multi_agent_multi_llm_example():
-    """Multi-agent AgentWorkflow with separate LLMs per agent.
-
-    Each agent has its own proxy for independent optimization.
-
-    Note: Uses same-provider models to avoid cross-provider tool format
-    issues in LlamaIndex AgentWorkflow (OpenAI and Anthropic use different
-    tool_call serialization formats in conversation history).
-    """
-    math_llm = LlamaAnthropic(model="gpt-4o")
-    reviewer_llm = LlamaAnthropic(model="gpt-4o")
-    math_proxy = ModelProxy(math_llm)
-    reviewer_proxy = ModelProxy(reviewer_llm)
-
-    math_agent = FunctionAgent(
-        name="MathAgent",
-        description="Solves math problems using calculator tools",
-        tools=[multiply, add, subtract, divide],
-        llm=math_llm,
-        system_prompt=(
-            "You are a math assistant. Use the available tools to solve "
-            "the calculation. Once you have the answer, hand off to "
-            "ReviewAgent for verification."
-        ),
-        can_handoff_to=["ReviewAgent"],
-    )
-
-    review_agent = FunctionAgent(
-        name="ReviewAgent",
-        description="Reviews and verifies math answers",
-        tools=[],
-        llm=reviewer_llm,
-        system_prompt=(
-            "You are a reviewer. You receive a math question and a proposed "
-            "answer. Verify the answer is correct and return the final numeric result. "
-            "If the answer looks wrong, hand back to MathAgent. "
-            "Reply with just the number."
-        ),
-        can_handoff_to=["MathAgent"],
-    )
-
-    workflow = AgentWorkflow(agents=[math_agent, review_agent], root_agent="MathAgent",)
-
-    return (math_proxy, reviewer_proxy), workflow
+def eval_fn(expected: str, actual) -> float:
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
 
 
-def run_model_selection(
-    agent,
-    llm_proxies,
-    parallel=False,
-    max_concurrent: int = 20,
-    dataset_file=None,
-    model_candidates=None,
-    selector_name: str = "brute_force",
-    selector_kwargs: dict | None = None,
-    cache_path: str | None = None,
-):
-    dataset = load_dataset("examples/datasets", filename=dataset_file)
-    if model_candidates is None:
-        model_candidates = ["openai/gpt-4o-mini", "openai/gpt-4o", "openai/gpt-4o"]
-
-    # Set up cache.
-    cache = EvalCache(cache_path) if cache_path else None
-    if cache:
-        print(f"  [run] cache enabled: {cache_path} ({len(cache)} existing entries)")
-
-    SelectorCls = SELECTORS[selector_name]
-    base_kwargs = {
-        "models": {llm: model_candidates for llm in llm_proxies},
-        "eval_fn": eval_fn,
-        "dataset": dataset,
-        "agent": agent,
-        "cache": cache,
-    }
-    if selector_kwargs:
-        base_kwargs.update(selector_kwargs)
-    selector = SelectorCls(**base_kwargs)
-
-    results = selector.select_best(parallel=parallel, max_concurrent=max_concurrent)
-    print(f"\nBest: {results.get_best()}")
-
-    if cache:
-        print(f"  [run] cache now has {len(cache)} entries")
-
-    return results
+dataset = [
+    ("What is 2 + 2?", "4"),
+    ("What is 5 * 3?", "15"),
+    ("What is 10 - 4?", "6"),
+]
 
 
-def plot_results(results, title="Model Performance", save_path=None):
-    """Plot accuracy vs latency for model selection results."""
-    plt.figure(figsize=(10, 6))
-    accuracies = [r.accuracy for r in results]
-    latencies = [r.latency_seconds for r in results]
-    names = [r.model_name for r in results]
-
-    plt.scatter(latencies, accuracies)
-
-    for name, lat, acc in zip(names, latencies, accuracies):
-        plt.annotate(name, (lat, acc))
-
-    plt.xlabel("Latency (seconds)")
-    plt.ylabel("Accuracy")
-    plt.title(title)
-    plt.grid(True)
-
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"Plot saved to {save_path}")
-    plt.close()
+def _filter_selector_kwargs(
+    selector_cls, selector_kwargs: Dict[str, Any]
+) -> Dict[str, Any]:
+    params = inspect.signature(selector_cls.__init__).parameters
+    return {k: v for k, v in selector_kwargs.items() if k in params}
 
 
-EXAMPLES = {
-    "single": ("Single-agent", single_agent_example),
-    "multi": ("Multi-agent (shared LLM)", multi_agent_example),
-    "multi-llm": ("Multi-agent (separate LLMs)", multi_agent_multi_llm_example),
-}
-
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="LlamaIndex model selection example")
+    parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
+    parser.add_argument("--parallel", action="store_true")
+    parser.add_argument("--max-concurrent", type=int, default=20)
     parser.add_argument(
-        "example", choices=EXAMPLES.keys(), help="Which example to run",
-    )
-    parser.add_argument(
-        "--parallel", action="store_true", help="Run model selection in parallel",
-    )
-    parser.add_argument(
-        "--max-concurrent",
-        type=int,
-        default=20,
-        help="Max concurrent in-flight eval calls per model combination (question-level parallelism).",
-    )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="math_problems.jsonl",
-        help="JSONL filename in examples/datasets/ (default: first .jsonl found)",
-    )
-    parser.add_argument(
-        "--selector",
-        choices=sorted(SELECTORS.keys()),
-        default="brute_force",
-        help="Model selector to use (default: brute_force)",
+        "--use-instances",
+        action="store_true",
+        help="Pass pre-built LlamaOpenAI instances instead of model name strings",
     )
     parser.add_argument(
         "--sample-fraction",
         type=float,
         default=0.25,
-        help="Fraction of combinations to evaluate when --selector=random_search",
+        help="Fraction of combinations to evaluate when --selector=random",
     )
     parser.add_argument(
         "--reduction-factor",
@@ -308,54 +151,40 @@ if __name__ == "__main__":
             "(hill_climbing neighbours and bayesian_optimization candidates)."
         ),
     )
-    parser.add_argument(
-        "--cache",
-        type=str,
-        default=None,
-        help="Path to cache file (e.g. .cache/llamaindex_eval.json). Omit to disable caching.",
-    )
     args = parser.parse_args()
 
-    label, setup_fn = EXAMPLES[args.example]
-    mode = "parallel" if args.parallel else "sequential"
-
-    result = setup_fn()
-
-    # multi-llm returns a tuple of proxies; the others return a single proxy
-    if isinstance(result[0], tuple):
-        llm_proxies, agent = result
+    candidates = ["gpt-4o", "gpt-4o-mini"]
+    if args.use_instances:
+        models = {"agent": [LlamaOpenAI(model=m) for m in candidates]}
     else:
-        llm_proxy, agent = result
-        llm_proxies = [llm_proxy]
+        models = {"agent": candidates}
 
-    # Multi-LLM uses Anthropic-only candidates to avoid cross-provider
-    # tool format issues in LlamaIndex AgentWorkflow.
-    candidates = (
-        ["openai/gpt-4o", "openai/gpt-5.1", "openai/gpt-4o-mini"]
-        if args.example == "multi-llm"
-        else None  # default mixed candidates
-    )
-
-    selector_kwargs = {}
-    if args.selector == "random_search":
+    selector_cls = SELECTORS[args.selector]
+    selector_kwargs: Dict[str, Any] = {}
+    if args.selector == "random":
         selector_kwargs["sample_fraction"] = args.sample_fraction
     if args.selector == "hyperband":
         selector_kwargs["reduction_factor"] = args.reduction_factor
     if args.selector in ("hill_climbing", "bayesian_optimization"):
         selector_kwargs["batch_size"] = args.batch_size
 
-    results = run_model_selection(
-        agent,
-        llm_proxies,
-        parallel=args.parallel,
-        max_concurrent=args.max_concurrent,
-        dataset_file=args.dataset,
-        model_candidates=candidates,
-        selector_name=args.selector,
-        selector_kwargs=selector_kwargs,
-        cache_path=args.cache,
+    selector = selector_cls(
+        agent_fn=agent_maker,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
+        **_filter_selector_kwargs(selector_cls, selector_kwargs),
     )
 
-    plot_results(
-        results, f"LlamaIndex {label} Results", "examples/llamaindex_results.png",
+    results = selector.select_best(
+        parallel=args.parallel, max_concurrent=args.max_concurrent
     )
+    results.print_summary()
+
+    best = results.get_best_combo()
+    if best:
+        print(f"\nBest combination: {best}")
+
+
+if __name__ == "__main__":
+    main()

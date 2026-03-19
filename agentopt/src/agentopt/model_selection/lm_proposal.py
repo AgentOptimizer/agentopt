@@ -92,6 +92,11 @@ class LMProposalModelSelector(BaseModelSelector):
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
+        if parallel:
+            logger.warning(
+                "LMProposalModelSelector received parallel=True, but only a single "
+                "combination is evaluated; proceeding with sequential evaluation."
+            )
         combo_idx = self._ask_proposer()
         if combo_idx is None:
             combo_idx = tuple(0 for _ in self._node_names)

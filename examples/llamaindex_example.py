@@ -1,8 +1,8 @@
 """
-Example: OpenAI Agents SDK agent with agentopt.
+Example: LlamaIndex agent with agentopt.
 
 Prerequisites:
-    1. pip install openai-agents agentopt agentproxy
+    1. pip install llama-index-core llama-index-llms-openai agentopt agentproxy
     2. Set OPENAI_API_KEY environment variable
 """
 
@@ -14,7 +14,8 @@ import argparse
 import inspect
 from typing import Any, Dict
 
-from agents import Agent, Runner, function_tool
+from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
+from llama_index.llms.openai import OpenAI as LlamaOpenAI
 
 from agentopt import (
     ArmEliminationModelSelector,
@@ -42,46 +43,63 @@ except ImportError:
     pass
 
 
-@function_tool
-def search(query: str) -> str:
-    """Search for information about a topic."""
-    # Stub — replace with a real search tool as needed.
-    return f"Search results for: {query}"
+# Tools
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers and returns the product"""
+    return a * b
 
 
-def _resolve_model(candidate: Any) -> str:
-    """Extract model name string from a candidate (string, dict, or object)."""
-    if isinstance(candidate, str):
-        return candidate
-    if isinstance(candidate, dict):
-        return candidate["model"]
-    return getattr(candidate, "model", str(candidate))
+def add(a: float, b: float) -> float:
+    """Add two numbers and returns the sum"""
+    return a + b
+
+
+def subtract(a: float, b: float) -> float:
+    """Subtract b from a and returns the result"""
+    return a - b
+
+
+def divide(a: float, b: float) -> float:
+    """Divide a by b and returns the result"""
+    if b == 0:
+        return float("inf")
+    return a / b
+
+
+class _AsyncRunner:
+    """Callable wrapper whose async __call__ is detected by the framework."""
+
+    def __init__(self, workflow):
+        self._workflow = workflow
+
+    async def __call__(self, input_data):
+        question = input_data if isinstance(input_data, str) else input_data["question"]
+        response = await self._workflow.run(user_msg=question)
+        return str(response)
 
 
 def agent_maker(models: Dict[str, Any]):
-    """Factory: builds an OpenAI Agents SDK planner+solver agent pair."""
-    planner = Agent(
-        name="Planner",
-        model=_resolve_model(models["planner"]),
-        instructions="Create a brief plan to answer the question. Be concise.",
-        tools=[search],
-    )
-    solver = Agent(
-        name="Solver",
-        model=_resolve_model(models["solver"]),
-        instructions="Given a plan, produce a concise final answer.",
-        handoffs=[],
+    """Factory: builds a LlamaIndex math agent with the given model."""
+    llm = (
+        models["agent"]
+        if not isinstance(models["agent"], str)
+        else LlamaOpenAI(model=models["agent"])
     )
 
-    # Wire planner → solver via handoff
-    planner_with_handoff = planner.clone(handoffs=[solver])
+    agent = FunctionAgent(
+        name="MathAgent",
+        description="Solves math problems using calculator tools",
+        tools=[multiply, add, subtract, divide],
+        llm=llm,
+        system_prompt=(
+            "You are a helpful assistant that can perform mathematical operations. "
+            "When asked to calculate something, use the available tools to compute the result."
+        ),
+    )
 
-    def run(input_data):
-        question = input_data if isinstance(input_data, str) else input_data["question"]
-        result = Runner.run_sync(planner_with_handoff, question)
-        return result.final_output
+    workflow = AgentWorkflow(agents=[agent], root_agent="MathAgent")
 
-    return run
+    return _AsyncRunner(workflow)
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -89,11 +107,9 @@ def eval_fn(expected: str, actual) -> float:
 
 
 dataset = [
-    ("What is the capital of France?", "Paris"),
     ("What is 2 + 2?", "4"),
-    ("What color is the sky on a clear day?", "blue"),
-    ("What is the largest planet in our solar system?", "Jupiter"),
-    ("What is H2O commonly known as?", "water"),
+    ("What is 5 * 3?", "15"),
+    ("What is 10 - 4?", "6"),
 ]
 
 
@@ -105,16 +121,14 @@ def _filter_selector_kwargs(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="OpenAI Agents SDK model selection example"
-    )
+    parser = argparse.ArgumentParser(description="LlamaIndex model selection example")
     parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--max-concurrent", type=int, default=20)
     parser.add_argument(
         "--use-instances",
         action="store_true",
-        help="Pass config dicts instead of model name strings",
+        help="Pass pre-built LlamaOpenAI instances instead of model name strings",
     )
     parser.add_argument(
         "--sample-fraction",
@@ -139,14 +153,11 @@ def main():
     )
     args = parser.parse_args()
 
-    candidates = ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
+    candidates = ["gpt-4o", "gpt-4o-mini"]
     if args.use_instances:
-        models = {
-            "planner": [{"model": m} for m in candidates],
-            "solver": [{"model": m} for m in candidates],
-        }
+        models = {"agent": [LlamaOpenAI(model=m) for m in candidates]}
     else:
-        models = {"planner": candidates, "solver": candidates}
+        models = {"agent": candidates}
 
     selector_cls = SELECTORS[args.selector]
     selector_kwargs: Dict[str, Any] = {}

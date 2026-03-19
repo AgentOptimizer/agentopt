@@ -2,6 +2,7 @@
 
 import json
 import time
+import warnings
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -32,6 +33,10 @@ _installed = False
 
 # Cache instance (None means caching disabled)
 _cache: Optional[ResponseCache] = None
+
+# Warn-once flags for streaming limitations
+_streaming_cache_warned: bool = False
+_streaming_tokens_warned: bool = False
 
 # URL path patterns that indicate LLM API endpoints
 _LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages", "/v1/responses")
@@ -217,18 +222,23 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                     request, cached_response, original_latency, callback, cached=True
                 )
                 return cached_response
+        else:
+            warnings.warn("Caching does not support streaming")
 
         t0 = time.monotonic()
         response = _original_sync_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
 
-        if not stream and response.status_code == 200:
-            try:
-                response.read()
-                _try_cache_store(request, response, latency)
-                _try_record(request, response, latency, callback)
-            except Exception:
-                pass
+        if not stream:
+            if response.status_code == 200:
+                try:
+                    response.read()
+                    _try_cache_store(request, response, latency)
+                    _try_record(request, response, latency, callback)
+                except Exception:
+                    pass
+        else:
+            warnings.warn("Token tracking does not support streaming")
 
         return response
 
@@ -247,18 +257,37 @@ def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
                     request, cached_response, original_latency, callback, cached=True
                 )
                 return cached_response
+        else:
+            global _streaming_cache_warned
+            if not _streaming_cache_warned:
+                warnings.warn(
+                    "Caching does not support streaming",
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                _streaming_cache_warned = True
 
         t0 = time.monotonic()
         response = await _original_async_send(self, request, stream=stream, **kwargs)
         latency = time.monotonic() - t0
 
-        if not stream and response.status_code == 200:
-            try:
-                await response.aread()
-                _try_cache_store(request, response, latency)
-                _try_record(request, response, latency, callback)
-            except Exception:
-                pass
+        if not stream:
+            if response.status_code == 200:
+                try:
+                    await response.aread()
+                    _try_cache_store(request, response, latency)
+                    _try_record(request, response, latency, callback)
+                except Exception:
+                    pass
+        else:
+            global _streaming_tokens_warned
+            if not _streaming_tokens_warned:
+                warnings.warn(
+                    "Token tracking does not support streaming",
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                _streaming_tokens_warned = True
 
         return response
 

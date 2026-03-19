@@ -20,5 +20,5 @@ __all__ = [
     "BayesianOptimizationModelSelector",
     "DatapointResult",
     "ModelResult",
-    "SelectionResults"
+    "SelectionResults",
 ]

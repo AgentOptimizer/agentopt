@@ -5,7 +5,6 @@ Uses a BoTorch MixedSingleTaskGP with categorical inputs to iteratively
 select promising combinations via Expected Improvement on accuracy.
 """
 
-import asyncio
 import itertools
 import logging
 import random
@@ -102,13 +101,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         ) -> Tuple[float, float, Dict[str, int], Dict[str, int], List[DatapointResult]]:
             combo_dict = index_combo_to_dict(combo)
             combo_name = self._combo_name(combo_dict)
-            scores, latencies, dp_ids = asyncio.run(
-                self._evaluate_combo_async(
-                    combo_dict,
-                    self.dataset,
-                    label=combo_name,
-                    max_concurrent=max_concurrent,
-                )
+            scores, latencies, dp_ids = self._evaluate_combo(
+                combo_dict, self.dataset, label=combo_name
             )
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)

@@ -5,7 +5,6 @@ Uses the model topology (quality / speed rankings) to define
 neighbours so that each iteration makes an informed single-step move.
 """
 
-import asyncio
 import random
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -82,10 +81,8 @@ class HillClimbingModelSelector(BaseModelSelector):
             acc, lat, in_tok, out_tok, dp_results = self._eval_cache[combo_name]
             return combo_name, acc, lat, in_tok, out_tok, dp_results, True
 
-        scores, latencies, dp_ids = asyncio.run(
-            self._evaluate_combo_async(
-                combo, self.dataset, label=combo_name, max_concurrent=max_concurrent
-            )
+        scores, latencies, dp_ids = self._evaluate_combo(
+            combo, self.dataset, label=combo_name
         )
         input_tokens, output_tokens = self._fetch_tokens(combo_name)
         accuracy, _ = self._compute_stats(scores)

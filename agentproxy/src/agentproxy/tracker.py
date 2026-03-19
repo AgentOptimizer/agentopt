@@ -52,7 +52,6 @@ class LLMTracker:
         self._records: List[CallRecord] = []
         self._lock = threading.Lock()
         self._active = False
-        self._cache_on = cache
         self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
 
     def start(self) -> None:
@@ -79,7 +78,7 @@ class LLMTracker:
             self._response_cache.flush()
 
     def clear_cache(self) -> None:
-        """Clear all cached responses and delete disk files."""
+        """Clear all cached responses and database rows."""
         if self._response_cache is not None:
             self._response_cache.clear()
 

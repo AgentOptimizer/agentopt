@@ -103,7 +103,6 @@ tracker = LLMTracker(cache=False)               # cache off
 | `get_usage(data_id=None, combo_id=None, agent_id=None)` | `{model: (input_tokens, output_tokens)}` |
 | `get_cached_latency(data_id=None, combo_id=None, agent_id=None)` | Total latency (seconds) saved by cache hits |
 | `cache_enabled` (property) | Get/set whether response caching is active at runtime |
-| `cache_stats` (property) | `CacheStats` with `hits`, `misses`, `hit_rate` |
 | `clear_cache()` | Clear all cached responses and reset stats |
 | `clear()` | Clear all recorded data |
 

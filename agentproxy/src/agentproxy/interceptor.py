@@ -30,12 +30,11 @@ _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
 _installed = False
 
-# Cache and its enabled flag (set by LLMTracker)
+# Cache instance (None means caching disabled)
 _cache: Optional[ResponseCache] = None
-_cache_enabled = True
 
 # URL path patterns that indicate LLM API endpoints
-_LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages")
+_LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages", "/v1/responses")
 
 
 def _is_llm_request(request: httpx.Request) -> bool:
@@ -135,7 +134,7 @@ def _try_cache_lookup(
 
     Returns ``(response, original_latency_seconds)`` on hit, ``None`` on miss.
     """
-    if _cache is None or not _cache_enabled:
+    if _cache is None:
         return None
 
     request_body = _get_request_body(request)
@@ -167,7 +166,7 @@ def _try_cache_store(
     request: httpx.Request, response: httpx.Response, latency_seconds: float = 0.0,
 ) -> None:
     """Store a successful response in the cache."""
-    if _cache is None or not _cache_enabled:
+    if _cache is None:
         return
 
     request_body = _get_request_body(request)
@@ -190,20 +189,15 @@ def _try_cache_store(
 # ---------------------------------------------------------------------------
 
 
-def install(
-    callback: Callable,
-    cache: Optional[ResponseCache] = None,
-    cache_enabled: bool = True,
-) -> None:
+def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
     """Monkey-patch httpx.Client.send and httpx.AsyncClient.send."""
     global _original_sync_send, _original_async_send, _installed
-    global _cache, _cache_enabled
+    global _cache
 
     if _installed:
         return
 
     _cache = cache
-    _cache_enabled = cache_enabled
 
     _original_sync_send = httpx.Client.send
     _original_async_send = httpx.AsyncClient.send
@@ -276,7 +270,7 @@ def install(
 def uninstall() -> None:
     """Restore original httpx send methods."""
     global _original_sync_send, _original_async_send, _installed
-    global _cache, _cache_enabled
+    global _cache
 
     if not _installed:
         return
@@ -289,5 +283,4 @@ def uninstall() -> None:
     _original_sync_send = None
     _original_async_send = None
     _cache = None
-    _cache_enabled = True
     _installed = False

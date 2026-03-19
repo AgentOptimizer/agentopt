@@ -30,6 +30,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         seed: Optional[int] = None,
         batch_size: int = 1,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        tracker=None,
     ) -> None:
         super().__init__(
             agent_fn=agent_fn,
@@ -38,6 +39,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             dataset=dataset,
             invoke_fn=invoke_fn,
             model_prices=model_prices,
+            tracker=tracker,
         )
         self.max_iterations = max_iterations
         self.num_restarts = num_restarts
@@ -323,7 +325,7 @@ class HillClimbingModelSelector(BaseModelSelector):
     # Public API
     # ------------------------------------------------------------------
 
-    def select_best(
+    def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         assert (

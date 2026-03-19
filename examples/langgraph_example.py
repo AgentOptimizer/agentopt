@@ -6,6 +6,10 @@ Prerequisites:
     2. Set OPENAI_API_KEY environment variable
 """
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
 import inspect
 from typing import Annotated, Any, Dict, TypedDict

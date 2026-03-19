@@ -29,6 +29,7 @@ class HyperbandModelSelector(BaseModelSelector):
         reduction_factor: float = 3.0,
         max_resource: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        tracker=None,
     ) -> None:
         if reduction_factor <= 1.0:
             raise ValueError("reduction_factor must be > 1.0.")
@@ -40,6 +41,7 @@ class HyperbandModelSelector(BaseModelSelector):
             dataset=dataset,
             invoke_fn=invoke_fn,
             model_prices=model_prices,
+            tracker=tracker,
         )
 
         self.reduction_factor = reduction_factor
@@ -59,7 +61,7 @@ class HyperbandModelSelector(BaseModelSelector):
         )
         self._B = (self._s_max + 1) * self.max_resource
 
-    def select_best(
+    def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         if parallel:

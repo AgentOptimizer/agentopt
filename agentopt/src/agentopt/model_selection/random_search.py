@@ -30,6 +30,7 @@ class RandomSearchModelSelector(BaseModelSelector):
         sample_fraction: float = 0.25,
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
+        tracker=None,
     ) -> None:
         super().__init__(
             agent_fn=agent_fn,
@@ -38,13 +39,14 @@ class RandomSearchModelSelector(BaseModelSelector):
             dataset=dataset,
             invoke_fn=invoke_fn,
             model_prices=model_prices,
+            tracker=tracker,
         )
         if not 0 < sample_fraction <= 1:
             raise ValueError("sample_fraction must be in the range (0, 1].")
         self.sample_fraction = sample_fraction
         self.seed = seed
 
-    def select_best(
+    def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         if parallel:

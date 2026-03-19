@@ -6,6 +6,10 @@ Prerequisites:
     2. Set OPENAI_API_KEY environment variable
 """
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import argparse
 import inspect
 from typing import Any, Dict
@@ -67,7 +71,7 @@ def agent_maker(models: Dict[str, Any]):
     llm = (
         models["agent"]
         if not isinstance(models["agent"], str)
-        else ChatOpenAI(model=models["agent"])
+        else ChatOpenAI(model=models["agent"], disable_streaming=True)
     )
 
     agent = create_tool_calling_agent(llm, TOOLS, PROMPT)

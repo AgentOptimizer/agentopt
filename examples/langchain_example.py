@@ -70,7 +70,7 @@ def agent_maker(models: Dict[str, Any]):
     llm = (
         models["agent"]
         if not isinstance(models["agent"], str)
-        else ChatOpenAI(model=models["agent"])
+        else ChatOpenAI(model=models["agent"], disable_streaming=True)
     )
 
     agent = create_tool_calling_agent(llm, TOOLS, PROMPT)

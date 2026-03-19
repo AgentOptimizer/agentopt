@@ -7,6 +7,7 @@ Prerequisites:
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import argparse
@@ -143,8 +144,6 @@ def main():
         parallel=args.parallel, max_concurrent=args.max_concurrent
     )
     results.print_summary()
-
-    print(f"\nCache stats: {selector._tracker.cache_stats}")
 
     best = results.get_best_combo()
     if best:

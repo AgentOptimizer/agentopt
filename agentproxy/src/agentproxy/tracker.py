@@ -53,17 +53,14 @@ class LLMTracker:
         self._lock = threading.Lock()
         self._active = False
         self._cache_on = cache
-        self._response_cache = (
-            ResponseCache(cache_dir=cache_dir) if cache else None
-        )
+        self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
 
     def start(self) -> None:
         """Install httpx patches. Idempotent."""
         if self._active:
             return
         install(
-            callback=self._on_call,
-            cache=self._response_cache,
+            callback=self._on_call, cache=self._response_cache,
         )
         self._active = True
 

@@ -164,9 +164,7 @@ class ResponseCache:
                 except (json.JSONDecodeError, KeyError) as exc:
                     logger.warning("Skipping corrupt cache row %s: %s", key, exc)
             if loaded:
-                logger.debug(
-                    "Loaded %d cache entries from %s", loaded, self._db_path
-                )
+                logger.debug("Loaded %d cache entries from %s", loaded, self._db_path)
         finally:
             conn.close()
 

@@ -41,8 +41,7 @@ def _fake_handler(request: httpx.Request) -> httpx.Response:
 
 def _make_client() -> httpx.Client:
     return httpx.Client(
-        transport=httpx.MockTransport(_fake_handler),
-        base_url="https://api.openai.com",
+        transport=httpx.MockTransport(_fake_handler), base_url="https://api.openai.com",
     )
 
 
@@ -174,12 +173,10 @@ class TestDiskCache:
         )
         good = CacheEntry(response_bytes=b"good")
         conn.execute(
-            "INSERT INTO cache VALUES (?, ?)",
-            ("good", json.dumps(good.to_dict())),
+            "INSERT INTO cache VALUES (?, ?)", ("good", json.dumps(good.to_dict())),
         )
         conn.execute(
-            "INSERT INTO cache VALUES (?, ?)",
-            ("bad", "not valid json{{{"),
+            "INSERT INTO cache VALUES (?, ?)", ("bad", "not valid json{{{"),
         )
         conn.commit()
         conn.close()

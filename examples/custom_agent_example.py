@@ -10,6 +10,7 @@ Prerequisites:
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import argparse
@@ -128,7 +129,10 @@ def main():
     selector_cls = SELECTORS[args.selector]
     tracker = LLMTracker(cache_dir="./llm_cache")
     selector = selector_cls(
-        agent_fn=agent_maker, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent_fn=agent_maker,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         tracker=tracker,
     )
 
@@ -146,9 +150,11 @@ def main():
 
     # Show cache DB on disk
     from pathlib import Path
+
     db_path = Path("./llm_cache/cache.db")
     if db_path.exists():
         import sqlite3
+
         conn = sqlite3.connect(str(db_path))
         (count,) = conn.execute("SELECT COUNT(*) FROM cache").fetchone()
         conn.close()

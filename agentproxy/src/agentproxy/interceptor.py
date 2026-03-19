@@ -189,10 +189,7 @@ def _try_cache_store(
 # ---------------------------------------------------------------------------
 
 
-def install(
-    callback: Callable,
-    cache: Optional[ResponseCache] = None,
-) -> None:
+def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
     """Monkey-patch httpx.Client.send and httpx.AsyncClient.send."""
     global _original_sync_send, _original_async_send, _installed
     global _cache

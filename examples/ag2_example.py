@@ -11,6 +11,7 @@ caller's thread and is required for agentproxy compatibility.
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import argparse

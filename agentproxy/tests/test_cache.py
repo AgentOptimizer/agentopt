@@ -41,8 +41,7 @@ def _fake_handler(request: httpx.Request) -> httpx.Response:
 
 def _make_client() -> httpx.Client:
     return httpx.Client(
-        transport=httpx.MockTransport(_fake_handler),
-        base_url="https://api.openai.com",
+        transport=httpx.MockTransport(_fake_handler), base_url="https://api.openai.com",
     )
 
 
@@ -95,7 +94,9 @@ class TestMakeCacheKey:
         body1 = {"model": "gpt-4o", "messages": [], "stream": True}
         body2 = {"model": "gpt-4o", "messages": [], "stream": False}
         body3 = {"model": "gpt-4o", "messages": []}
-        assert _make_cache_key(body1) == _make_cache_key(body2) == _make_cache_key(body3)
+        assert (
+            _make_cache_key(body1) == _make_cache_key(body2) == _make_cache_key(body3)
+        )
 
     def test_key_order_independent(self):
         body1 = {"model": "gpt-4o", "temperature": 0.5, "messages": []}
@@ -157,8 +158,14 @@ class TestCacheIntegration:
 
     def test_different_requests_no_hit(self):
         client = _make_client()
-        body1 = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "q1"}]}
-        body2 = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "q2"}]}
+        body1 = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "q1"}],
+        }
+        body2 = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "q2"}],
+        }
         _post(client, body1)
         _post(client, body2)
 
@@ -271,6 +278,7 @@ class TestCacheAsync:
             tracker = LLMTracker(cache=True, cache_dir=None)
             tracker.start()
             try:
+
                 async def _fake_async_handler(request: httpx.Request) -> httpx.Response:
                     return httpx.Response(200, json=_RESPONSE_BODY)
 

@@ -262,7 +262,6 @@ tracker.stop()    # restores original httpx
 | `get_usage(data_id=None, combo_id=None, agent_id=None)` | Return aggregated `{model: (input_tokens, output_tokens)}`. |
 | `get_cached_latency(data_id=None, combo_id=None, agent_id=None)` | Total latency (seconds) saved by cached responses. |
 | `cache_enabled` (property) | Get/set whether response caching is active at runtime. |
-| `cache_stats` (property) | Returns `CacheStats(hits, misses)` with `.hit_rate`. |
 | `clear_cache()` | Clear all cached responses and reset statistics. |
 | `clear()` | Clear all recorded data. |
 

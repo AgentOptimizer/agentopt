@@ -334,7 +334,7 @@ Uses a Gaussian Process surrogate model to predict combination performance and a
 **Algorithm:**
 
 ```
-1. Randomly evaluate n_initial_random combinations
+1. Randomly evaluate `2 * (n_nodes + 1)` combinations (clamped by the sample budget)
 2. For each BO iteration:
     a. Fit GP (MixedSingleTaskGP) to all evaluations
     b. Compute LogExpectedImprovement for all unseen combos
@@ -349,8 +349,8 @@ Uses a Gaussian Process surrogate model to predict combination performance and a
 - **Training:** `ExactMarginalLogLikelihood` fitted via `fit_gpytorch_mll`
 
 **Parameters:**
-- `n_iterations: Optional[int]` — number of GP-guided iterations (default: `max(0, int(0.2 × total_combos))`)
-- `n_initial_random: Optional[int]` — random initialization size (default: `min(2 × (n_nodes + 1), total_combos)`)
+- `sample_fraction: float = 0.25` — fraction of total combinations to evaluate (includes the initial random evaluations)
+- Initial random evaluations use `2 * (n_nodes + 1)` and are clamped by the sample budget.
 
 **Dependencies:** Requires `torch`, `botorch`, `gpytorch`. Install via `pip install "agentopt[bayesian]"`.
 

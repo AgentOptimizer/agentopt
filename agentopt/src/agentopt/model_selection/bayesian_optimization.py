@@ -39,9 +39,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         eval_fn: EvalFn,
         dataset: Dataset,
         invoke_fn: Optional[Callable] = None,
-        n_iterations: Optional[int] = None,
-        n_initial_random: Optional[int] = None,
         batch_size: int = 1,
+        sample_fraction: float = 0.25,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
     ) -> None:
@@ -55,9 +54,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             tracker=tracker,
         )
         _require_botorch()
-        self.n_iterations = n_iterations
-        self.n_initial_random = n_initial_random
         self.batch_size = max(1, int(batch_size))
+        if not 0 < float(sample_fraction) <= 1:
+            raise ValueError("sample_fraction must be in the range (0, 1].")
+        self.sample_fraction = float(sample_fraction)
 
     # ------------------------------------------------------------------
     # Shared helpers
@@ -66,6 +66,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
     def _bo_setup(self) -> Tuple:
         """Shared BO setup: imports, combo enumeration, iteration counts."""
         import torch
+        import math
         from botorch.acquisition.analytic import LogExpectedImprovement
         from botorch.fit import fit_gpytorch_mll
         from botorch.models.gp_regression_mixed import MixedSingleTaskGP
@@ -78,15 +79,22 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         all_index_combos = list(itertools.product(*[range(n) for n in n_choices]))
         total_combos = len(all_index_combos)
 
-        if self.n_initial_random is None:
-            n_initial_random = min(2 * (n_nodes + 1), total_combos)
-        else:
-            n_initial_random = self.n_initial_random
+        # Default budget: evaluate ~sample_fraction of all combinations in total
+        # (including the initial random evaluations).
+        sample_budget = min(
+            total_combos,
+            max(1, int(math.ceil(total_combos * self.sample_fraction))),
+        )
+        # MixedSingleTaskGP fitting needs at least a couple points; if we can,
+        # ensure the budget is >= 2.
+        if total_combos >= 2:
+            sample_budget = max(2, sample_budget)
 
-        if self.n_iterations is None:
-            n_iterations = max(0, int(0.2 * total_combos))
-        else:
-            n_iterations = max(0, self.n_iterations)
+        # Always use 2*(n_nodes+1) initial random evaluations (clamped by the
+        # total budget and search-space size).
+        n_initial_random = min(sample_budget, 2 * (n_nodes + 1))
+        bo_samples = max(0, sample_budget - n_initial_random)
+        n_iterations = max(0, int(math.ceil(bo_samples / self.batch_size)))
 
         return (
             torch,
@@ -101,6 +109,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             total_combos,
             n_initial_random,
             n_iterations,
+            sample_budget,
         )
 
     def _bo_index_combo_to_dict(
@@ -149,11 +158,21 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         evaluated: Set[Tuple[int, ...]],
     ) -> Optional[List[Tuple[int, ...]]]:
         """Fit GP, compute EI, return top-k batch of unseen combos or None."""
+        from botorch.models.transforms.outcome import Standardize  # type: ignore[reportMissingImports]
+
         train_X = torch_mod.tensor(X_list, dtype=torch_mod.float64)
         train_Y = torch_mod.tensor(Y_list, dtype=torch_mod.float64).unsqueeze(-1)
         cat_dims = list(range(n_nodes))
 
-        model = MixedSingleTaskGP(train_X=train_X, train_Y=train_Y, cat_dims=cat_dims,)
+        # Standardize the objective values for more stable GP fitting.
+        # For acquisition, BoTorch will handle mapping back to the original scale.
+        outcome_transform = Standardize(m=1)
+        model = MixedSingleTaskGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            cat_dims=cat_dims,
+            outcome_transform=outcome_transform,
+        )
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         fit_gpytorch_mll(mll)
 
@@ -262,6 +281,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             total_combos,
             n_initial_random,
             n_iterations,
+            sample_budget,
         ) = self._bo_setup()
 
         evaluated: Set[Tuple[int, ...]] = set()
@@ -294,6 +314,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         initial_pool = list(all_index_combos)
         random.shuffle(initial_pool)
         for idx in range(min(n_initial_random, len(initial_pool))):
+            if sample_budget is not None and len(evaluated) >= sample_budget:
+                break
             combo = initial_pool[idx]
             if combo in evaluated:
                 continue
@@ -312,9 +334,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
         # 2) Bayesian optimization loop
         for it in range(n_iterations):
+            if sample_budget is not None and len(evaluated) >= sample_budget:
+                break
             if len(X_list) < 2:
                 remaining = [c for c in all_index_combos if c not in evaluated]
                 if not remaining:
+                    break
+                if sample_budget is not None and len(evaluated) >= sample_budget:
                     break
                 combo = random.choice(remaining)
                 evaluated.add(combo)
@@ -345,6 +371,12 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
             if batch is None:
                 break
+
+            if sample_budget is not None:
+                remaining = sample_budget - len(evaluated)
+                if remaining <= 0:
+                    break
+                batch = batch[:remaining]
 
             for j, combo in enumerate(batch, 1):
                 evaluated.add(combo)
@@ -380,6 +412,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             total_combos,
             n_initial_random,
             n_iterations,
+            sample_budget,
         ) = self._bo_setup()
 
         evaluated: Set[Tuple[int, ...]] = set()
@@ -441,6 +474,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         initial_pool = list(all_index_combos)
         random.shuffle(initial_pool)
         for idx in range(min(n_initial_random, len(initial_pool))):
+            if sample_budget is not None and len(evaluated) >= sample_budget:
+                break
             combo = initial_pool[idx]
             if combo in evaluated:
                 continue
@@ -467,9 +502,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
         # 2) Bayesian optimization loop
         for it in range(n_iterations):
+            if sample_budget is not None and len(evaluated) >= sample_budget:
+                break
             if len(X_list) < 2:
                 remaining = [c for c in all_index_combos if c not in evaluated]
                 if not remaining:
+                    break
+                if sample_budget is not None and len(evaluated) >= sample_budget:
                     break
                 combo = random.choice(remaining)
                 evaluated.add(combo)
@@ -497,6 +536,12 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
             if batch is None:
                 break
+
+            if sample_budget is not None:
+                remaining = sample_budget - len(evaluated)
+                if remaining <= 0:
+                    break
+                batch = batch[:remaining]
 
             for combo in batch:
                 evaluated.add(combo)

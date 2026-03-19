@@ -77,7 +77,7 @@ class ResponseCache:
     init and dirty entries are flushed to the DB:
 
     * Periodically by a background daemon thread (every ``flush_interval``
-      seconds, default 60).
+      seconds, default 10).
     * Explicitly via :meth:`flush`.
     * Automatically when :meth:`close` is called (which ``LLMTracker.stop``
       calls for you).
@@ -90,7 +90,7 @@ class ResponseCache:
         Directory for the SQLite cache database (``cache.db``).
         If ``None`` (default), the cache is in-memory only.
     flush_interval : float, optional
-        Seconds between automatic background flushes (default 60).
+        Seconds between automatic background flushes (default 10).
         Set to 0 to disable the background flush thread (manual /
         close-only flushing).
     """

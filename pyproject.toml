@@ -1,0 +1,15 @@
+[project]
+name = "agentopt-workspace"
+version = "0.0.0"
+description = "Workspace root for agentopt + agentproxy"
+requires-python = ">=3.10"
+
+[tool.uv.workspace]
+members = ["agentopt", "agentproxy"]
+
+[tool.uv.sources]
+agentopt = { workspace = true }
+agentproxy = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["agentproxy/tests"]

@@ -16,7 +16,7 @@ dependencies = [
 bayesian = ["torch>=2.0.0", "botorch>=0.10.0", "gpytorch>=1.11.0"]
 crewai = ["crewai"]
 langgraph = ["langchain-openai", "langgraph"]
-examples = ["crewai", "langchain-openai", "langgraph", "openai"]
+examples = ["crewai", "langchain-openai", "langgraph", "openai", "python-dotenv"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentopt"]

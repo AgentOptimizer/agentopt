@@ -22,7 +22,6 @@ from agentopt import (
     ArmEliminationModelSelector,
     BruteForceModelSelector,
     HillClimbingModelSelector,
-    HyperbandModelSelector,
     LMProposalModelSelector,
     RandomSearchModelSelector,
 )
@@ -33,7 +32,6 @@ SELECTORS = {
     "random": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
-    "hyperband": HyperbandModelSelector,
     "lm_proposal": LMProposalModelSelector,
 }
 

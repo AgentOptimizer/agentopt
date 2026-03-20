@@ -1,6 +1,6 @@
 # Selection Algorithms
 
-AgentOpt provides 7 selection algorithms. Choose based on your search space size and evaluation budget.
+AgentOpt provides 6 selection algorithms. Choose based on your search space size and evaluation budget.
 
 ## At a Glance
 
@@ -10,7 +10,6 @@ AgentOpt provides 7 selection algorithms. Choose based on your search space size
 | [Random Search](#random-search) | Sampling | Configurable fraction | Quick baselines |
 | [Hill Climbing](#hill-climbing) | Greedy + restarts | Guided neighbors | Medium spaces |
 | [Arm Elimination](#arm-elimination) | Progressive pruning | Adaptive | Statistical early stopping |
-| [Hyperband](#hyperband) | Multi-bracket halving | Adaptive | Large spaces, limited budget |
 | [LM Proposal](#lm-proposal) | LLM-guided | Shortlist | Leveraging model knowledge |
 | [Bayesian Optimization](#bayesian-optimization) | GP surrogate | Sequential | Expensive evaluations |
 
@@ -134,31 +133,6 @@ selector = ArmEliminationModelSelector(
 
 !!! success "When to use"
     When bad combinations should be eliminated early to save budget. Particularly effective when there are clearly weak options.
-
----
-
-## Hyperband
-
-Full Hyperband algorithm using dataset samples as the resource. Runs multiple brackets of successive halving with different initial resource allocations.
-
-```python
-from agentopt import HyperbandModelSelector
-
-selector = HyperbandModelSelector(
-    agent_fn=agent_maker,
-    models=models,
-    eval_fn=eval_fn,
-    dataset=dataset,
-    reduction_factor=3.0,
-)
-```
-
-| Parameter | Default | Description |
-|:----------|:--------|:------------|
-| `reduction_factor` | `3.0` | Halving rate per round |
-
-!!! success "When to use"
-    Large search spaces with limited evaluation budget. Hyperband automatically balances exploration (many combinations, few datapoints) with exploitation (few combinations, many datapoints).
 
 ---
 

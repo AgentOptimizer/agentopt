@@ -10,7 +10,7 @@ AgentOpt solves this automatically. Give it your agent and a small evaluation da
 
 - **Non-intrusive**: Wrap your agent in a simple factory function — we take care of the rest. No framework adapters, no code changes to your agent internals.
 - **Framework-agnostic**: Works with OpenAI SDK, LangChain, LangGraph, CrewAI, LlamaIndex, AG2, or any framework that uses `httpx` for LLM calls.
-- **Smart search algorithms**: 7 selection algorithms from brute force to Bayesian optimization, so you don't have to evaluate every combination.
+- **Smart search algorithms**: 6 selection algorithms from brute force to Bayesian optimization, so you don't have to evaluate every combination.
 - **Automatic tracking**: Transparently intercepts all LLM calls to measure token usage, latency, and cost — no manual instrumentation.
 - **Response caching**: Identical LLM calls are cached (in-memory + SQLite on disk), so re-running experiments is instant and free.
 
@@ -100,7 +100,7 @@ Output:
 
 ## Selection Algorithms
 
-AgentOpt provides 7 selection algorithms — you don't always need to evaluate every combination:
+AgentOpt provides 6 selection algorithms — you don't always need to evaluate every combination:
 
 | Algorithm | Best for | How it works |
 |-----------|----------|-------------|
@@ -108,7 +108,6 @@ AgentOpt provides 7 selection algorithms — you don't always need to evaluate e
 | `RandomSearchModelSelector` | Quick exploration | Samples a random fraction |
 | `HillClimbingModelSelector` | Topology-aware search | Greedy search using model quality/speed rankings |
 | `ArmEliminationModelSelector` | Early pruning | Eliminates statistically dominated combinations |
-| `HyperbandModelSelector` | Large spaces, limited budget | Multi-bracket successive halving |
 | `LMProposalModelSelector` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
 | `BayesianOptimizationModelSelector` | Expensive evaluations | GP-based optimization (requires `torch`, `botorch`) |
 

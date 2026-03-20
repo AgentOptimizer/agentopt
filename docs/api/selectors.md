@@ -52,11 +52,6 @@ Returns a [`SelectionResults`](results.md) object.
       members: false
       show_bases: false
 
-::: agentopt.model_selection.hyperband.HyperbandModelSelector
-    options:
-      members: false
-      show_bases: false
-
 ::: agentopt.model_selection.lm_proposal.LMProposalModelSelector
     options:
       members: false

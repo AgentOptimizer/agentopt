@@ -215,4 +215,4 @@ __marimo__/
 
 # Example outputs
 llm_cache/
-litellm_config_optimized.yaml
+examples/optimized_config.yaml

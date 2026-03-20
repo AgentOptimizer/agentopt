@@ -8,8 +8,8 @@ import time
 import httpx
 import pytest
 
-from agentproxy import LLMTracker
-from agentproxy.cache import CacheEntry, ResponseCache, _DB_FILENAME
+from agentopt.proxy import LLMTracker
+from agentopt.proxy.cache import CacheEntry, ResponseCache, _DB_FILENAME
 
 # ---------------------------------------------------------------------------
 # Helpers

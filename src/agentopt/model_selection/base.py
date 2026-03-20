@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, PrivateAttr
 
-from agentproxy import LLMTracker
+from agentopt.proxy import LLMTracker
 
 from ..base_models import (
     Dataset,

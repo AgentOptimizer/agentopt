@@ -5,7 +5,7 @@ This example shows how to use agentopt with a plain Python agent
 that makes OpenAI SDK calls directly. No framework or proxy needed.
 
 Prerequisites:
-    1. pip install openai agentopt agentproxy
+    1. pip install openai agentopt
     2. Set OPENAI_API_KEY environment variable
 """
 
@@ -25,7 +25,7 @@ from agentopt import (
     LMProposalModelSelector,
     RandomSearchModelSelector,
 )
-from agentproxy import LLMTracker, ResponseCache
+from agentopt.proxy import LLMTracker, ResponseCache
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,
@@ -143,8 +143,8 @@ def main():
     best = results.get_best_combo()
     if best:
         print(f"\nBest combination: {best}")
-        results.export_config("litellm_config_optimized.yaml")
-        print("Exported optimized config to litellm_config_optimized.yaml")
+        results.export_config("examples/optimized_config.yaml")
+        print("Exported optimized config to examples/optimized_config.yaml")
 
     # Show cache DB on disk
     from pathlib import Path

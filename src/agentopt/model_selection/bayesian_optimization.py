@@ -82,8 +82,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         # Default budget: evaluate ~sample_fraction of all combinations in total
         # (including the initial random evaluations).
         sample_budget = min(
-            total_combos,
-            max(1, int(math.ceil(total_combos * self.sample_fraction))),
+            total_combos, max(1, int(math.ceil(total_combos * self.sample_fraction))),
         )
         # MixedSingleTaskGP fitting needs at least a couple points; if we can,
         # ensure the budget is >= 2.

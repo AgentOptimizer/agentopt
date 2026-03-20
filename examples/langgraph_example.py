@@ -2,7 +2,7 @@
 Example: LangGraph agent with agentopt.
 
 Prerequisites:
-    1. pip install langchain-openai langgraph agentopt agentproxy
+    1. pip install langchain-openai langgraph agentopt
     2. Set OPENAI_API_KEY environment variable
 """
 

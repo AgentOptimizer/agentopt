@@ -2,7 +2,7 @@
 Example: CrewAI agent with agentopt.
 
 Prerequisites:
-    1. pip install crewai agentopt agentproxy
+    1. pip install crewai agentopt
     2. Set OPENAI_API_KEY environment variable
 """
 

@@ -1,149 +1,47 @@
-# agentopt
+# AgentOpt
 
-Framework-agnostic LLM model selection for multi-agent systems. Find the best model combination for each agent role by evaluating candidates on your dataset.
+**Find the right LLM models for your AI agents.**
 
-## Architecture
+Choosing the right LLM model is hard. Different models have different cost, performance, and latency tradeoffs. Should you use a thinking model? What effort level? What about different models for different steps of your agent pipeline? The combinatorial space explodes quickly — if your agent has 3 steps and you're considering 5 models per step, that's 125 combinations to evaluate.
 
-This monorepo contains two packages:
+AgentOpt solves this automatically. Give it your agent and a small evaluation dataset (~100 samples), and it will efficiently search the model combination space to present you with the **Pareto curve of accuracy/cost/latency tradeoffs** — so you can make an informed choice.
 
-```
-agentopt/                    # repo root
-├── agentproxy/              # HTTP-layer LLM call tracking (standalone)
-│   ├── pyproject.toml       # depends only on httpx
-│   └── src/agentproxy/
-│       ├── tracker.py       # LLMTracker — context management + record storage
-│       ├── interceptor.py   # httpx monkey-patching + usage extraction
-│       ├── cache.py         # API-level response caching (LRU, thread-safe)
-│       └── models.py        # CallRecord dataclass
-├── agentopt/                # Model selection optimizer
-│   ├── pyproject.toml       # depends on pydantic + agentproxy
-│   └── src/agentopt/
-│       ├── model_selection/ # 7 selection algorithms
-│       ├── model_topology.py
-│       ├── model_price.py
-│       └── base_models.py
-├── docs/                    # Design documents
-├── examples/                # Framework integration examples
-└── model_price.json
-```
+## Key Features
 
-**agentproxy** intercepts all LLM calls at the `httpx` layer — the one chokepoint every LLM SDK shares. No proxy server, no framework adapters, no code changes to your agents.
+- **Non-intrusive**: Wrap your agent in a simple factory function — we take care of the rest. No framework adapters, no code changes to your agent internals.
+- **Framework-agnostic**: Works with OpenAI SDK, LangChain, LangGraph, CrewAI, LlamaIndex, AG2, or any framework that uses `httpx` for LLM calls.
+- **Smart search algorithms**: 6 selection algorithms from brute force to Bayesian optimization, so you don't have to evaluate every combination.
+- **Automatic tracking**: Transparently intercepts all LLM calls to measure token usage, latency, and cost — no manual instrumentation.
+- **Response caching**: Identical LLM calls are cached (in-memory + SQLite on disk), so re-running experiments is instant and free.
 
-**agentopt** uses agentproxy to measure token usage and latency while evaluating model combinations across agent roles.
-
----
-
-## Quickstart
+## Installation
 
 ```bash
-# Install both packages
-uv pip install -e agentproxy
-uv pip install -e agentopt
+pip install agentopt
 
-# Set your API key
-export OPENAI_API_KEY='...'
-
-# Run an example
-python examples/custom_agent_example.py
+# With Bayesian optimization support
+pip install "agentopt[bayesian]"
 ```
 
----
+## Quick Start
 
-## agentproxy — LLM Call Tracking
-
-agentproxy can be used standalone for observability, independent of model selection.
-
-```python
-from agentproxy import LLMTracker
-
-tracker = LLMTracker()
-tracker.start()   # patches httpx.Client.send at the class level
-
-with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
-    result = agent(input_data)  # any LLM call via any framework
-
-usage = tracker.get_usage(data_id="dp_1", combo_id="gpt4o+haiku")
-# {"gpt-4o": (500, 200), "claude-haiku": (300, 150)}
-#            (input_tok, output_tok)
-
-records = tracker.get_records(data_id="dp_1")
-# List[CallRecord] with model, tokens, latency, full request/response
-
-tracker.stop()    # restores original httpx
-```
-
-### How it works
-
-Every LLM SDK (OpenAI, Anthropic, LangChain, CrewAI, etc.) uses `httpx` under the hood. agentproxy patches `httpx.Client.send()` and `httpx.AsyncClient.send()` at the class level, so it sees every LLM call in the process:
-
-```
-your_agent()
-  └── framework internals
-        └── httpx.Client.send()   ← patched, tracked here
-              └── LLM API
-```
-
-Attribution is handled via Python's `contextvars` — each thread and async task gets its own independent context, so parallel evaluations never interfere.
-
-### LLMTracker API
-
-```python
-tracker = LLMTracker()                          # cache on (default), unlimited size
-tracker = LLMTracker(cache=True, cache_max_size=1000)  # cache on, max 1000 entries
-tracker = LLMTracker(cache=False)               # cache off
-```
-
-| Method | Description |
-|--------|-------------|
-| `start()` | Install httpx patches (idempotent) |
-| `stop()` | Restore original httpx (idempotent) |
-| `track(data_id, combo_id, agent_id=None)` | Context manager — sets attribution for all LLM calls in scope |
-| `track_agent(agent_id)` | Context manager — sets only agent_id, keeps data_id/combo_id |
-| `get_records(data_id=None, combo_id=None, agent_id=None)` | Filtered list of `CallRecord` |
-| `get_usage(data_id=None, combo_id=None, agent_id=None)` | `{model: (input_tokens, output_tokens)}` |
-| `get_cached_latency(data_id=None, combo_id=None, agent_id=None)` | Total latency (seconds) saved by cache hits |
-| `cache_enabled` (property) | Get/set whether response caching is active at runtime |
-| `clear_cache()` | Clear all cached responses and reset stats |
-| `clear()` | Clear all recorded data |
-
-### CallRecord fields
-
-```python
-@dataclass
-class CallRecord:
-    data_id:           Optional[str]    # datapoint id
-    combo_id:          Optional[str]    # model combination id
-    agent_id:          Optional[str]    # agent role (optional)
-    model:             str
-    prompt_tokens:     int
-    completion_tokens: int
-    latency_seconds:   float
-    request_url:       str
-    request_body:      Dict[str, Any]
-    response_body:     Dict[str, Any]
-    timestamp:         str
-    cached:            bool
-```
-
----
-
-## agentopt — Model Selection
-
-Define a factory function that builds your agent for a given model combination. agentopt evaluates all (or a subset of) combinations on your dataset and finds the best one.
+**Step 1**: Wrap your agent in a factory function that accepts a model configuration:
 
 ```python
 from openai import OpenAI
-from agentopt import ModelSelector
 
 client = OpenAI()
 
 def agent_maker(models):
+    """Build an agent for a given model combination."""
     def run(input_data):
+        # Step 1: Plan
         plan = client.chat.completions.create(
             model=models["planner"],
             messages=[{"role": "user", "content": f"Plan: {input_data}"}],
         ).choices[0].message.content
 
+        # Step 2: Solve
         answer = client.chat.completions.create(
             model=models["solver"],
             messages=[
@@ -153,51 +51,124 @@ def agent_maker(models):
         ).choices[0].message.content
         return answer
     return run
+```
 
-def eval_fn(expected, actual):
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+**Step 2**: Define your evaluation dataset and scoring function:
 
+```python
 dataset = [
     ("What is the capital of France?", "Paris"),
     ("What is 2 + 2?", "4"),
+    ("What color is the sky?", "blue"),
+    # ... ideally ~100 samples
 ]
 
-selector = ModelSelector(
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+```
+
+**Step 3**: Run model selection:
+
+```python
+from agentopt import BruteForceModelSelector
+
+selector = BruteForceModelSelector(
     agent_fn=agent_maker,
     models={
-        "planner": ["gpt-4o", "gpt-4o-mini"],
-        "solver": ["gpt-4o", "gpt-4o-mini"],
+        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
     },
     eval_fn=eval_fn,
     dataset=dataset,
 )
 
-results = selector.select_best()
+results = selector.select_best(parallel=True)
 results.print_summary()
-best = results.get_best_combo()
-# {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
 ```
 
-You can also pass prebuilt LLM instances as candidates:
-
-```python
-from langchain_openai import ChatOpenAI
-
-selector = ModelSelector(
-    agent_fn=agent_maker,  # receives actual instances in models["planner"], etc.
-    models={
-        "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
-        "solver": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
-    },
-    eval_fn=eval_fn,
-    dataset=dataset,
-)
+Output:
+```
+    Model Selection Results
+    ----------------------------------------------------------------------------
+    Rank  Model                                     Accuracy  Latency      Price
+    ----------------------------------------------------------------------------
+>>>    1  planner=gpt-4.1-nano + solver=gpt-4.1-nano 100.00%    0.85s  $0.000420
+       2  planner=gpt-4o-mini + solver=gpt-4o-mini   100.00%    1.20s  $0.002372
+       3  planner=gpt-4o + solver=gpt-4o              100.00%    2.70s  $0.014355
+    ...
 ```
 
-Custom model pricing can be provided via `model_prices`:
+## Selection Algorithms
+
+AgentOpt provides 6 selection algorithms — you don't always need to evaluate every combination:
+
+| Algorithm | Best for | How it works |
+|-----------|----------|-------------|
+| `BruteForceModelSelector` | Small search spaces | Evaluates all combinations |
+| `RandomSearchModelSelector` | Quick exploration | Samples a random fraction |
+| `HillClimbingModelSelector` | Topology-aware search | Greedy search using model quality/speed rankings |
+| `ArmEliminationModelSelector` | Early pruning | Eliminates statistically dominated combinations |
+| `LMProposalModelSelector` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
+| `BayesianOptimizationModelSelector` | Expensive evaluations | GP-based optimization (requires `torch`, `botorch`) |
+
+All selectors share the same interface:
 
 ```python
-selector = ModelSelector(
+results = selector.select_best(parallel=True, max_concurrent=20)
+```
+
+## Framework Compatibility
+
+AgentOpt works with any LLM framework that uses `httpx` under the hood — which is virtually all of them:
+
+| Framework | Status | Example |
+|-----------|--------|---------|
+| OpenAI SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
+| OpenAI Agents SDK | Supported | [openai_sdk_example.py](examples/openai_sdk_example.py) |
+| LangChain / LangGraph | Supported | [langchain_example.py](examples/langchain_example.py), [langgraph_example.py](examples/langgraph_example.py) |
+| CrewAI | Supported | [crewai_example.py](examples/crewai_example.py) |
+| LlamaIndex | Supported | [llamaindex_example.py](examples/llamaindex_example.py) |
+| AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
+| Anthropic SDK | Supported | Uses httpx |
+
+## How It Works
+
+AgentOpt intercepts LLM calls at the `httpx` transport layer — the one chokepoint every LLM SDK shares. No proxy server, no framework adapters required.
+
+```
+your_agent(input)
+  └── framework internals (LangChain, CrewAI, etc.)
+        └── httpx.Client.send()   ← intercepted here
+              └── LLM API (OpenAI, Anthropic, etc.)
+```
+
+For each model combination, AgentOpt:
+1. Builds your agent with the candidate models
+2. Runs it on every datapoint in your evaluation set
+3. Tracks token usage, latency, and cost automatically
+4. Scores the output using your evaluation function
+5. Reports the Pareto-optimal combinations
+
+Response caching ensures that identical LLM calls (same model + same prompt) are never repeated — making iterative experimentation fast and cheap.
+
+## Results API
+
+```python
+results = selector.select_best()
+
+results.print_summary()               # formatted table
+best = results.get_best()             # ModelResult with highest accuracy
+combo = results.get_best_combo()      # {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
+results.to_csv("results.csv")         # export all results
+results.export_config("config.yaml")  # export best combo as YAML
+```
+
+## Advanced Usage
+
+### Custom model pricing
+
+```python
+selector = BruteForceModelSelector(
     ...,
     model_prices={
         "my-custom-model": {"input_price": 2.50, "output_price": 10.00},
@@ -205,102 +176,45 @@ selector = ModelSelector(
 )
 ```
 
-### Selection algorithms
+### Persistent disk cache
 
-| Selector | Description |
-|----------|-------------|
-| `BruteForceModelSelector` | Evaluates all combinations (default) |
-| `RandomSearchModelSelector` | Samples a fraction of combinations |
-| `HillClimbingModelSelector` | Greedy search with topology-guided neighbors |
-| `ArmEliminationModelSelector` | Successive elimination via statistical dominance |
-| `BayesianOptimizationModelSelector` | GP-based optimization (requires `torch`, `botorch`) |
-| `LMProposalModelSelector` | Uses a proposer LLM to shortlist combinations before evaluation |
-
-All selectors support `select_best(parallel=True, max_concurrent=20)` for async evaluation.
-
-### LLM proposal selector
-
-`LMProposalModelSelector` keeps the same input contract (`agent_fn`, `models`, `dataset`, `eval_fn`) and adds a proposer stage:
-
-1. Builds a prompt with candidate model indices per node (in order) + dataset preview.
-2. Calls proposer LLM (default `gpt-4o-mini`) asking for strict JSON:
-   `{"combinations": [[idx_node0, idx_node1, ...], ...]}`.
-3. Validates/deduplicates proposer output.
-4. Adds fallback baseline and exploration combinations.
-5. Evaluates only the selected subset.
+Cache LLM responses to disk so they survive process restarts:
 
 ```python
-from agentopt import LMProposalModelSelector
+from agentopt.proxy import LLMTracker
 
-selector = LMProposalModelSelector(
+tracker = LLMTracker(cache_dir="./llm_cache")
+selector = BruteForceModelSelector(..., tracker=tracker)
+results = selector.select_best()  # cache flushed automatically
+```
+
+### Using prebuilt LLM instances
+
+Pass framework-specific LLM objects instead of model name strings:
+
+```python
+from langchain_openai import ChatOpenAI
+
+selector = BruteForceModelSelector(
     agent_fn=agent_maker,
-    models=models,
+    models={
+        "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
+        "solver":  [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
+    },
     eval_fn=eval_fn,
     dataset=dataset,
-    proposer_model="gpt-4o-mini",
-    objective="accuracy_then_latency",
-    max_combinations=12,
-    min_include_baselines=1,
-    exploration_fraction=0.2,
 )
-
-results = selector.select_best(parallel=True)
-print(selector.last_proposal_stats)  # includes proposer_hit and source breakdown
 ```
 
-### Results API
-
-```python
-results = selector.select_best()
-
-results.print_summary()           # formatted table with rank, accuracy, latency, price
-best = results.get_best()         # ModelResult with highest accuracy
-combo = results.get_best_combo()  # {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
-results.to_csv("results.csv")    # export all results
-results.export_config("config.yaml")  # export best combo as YAML
-```
-
----
-
-## Examples
-
-| Example | Framework | File |
-|---------|-----------|------|
-| Custom agent | Raw OpenAI SDK | `examples/custom_agent_example.py` |
-| OpenAI Agents SDK | `openai-agents` | `examples/openai_sdk_example.py` |
-| LangChain | `langchain` | `examples/langchain_example.py` |
-| LangGraph | `langgraph` | `examples/langgraph_example.py` |
-| CrewAI | `crewai` | `examples/crewai_example.py` |
-| AG2 | `ag2` | `examples/ag2_example.py` |
-
----
-
-## Framework compatibility
-
-agentproxy works with any framework that uses `httpx` for HTTP calls:
-
-| Framework | Compatible | Notes |
-|-----------|-----------|-------|
-| OpenAI SDK | Yes | |
-| OpenAI Agents SDK | Yes | Uses `openai-agents` package |
-| LangChain / LangGraph | Yes | |
-| CrewAI | Yes | |
-| LlamaIndex | Yes | |
-| Anthropic SDK | Yes | |
-| AG2 | Partial | Use `initiate_chat()`, not `run()` |
-
----
-
-## Installation
+## Development
 
 ```bash
-# Core packages
-uv pip install -e agentproxy
-uv pip install -e agentopt
-
-# With Bayesian optimization
-uv pip install -e "agentopt[bayesian]"
-
-# With example dependencies
-uv pip install -e "agentopt[examples]"
+git clone https://github.com/AgentOptimizer/agentopt.git
+cd agentopt
+uv sync --extra dev
+uv run pytest
 ```
+
+## License
+
+MIT

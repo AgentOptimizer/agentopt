@@ -1,15 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "agentopt-workspace"
-version = "0.0.0"
-description = "Workspace root for agentopt + agentproxy"
+name = "agentopt"
+version = "0.3.0"
+description = "Find the right LLM models for your AI agents — automatic model selection with accuracy/cost/latency tradeoffs"
 requires-python = ">=3.10"
+license = "MIT"
+readme = "README.md"
+dependencies = [
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+]
 
-[tool.uv.workspace]
-members = ["agentopt", "agentproxy"]
+[project.optional-dependencies]
+bayesian = ["torch>=2.0.0", "botorch>=0.10.0", "gpytorch>=1.11.0"]
+crewai = ["crewai"]
+langgraph = ["langchain-openai<1", "langgraph"]
+examples = [
+    "ag2",
+    "crewai",
+    "langchain<1",
+    "langchain-openai<1",
+    "langgraph",
+    "llama-index-core",
+    "llama-index-llms-openai",
+    "openai",
+    "openai-agents",
+    "python-dotenv",
+]
+dev = ["pytest>=8.0"]
+docs = ["mkdocs-material", "mkdocstrings[python]"]
 
-[tool.uv.sources]
-agentopt = { workspace = true }
-agentproxy = { workspace = true }
+[project.urls]
+Homepage = "https://github.com/AgentOptimizer/agentopt"
+Documentation = "https://agentoptimizer.github.io/agentopt"
+Repository = "https://github.com/AgentOptimizer/agentopt"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentopt"]
 
 [tool.pytest.ini_options]
-testpaths = ["agentproxy/tests"]
+testpaths = ["tests"]

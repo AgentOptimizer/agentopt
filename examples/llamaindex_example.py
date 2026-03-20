@@ -21,7 +21,6 @@ from agentopt import (
     ArmEliminationModelSelector,
     BruteForceModelSelector,
     HillClimbingModelSelector,
-    HyperbandModelSelector,
     LMProposalModelSelector,
     RandomSearchModelSelector,
 )
@@ -31,7 +30,6 @@ SELECTORS = {
     "random": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
-    "hyperband": HyperbandModelSelector,
     "lm_proposal": LMProposalModelSelector,
 }
 
@@ -137,12 +135,6 @@ def main():
         help="Fraction of combinations to evaluate when --selector=random",
     )
     parser.add_argument(
-        "--reduction-factor",
-        type=float,
-        default=3.0,
-        help="Reduction factor η for hyperband selector (default: 3.0)",
-    )
-    parser.add_argument(
         "--batch-size",
         type=int,
         default=4,
@@ -163,8 +155,6 @@ def main():
     selector_kwargs: Dict[str, Any] = {}
     if args.selector == "random":
         selector_kwargs["sample_fraction"] = args.sample_fraction
-    if args.selector == "hyperband":
-        selector_kwargs["reduction_factor"] = args.reduction_factor
     if args.selector in ("hill_climbing", "bayesian_optimization"):
         selector_kwargs["batch_size"] = args.batch_size
 

@@ -213,7 +213,6 @@ selector = ModelSelector(
 | `RandomSearchModelSelector` | Samples a fraction of combinations |
 | `HillClimbingModelSelector` | Greedy search with topology-guided neighbors |
 | `ArmEliminationModelSelector` | Successive elimination via statistical dominance |
-| `HyperbandModelSelector` | Multi-bracket successive halving |
 | `BayesianOptimizationModelSelector` | GP-based optimization (requires `torch`, `botorch`) |
 | `LMProposalModelSelector` | Uses a proposer LLM to shortlist combinations before evaluation |
 

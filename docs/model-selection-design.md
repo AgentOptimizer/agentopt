@@ -289,43 +289,7 @@ where `μ` is the mean score, `SE = σ / √n` is the standard error, and `confi
 
 **Best for:** Medium-to-large search spaces where you want to quickly discard poor combinations without evaluating them on the full dataset.
 
-### 6.5 Hyperband
-
-**File:** `model_selection/hyperband.py`
-
-Full Hyperband algorithm (Li et al., 2017) using dataset samples as the resource. Hyperband addresses the explore-exploit tradeoff in hyperparameter optimization by running multiple brackets of Successive Halving with different resource allocations.
-
-**Algorithm:**
-
-```
-s_max = floor(log_η(max_resource))
-B = (s_max + 1) × max_resource
-
-for s from s_max down to 0:          # each bracket
-    r_s = max_resource × η^(−s)       # min resource for this bracket
-    n_i = all combinations             # start with all configs
-
-    for i from 0 to s:                # successive halving stages
-        r_i = r_s × η^i               # resource for this stage
-        evaluate n_i configs on dataset[prev_r : r_i]
-        keep top n_i / η configs       # halve survivors
-```
-
-**Key concepts:**
-- **Resource** = number of dataset samples used for evaluation
-- **Bracket** = a complete run of successive halving with a specific starting resource
-- **η (reduction_factor)** = factor by which to reduce the number of configurations each stage
-- Early brackets are aggressive (many configs, few samples each). Late brackets are conservative (fewer configs, more samples each).
-
-**Parameters:**
-- `reduction_factor: float = 3.0` — η, must be > 1.0
-- `max_resource: Optional[int]` — maximum samples per config (default: dataset size)
-
-**Parallel:** Yes, via `asyncio.gather` over configs per stage.
-
-**Best for:** Large search spaces where you want a principled budget allocation between exploration (trying many configs) and exploitation (giving more data to promising ones).
-
-### 6.6 Bayesian Optimization
+### 6.5 Bayesian Optimization
 
 **File:** `model_selection/bayesian_optimization.py`
 
@@ -455,6 +419,5 @@ agentopt/
             ├── random_search.py       # RandomSearchModelSelector
             ├── hill_climbing.py       # HillClimbingModelSelector
             ├── arm_elimination.py     # ArmEliminationModelSelector
-            ├── hyperband.py           # HyperbandModelSelector
             └── bayesian_optimization.py  # BayesianOptimizationModelSelector
 ```

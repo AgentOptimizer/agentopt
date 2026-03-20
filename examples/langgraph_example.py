@@ -21,9 +21,11 @@ from langgraph.graph.message import add_messages
 from agentopt import (
     ArmEliminationModelSelector,
     BruteForceModelSelector,
+    EpsilonLUCBModelSelector,
     HillClimbingModelSelector,
     LMProposalModelSelector,
     RandomSearchModelSelector,
+    ThresholdBanditSEModelSelector,
 )
 
 SELECTORS = {
@@ -31,6 +33,8 @@ SELECTORS = {
     "random": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "epsilon_lucb": EpsilonLUCBModelSelector,
+    "threshold_successive_elimination": ThresholdBanditSEModelSelector,
     "lm_proposal": LMProposalModelSelector,
 }
 
@@ -145,6 +149,18 @@ def main():
             "(hill_climbing neighbours and bayesian_optimization candidates)."
         ),
     )
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=0.01,
+        help="Epsilon for --selector=epsilon_lucb.",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for --selector=threshold_successive_elimination.",
+    )
     args = parser.parse_args()
 
     candidates = ["gpt-4o", "gpt-4o-mini"]
@@ -162,6 +178,10 @@ def main():
         selector_kwargs["sample_fraction"] = args.sample_fraction
     if args.selector in ("hill_climbing", "bayesian_optimization"):
         selector_kwargs["batch_size"] = args.batch_size
+    if args.selector == "epsilon_lucb":
+        selector_kwargs["epsilon"] = args.epsilon
+    if args.selector == "threshold_successive_elimination":
+        selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
         agent_fn=agent_maker,

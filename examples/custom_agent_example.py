@@ -21,9 +21,11 @@ from openai import OpenAI
 from agentopt import (
     ArmEliminationModelSelector,
     BruteForceModelSelector,
+    EpsilonLUCBModelSelector,
     HillClimbingModelSelector,
     LMProposalModelSelector,
     RandomSearchModelSelector,
+    ThresholdBanditSEModelSelector,
 )
 from agentopt.proxy import LLMTracker, ResponseCache
 
@@ -32,6 +34,8 @@ SELECTORS = {
     "random": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
+    "epsilon_lucb": EpsilonLUCBModelSelector,
+    "threshold_successive_elimination": ThresholdBanditSEModelSelector,
     "lm_proposal": LMProposalModelSelector,
 }
 
@@ -113,6 +117,18 @@ def main():
         action="store_true",
         help="Pass config dicts instead of model name strings",
     )
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=0.01,
+        help="Epsilon for --selector=epsilon_lucb.",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for --selector=threshold_successive_elimination.",
+    )
     args = parser.parse_args()
 
     candidates = ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
@@ -126,12 +142,18 @@ def main():
 
     selector_cls = SELECTORS[args.selector]
     tracker = LLMTracker(cache_dir="./llm_cache")
+    selector_kwargs: Dict[str, Any] = {}
+    if args.selector == "epsilon_lucb":
+        selector_kwargs["epsilon"] = args.epsilon
+    if args.selector == "threshold_successive_elimination":
+        selector_kwargs["threshold"] = args.threshold
     selector = selector_cls(
         agent_fn=agent_maker,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,
         tracker=tracker,
+        **selector_kwargs,
     )
 
     results = selector.select_best(

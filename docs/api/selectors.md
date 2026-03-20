@@ -52,6 +52,16 @@ Returns a [`SelectionResults`](results.md) object.
       members: false
       show_bases: false
 
+::: agentopt.model_selection.epsilon_lucb.EpsilonLUCBModelSelector
+    options:
+      members: false
+      show_bases: false
+
+::: agentopt.model_selection.threshold_successive_elimination.ThresholdBanditSEModelSelector
+    options:
+      members: false
+      show_bases: false
+
 ::: agentopt.model_selection.lm_proposal.LMProposalModelSelector
     options:
       members: false

@@ -87,7 +87,10 @@ class SelectionResults(BaseModel):
 
     results: List[ModelResult] = Field(default_factory=list)
     selection_wall_time_seconds: Optional[float] = None
-    selection_cost: Optional[float] = None
+    selection_cost: Optional[float] = Field(
+        default=None,
+        description="Total selection cost in USD.",
+    )
 
     def __iter__(self):
         return iter(self.results)

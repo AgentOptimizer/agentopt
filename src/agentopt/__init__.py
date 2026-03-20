@@ -13,12 +13,14 @@ from .model_selection import (
     ArmEliminationModelSelector,
     BaseModelSelector,
     BruteForceModelSelector,
+    EpsilonLUCBModelSelector,
     HillClimbingModelSelector,
     LMProposalModelSelector,
     DatapointResult,
     ModelResult,
     RandomSearchModelSelector,
     SelectionResults,
+    ThresholdBanditSEModelSelector,
 )
 
 # Default ModelSelector = BruteForceModelSelector
@@ -41,6 +43,8 @@ __all__ = [
     "RandomSearchModelSelector",
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
+    "EpsilonLUCBModelSelector",
+    "ThresholdBanditSEModelSelector",
     "LMProposalModelSelector",
     "BayesianOptimizationModelSelector",
     # Result types

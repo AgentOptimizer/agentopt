@@ -65,55 +65,43 @@ results.print_summary()
 
 ## Why AgentOpt
 
-<div class="grid" markdown>
+<div class="grid cards" markdown>
 
-<div class="card" markdown>
-<div class="card-icon">:material-code-not-equal-variant:</div>
+-   :material-code-not-equal-variant:{ .lg .middle } **Non-Intrusive**
 
-### Non-Intrusive
+    ---
 
-Wrap your agent in a factory function. No framework adapters, no SDK wrappers, no code changes to your agent internals.
-</div>
+    Wrap your agent in a factory function. No framework adapters, no SDK wrappers, no code changes to your agent internals.
 
-<div class="card" markdown>
-<div class="card-icon">:material-puzzle-outline:</div>
+-   :material-puzzle-outline:{ .lg .middle } **Framework-Agnostic**
 
-### Framework-Agnostic
+    ---
 
-Works with OpenAI, LangChain, LangGraph, CrewAI, LlamaIndex, AG2 — any framework that calls LLMs over HTTP.
-</div>
+    Works with OpenAI, LangChain, LangGraph, CrewAI, LlamaIndex, AG2 — any framework that calls LLMs over HTTP.
 
-<div class="card" markdown>
-<div class="card-icon">:material-chart-scatter-plot:</div>
+-   :material-chart-scatter-plot:{ .lg .middle } **Smart Search**
 
-### Smart Search
+    ---
 
-7 algorithms from brute force to Bayesian optimization. Search spaces with thousands of combinations without evaluating them all.
-</div>
+    7 algorithms from brute force to Bayesian optimization. Search spaces with thousands of combinations without evaluating them all.
 
-<div class="card" markdown>
-<div class="card-icon">:material-radar:</div>
+-   :material-radar:{ .lg .middle } **Automatic Tracking**
 
-### Automatic Tracking
+    ---
 
-Transparently intercepts all LLM calls to measure tokens, latency, and cost. No manual instrumentation needed.
-</div>
+    Transparently intercepts all LLM calls to measure tokens, latency, and cost. No manual instrumentation needed.
 
-<div class="card" markdown>
-<div class="card-icon">:material-cached:</div>
+-   :material-cached:{ .lg .middle } **Response Caching**
 
-### Response Caching
+    ---
 
-Identical LLM calls are cached in-memory and on disk (SQLite). Re-running experiments is instant and free.
-</div>
+    Identical LLM calls are cached in-memory and on disk (SQLite). Re-running experiments is instant and free.
 
-<div class="card" markdown>
-<div class="card-icon">:material-speedometer:</div>
+-   :material-speedometer:{ .lg .middle } **Parallel Evaluation**
 
-### Parallel Evaluation
+    ---
 
-Evaluate model combinations concurrently with configurable concurrency limits. Get results faster.
-</div>
+    Evaluate model combinations concurrently with configurable concurrency limits. Get results faster.
 
 </div>
 
@@ -156,44 +144,40 @@ AgentOpt patches `httpx` at the transport level — the same HTTP library used b
 
 ## Get Started
 
-<div class="grid" markdown>
+<div class="grid cards" markdown>
 
-<div class="card" markdown>
+-   :material-download:{ .lg .middle } **Install**
 
-### :material-download: Install
+    ---
 
-```bash
-pip install agentopt
-```
+    ```bash
+    pip install agentopt
+    ```
 
-[:octicons-arrow-right-24: Installation guide](getting-started/installation.md)
-</div>
+    [:octicons-arrow-right-24: Installation guide](getting-started/installation.md)
 
-<div class="card" markdown>
+-   :material-rocket-launch:{ .lg .middle } **Quick Start**
 
-### :material-rocket-launch: Quick Start
+    ---
 
-Build and optimize your first agent in 5 minutes.
+    Build and optimize your first agent in 5 minutes.
 
-[:octicons-arrow-right-24: Quick start tutorial](getting-started/quickstart.md)
-</div>
+    [:octicons-arrow-right-24: Quick start tutorial](getting-started/quickstart.md)
 
-<div class="card" markdown>
+-   :material-book-open-variant:{ .lg .middle } **Examples**
 
-### :material-book-open-variant: Examples
+    ---
 
-Framework-specific examples for OpenAI, LangChain, CrewAI, and LlamaIndex.
+    Framework-specific examples for OpenAI, LangChain, CrewAI, and LlamaIndex.
 
-[:octicons-arrow-right-24: Browse examples](examples/openai.md)
-</div>
+    [:octicons-arrow-right-24: Browse examples](examples/openai.md)
 
-<div class="card" markdown>
+-   :material-api:{ .lg .middle } **API Reference**
 
-### :material-api: API Reference
+    ---
 
-Full reference for selectors, results, and the tracker.
+    Full reference for selectors, results, and the tracker.
 
-[:octicons-arrow-right-24: API docs](api/selectors.md)
-</div>
+    [:octicons-arrow-right-24: API docs](api/selectors.md)
 
 </div>

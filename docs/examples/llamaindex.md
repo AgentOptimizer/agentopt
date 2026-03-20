@@ -1,6 +1,9 @@
-# LlamaIndex Example
+# LlamaIndex
 
-Using AgentOpt with LlamaIndex LLMs.
+Using AgentOpt with LlamaIndex LLM instances.
+
+!!! info "LlamaIndex LLM objects"
+    Similar to LangChain, pass LlamaIndex `OpenAI` instances in the `models` dict.
 
 ```python
 from llama_index.llms.openai import OpenAI as LlamaOpenAI
@@ -35,4 +38,4 @@ results = selector.select_best()
 results.print_summary()
 ```
 
-See full example: [examples/llamaindex_example.py](https://github.com/AgentOptimizer/agentopt/blob/main/examples/llamaindex_example.py)
+[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/llamaindex_example.py)

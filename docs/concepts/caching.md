@@ -1,26 +1,42 @@
 # Response Caching
 
-AgentOpt caches LLM responses at the API level to avoid redundant calls during model selection.
+AgentOpt caches LLM responses at the HTTP level to avoid redundant API calls during model selection.
 
 ## How It Works
 
-- **Cache key**: SHA-256 hash of the request body (model + messages + parameters), with the `stream` field excluded
-- **In-memory**: All entries stored in a thread-safe dict for fast lookup
-- **On disk** (optional): SQLite database (`cache.db`), flushed periodically by a background thread
+```mermaid
+graph LR
+    A[LLM Call] --> B{In cache?}
+    B -->|Yes| C[Return cached response]
+    B -->|No| D[Call API]
+    D --> E[Store in memory]
+    E --> F[Background flush to SQLite]
+```
 
-When the same prompt is sent to the same model with the same parameters, the cached response is returned instantly. The original latency is preserved in the cached entry so that cost/latency comparisons remain valid across combinations.
+| Property | Detail |
+|:---------|:-------|
+| **Cache key** | SHA-256 of the request body (model + messages + params), excluding `stream` |
+| **In-memory** | Thread-safe dict — always active when caching is on |
+| **On disk** | Optional SQLite database (`cache.db`), flushed every 10 seconds by a background thread |
 
-## Why Caching Matters
+Cached responses include the original latency measurement, so cost and latency comparisons remain fair.
 
-During model selection, many LLM calls are repeated:
+## Why It Matters
 
-- **Shared prefixes**: If two model combinations use the same planner model, the planner call for a given datapoint is identical
-- **Re-runs**: If you tweak your eval function and re-run, all LLM calls are cache hits
-- **Crash recovery**: If a run is interrupted, cached responses survive on disk
+During model selection, many LLM calls are identical:
+
+!!! example "Shared model calls"
+    If two combinations use the same planner model, the planner call for each datapoint is identical. With 9 combinations and 3 distinct planners, you pay for **3** unique planner calls per datapoint — not 9.
+
+!!! example "Re-runs are free"
+    Tweak your eval function and re-run? Every LLM call hits the cache. Zero API cost, instant results.
+
+!!! example "Crash recovery"
+    If a long run is interrupted, cached responses survive on disk. Resume without re-calling the API.
 
 ## Enabling Disk Cache
 
-By default, caching is in-memory only (lost when the process exits). To persist to disk:
+By default, caching is in-memory only (lost when the process exits). To persist:
 
 ```python
 from agentopt.proxy import LLMTracker
@@ -34,13 +50,13 @@ results = selector.select_best()
 # Cache automatically flushed to ./llm_cache/cache.db
 ```
 
-The cache is stored as a single SQLite database file. On subsequent runs with the same `cache_dir`, entries are loaded from disk on startup.
+On subsequent runs with the same `cache_dir`, entries are loaded from disk at startup.
 
 ## Cache Lifecycle
 
-| Event | What happens |
-|-------|-------------|
-| `LLMTracker(cache_dir=...)` | Creates DB, loads existing entries into memory |
+| Event | What Happens |
+|:------|:-------------|
+| `LLMTracker(cache_dir=...)` | Creates DB if needed, loads existing entries into memory |
 | LLM call (cache miss) | Response stored in memory, marked dirty |
 | Background flush (every 10s) | Dirty entries written to SQLite |
 | `tracker.stop()` / `select_best()` returns | Final flush to disk |
@@ -56,6 +72,20 @@ tracker = LLMTracker(cache=False)
 
 The cache is a standard SQLite database:
 
-```bash
-sqlite3 ./llm_cache/cache.db "SELECT COUNT(*) FROM cache"
-```
+=== "Count entries"
+
+    ```bash
+    sqlite3 ./llm_cache/cache.db "SELECT COUNT(*) FROM cache"
+    ```
+
+=== "List models"
+
+    ```bash
+    sqlite3 ./llm_cache/cache.db "SELECT DISTINCT json_extract(value, '$.body.model') FROM cache"
+    ```
+
+=== "Database size"
+
+    ```bash
+    ls -lh ./llm_cache/cache.db
+    ```

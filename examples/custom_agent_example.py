@@ -145,8 +145,8 @@ def main():
     best = results.get_best_combo()
     if best:
         print(f"\nBest combination: {best}")
-        results.export_config("litellm_config_optimized.yaml")
-        print("Exported optimized config to litellm_config_optimized.yaml")
+        results.export_config("examples/optimized_config.yaml")
+        print("Exported optimized config to examples/optimized_config.yaml")
 
     # Show cache DB on disk
     from pathlib import Path

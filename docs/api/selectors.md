@@ -1,20 +1,20 @@
-# Selectors API
+# Selectors
 
 All selectors share a common constructor interface and the `select_best()` method.
 
 ## Common Parameters
 
 | Parameter | Type | Description |
-|-----------|------|-------------|
-| `agent_fn` | `Callable` | Factory function `(models_dict) -> callable_agent` |
+|:----------|:-----|:------------|
+| `agent_fn` | `Callable` | Factory: `(models_dict) -> callable_agent` |
 | `models` | `Dict[str, List]` | Maps node names to candidate model lists |
-| `eval_fn` | `Callable` | `(expected, actual) -> float` (0-1, higher is better) |
+| `eval_fn` | `Callable` | `(expected, actual) -> float` score in `[0, 1]` |
 | `dataset` | `List[Tuple]` | `[(input_data, expected_answer), ...]` |
-| `invoke_fn` | `Callable`, optional | Custom `(agent, input) -> result`. Defaults to `agent(input)` |
+| `invoke_fn` | `Callable`, optional | Custom `(agent, input) -> result`. Default: `agent(input)` |
 | `model_prices` | `Dict`, optional | Custom pricing: `{"model": {"input_price": x, "output_price": y}}` |
 | `tracker` | `LLMTracker`, optional | Custom tracker instance (e.g., with disk cache) |
 
-## Common Method
+## `select_best()`
 
 ```python
 results = selector.select_best(
@@ -24,6 +24,11 @@ results = selector.select_best(
 ```
 
 Returns a [`SelectionResults`](results.md) object.
+
+!!! note "Automatic cleanup"
+    `select_best()` automatically calls `tracker.stop()` when it returns (or raises), flushing any cached data to disk.
+
+---
 
 ## Selector Classes
 

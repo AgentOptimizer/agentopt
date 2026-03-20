@@ -1,6 +1,9 @@
-# CrewAI Example
+# CrewAI
 
 Using AgentOpt with CrewAI agents and tasks.
+
+!!! info "Model strings as `llm` parameter"
+    CrewAI agents accept a model string via the `llm` parameter. Pass values from the `models` dict directly.
 
 ```python
 from crewai import Agent, Crew, Task
@@ -45,4 +48,4 @@ results = selector.select_best()
 results.print_summary()
 ```
 
-See full example: [examples/crewai_example.py](https://github.com/AgentOptimizer/agentopt/blob/main/examples/crewai_example.py)
+[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/crewai_example.py)

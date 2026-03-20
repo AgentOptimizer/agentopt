@@ -1,4 +1,4 @@
-# Tracker API
+# Tracker
 
 The `LLMTracker` class handles LLM call interception, recording, and caching. It lives in `agentopt.proxy`.
 
@@ -20,7 +20,7 @@ tracker = LLMTracker(
 ### Methods
 
 | Method | Description |
-|--------|-------------|
+|:-------|:------------|
 | `start()` | Install httpx patches (idempotent) |
 | `stop()` | Restore original httpx, flush cache to disk |
 | `track(data_id, combo_id, agent_id=None)` | Context manager — attributes all LLM calls in scope |
@@ -31,8 +31,10 @@ tracker = LLMTracker(
 | `clear_cache()` | Clear all cached responses |
 | `clear()` | Clear all recorded data |
 
-!!! note
+!!! note "Automatic lifecycle"
     When using a selector, the tracker is managed automatically — `start()` is called in the constructor and `stop()` is called when `select_best()` returns.
+
+---
 
 ## CallRecord
 
@@ -41,7 +43,7 @@ from agentopt.proxy import CallRecord
 ```
 
 | Field | Type | Description |
-|-------|------|-------------|
+|:------|:-----|:------------|
 | `data_id` | `str?` | Datapoint identifier |
 | `combo_id` | `str?` | Model combination identifier |
 | `agent_id` | `str?` | Agent role identifier |
@@ -55,6 +57,8 @@ from agentopt.proxy import CallRecord
 | `timestamp` | `str` | ISO 8601 timestamp |
 | `cached` | `bool` | Whether this was a cache hit |
 
+---
+
 ## ResponseCache
 
 ```python
@@ -64,7 +68,7 @@ from agentopt.proxy import ResponseCache
 Low-level cache API (usually managed by `LLMTracker`):
 
 | Method | Description |
-|--------|-------------|
+|:-------|:------------|
 | `get(key)` | Look up a cached entry |
 | `put(key, entry)` | Store an entry (dirty, not yet on disk) |
 | `flush()` | Write dirty entries to SQLite |

@@ -1,34 +1,37 @@
 # Selection Algorithms
 
-AgentOpt provides 7 selection algorithms. The right choice depends on your search space size and evaluation budget.
+AgentOpt provides 7 selection algorithms. Choose based on your search space size and evaluation budget.
 
-## Overview
+## At a Glance
 
-| Algorithm | Evaluations | Best for |
-|-----------|-------------|----------|
-| [Brute Force](#brute-force) | All combinations | Small spaces (< 50 combos) |
-| [Random Search](#random-search) | Random sample | Quick baseline |
-| [Hill Climbing](#hill-climbing) | Guided neighbors | Medium spaces with model topology |
-| [Arm Elimination](#arm-elimination) | Progressive pruning | Statistical early stopping |
-| [Hyperband](#hyperband) | Multi-bracket halving | Large spaces, limited budget |
-| [LM Proposal](#lm-proposal) | LLM-guided shortlist | Leveraging model knowledge |
-| [Bayesian Optimization](#bayesian-optimization) | GP-guided search | Expensive evaluations |
+| Algorithm | Strategy | Evaluations | Best For |
+|:----------|:---------|:------------|:---------|
+| [Brute Force](#brute-force) | Exhaustive | All | Small spaces (< 50 combos) |
+| [Random Search](#random-search) | Sampling | Configurable fraction | Quick baselines |
+| [Hill Climbing](#hill-climbing) | Greedy + restarts | Guided neighbors | Medium spaces |
+| [Arm Elimination](#arm-elimination) | Progressive pruning | Adaptive | Statistical early stopping |
+| [Hyperband](#hyperband) | Multi-bracket halving | Adaptive | Large spaces, limited budget |
+| [LM Proposal](#lm-proposal) | LLM-guided | Shortlist | Leveraging model knowledge |
+| [Bayesian Optimization](#bayesian-optimization) | GP surrogate | Sequential | Expensive evaluations |
 
-All selectors share the same interface:
+!!! tip "Common interface"
+    All selectors share the same constructor and `select_best()` method. Switching algorithms is a one-line change.
 
-```python
-selector = SomeSelector(
-    agent_fn=agent_maker,    # factory: models dict → callable agent
-    models=models,           # {node_name: [candidate_models]}
-    eval_fn=eval_fn,         # (expected, actual) → float
-    dataset=dataset,         # [(input, expected), ...]
-)
-results = selector.select_best(parallel=True, max_concurrent=20)
-```
+    ```python
+    selector = AnySelector(
+        agent_fn=agent_maker,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
+    )
+    results = selector.select_best(parallel=True, max_concurrent=20)
+    ```
+
+---
 
 ## Brute Force
 
-Evaluates every combination in the Cartesian product. Simple and thorough.
+Evaluates every combination in the Cartesian product.
 
 ```python
 from agentopt import BruteForceModelSelector
@@ -41,7 +44,13 @@ selector = BruteForceModelSelector(
 )
 ```
 
-**When to use**: Small search spaces where you can afford to evaluate everything.
+!!! success "When to use"
+    Small search spaces where you can afford to evaluate everything. Guarantees finding the true optimum.
+
+!!! warning "Complexity"
+    Evaluations grow as the product of model list sizes. 5 models x 3 nodes = 125 combinations.
+
+---
 
 ## Random Search
 
@@ -60,11 +69,19 @@ selector = RandomSearchModelSelector(
 )
 ```
 
-**When to use**: Quick exploration to get a baseline before committing to a more thorough search.
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `sample_fraction` | `0.25` | Fraction of combinations to evaluate |
+| `seed` | `None` | Random seed for reproducibility |
+
+!!! success "When to use"
+    Quick exploration to establish a baseline before committing to a thorough search.
+
+---
 
 ## Hill Climbing
 
-Greedy search with random restarts. Uses model quality and speed rankings to define neighbors, so each iteration makes an informed single-step move.
+Greedy local search with random restarts. Defines "neighbors" using model quality and speed rankings, so each step is an informed single-model swap.
 
 ```python
 from agentopt import HillClimbingModelSelector
@@ -80,11 +97,20 @@ selector = HillClimbingModelSelector(
 )
 ```
 
-**When to use**: Medium-sized spaces where you want to exploit model topology (cheaper models are neighbors of expensive ones).
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `max_iterations` | `20` | Max steps per restart |
+| `num_restarts` | `3` | Number of random restarts |
+| `patience` | `3` | Steps without improvement before restart |
+
+!!! success "When to use"
+    Medium-sized spaces where you want to exploit model topology — cheaper models are neighbors of expensive ones.
+
+---
 
 ## Arm Elimination
 
-Progressively eliminates statistically dominated combinations. Starts with a small batch of datapoints, then grows the batch size while eliminating combinations that are statistically worse than others.
+Progressively eliminates statistically dominated combinations. Starts with a small batch of datapoints, then grows the batch while eliminating underperformers.
 
 ```python
 from agentopt import ArmEliminationModelSelector
@@ -94,17 +120,26 @@ selector = ArmEliminationModelSelector(
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
-    n_initial=10,        # initial batch size
-    growth_factor=2.0,   # batch size multiplier per round
-    confidence=1.0,      # elimination confidence threshold
+    n_initial=10,
+    growth_factor=2.0,
+    confidence=1.0,
 )
 ```
 
-**When to use**: When you want early stopping — bad combinations are eliminated quickly, saving evaluation budget.
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `n_initial` | `10` | Initial batch size (datapoints) |
+| `growth_factor` | `2.0` | Batch size multiplier per round |
+| `confidence` | `1.0` | Elimination confidence threshold |
+
+!!! success "When to use"
+    When bad combinations should be eliminated early to save budget. Particularly effective when there are clearly weak options.
+
+---
 
 ## Hyperband
 
-Implements the full Hyperband algorithm using dataset samples as the resource. Runs multiple brackets of successive halving with different initial resource allocations.
+Full Hyperband algorithm using dataset samples as the resource. Runs multiple brackets of successive halving with different initial resource allocations.
 
 ```python
 from agentopt import HyperbandModelSelector
@@ -118,11 +153,18 @@ selector = HyperbandModelSelector(
 )
 ```
 
-**When to use**: Large search spaces with limited evaluation budget. Balances exploration (many combinations, few datapoints) with exploitation (few combinations, many datapoints).
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `reduction_factor` | `3.0` | Halving rate per round |
+
+!!! success "When to use"
+    Large search spaces with limited evaluation budget. Hyperband automatically balances exploration (many combinations, few datapoints) with exploitation (few combinations, many datapoints).
+
+---
 
 ## LM Proposal
 
-Uses a proposer LLM to shortlist promising combinations before evaluation. The proposer sees the candidate models and dataset preview, then suggests which combinations to try.
+Uses a proposer LLM to shortlist promising combinations before evaluation. The proposer sees the candidate models and a dataset preview, then suggests which combinations to try.
 
 ```python
 from agentopt import LMProposalModelSelector
@@ -137,11 +179,19 @@ selector = LMProposalModelSelector(
 )
 ```
 
-**When to use**: When you want to leverage LLM knowledge about model capabilities to focus the search.
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `proposer_model` | `"gpt-4o-mini"` | Model used for proposal generation |
+| `max_combinations` | `12` | Max combinations to shortlist |
+
+!!! success "When to use"
+    When you want to leverage an LLM's knowledge about model capabilities to skip obviously bad combinations.
+
+---
 
 ## Bayesian Optimization
 
-Uses a Gaussian Process surrogate model to predict accuracy for unevaluated combinations, then selects the most promising one via Expected Improvement.
+Uses a Gaussian Process surrogate to predict accuracy for unevaluated combinations, then selects the most promising one via Expected Improvement.
 
 ```python
 from agentopt import BayesianOptimizationModelSelector
@@ -156,7 +206,16 @@ selector = BayesianOptimizationModelSelector(
 )
 ```
 
-!!! note
-    Requires optional dependencies: `pip install "agentopt[bayesian]"`
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `n_initial_random` | `5` | Random combinations to seed the GP |
+| `n_iterations` | `20` | GP-guided iterations after seeding |
 
-**When to use**: When each evaluation is expensive and you want to minimize the total number of evaluations.
+!!! note "Extra dependency"
+    Requires PyTorch and BoTorch:
+    ```bash
+    pip install "agentopt[bayesian]"
+    ```
+
+!!! success "When to use"
+    When each evaluation is expensive (large dataset, slow models) and you want to minimize total evaluations. The GP learns from past results to pick the most informative next combination.

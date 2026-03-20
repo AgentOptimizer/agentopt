@@ -1,6 +1,9 @@
-# LangChain Example
+# LangChain
 
-Using AgentOpt with LangChain's `ChatOpenAI` instances.
+Using AgentOpt with LangChain's `ChatOpenAI` model instances.
+
+!!! info "Model objects, not strings"
+    With LangChain, the `models` dict contains `ChatOpenAI` instances rather than plain strings.
 
 ```python
 from langchain_openai import ChatOpenAI
@@ -50,4 +53,4 @@ results = selector.select_best(parallel=True)
 results.print_summary()
 ```
 
-See full example: [examples/langchain_example.py](https://github.com/AgentOptimizer/agentopt/blob/main/examples/langchain_example.py)
+[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/langchain_example.py)

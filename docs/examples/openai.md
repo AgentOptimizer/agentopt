@@ -1,6 +1,9 @@
-# OpenAI SDK Example
+# OpenAI SDK
 
-A simple two-step agent (planner + solver) using the OpenAI SDK directly.
+A two-step agent (planner + solver) using the OpenAI Python SDK directly.
+
+!!! tip "Minimal setup"
+    This is the simplest integration — just pass model name strings from the `models` dict to your OpenAI client calls.
 
 ```python
 from openai import OpenAI
@@ -57,4 +60,4 @@ results = selector.select_best(parallel=True)
 results.print_summary()
 ```
 
-See full example: [examples/custom_agent_example.py](https://github.com/AgentOptimizer/agentopt/blob/main/examples/custom_agent_example.py)
+[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/custom_agent_example.py)

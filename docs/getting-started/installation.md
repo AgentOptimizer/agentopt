@@ -1,22 +1,36 @@
 # Installation
 
-## Basic Install
+## Quick Install
 
-```bash
-pip install agentopt
-```
+=== "pip"
+
+    ```bash
+    pip install agentopt
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add agentopt
+    ```
 
 ## Optional Dependencies
 
-```bash
-# Bayesian optimization (requires PyTorch)
-pip install "agentopt[bayesian]"
+=== "Bayesian Optimization"
 
-# All example dependencies
-pip install "agentopt[examples]"
-```
+    Requires PyTorch and BoTorch:
 
-## Development Install
+    ```bash
+    pip install "agentopt[bayesian]"
+    ```
+
+=== "All Extras"
+
+    ```bash
+    pip install "agentopt[bayesian]"
+    ```
+
+## Development Setup
 
 ```bash
 git clone https://github.com/AgentOptimizer/agentopt.git
@@ -27,5 +41,8 @@ uv run pytest
 
 ## Requirements
 
-- Python >= 3.10
-- An LLM API key (e.g., `OPENAI_API_KEY`)
+- **Python** >= 3.10
+- **LLM API key** (e.g., `OPENAI_API_KEY` set in your environment)
+
+!!! tip "No framework dependency"
+    AgentOpt has minimal core dependencies (`httpx`, `pydantic`). It works alongside whatever LLM framework you already use — no need to install framework-specific adapters.

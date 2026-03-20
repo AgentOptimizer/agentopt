@@ -1,0 +1,114 @@
+/* Hero section */
+.md-typeset .hero {
+  text-align: center;
+  padding: 2rem 0 1rem;
+}
+
+.md-typeset .hero h1 {
+  font-weight: 700;
+  font-size: 2.4em;
+  margin-bottom: 0.4em;
+  background: linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #f59e0b 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.md-typeset .hero .tagline {
+  font-size: 1.25em;
+  color: var(--md-default-fg-color--light);
+  max-width: 640px;
+  margin: 0 auto 1.5em;
+  line-height: 1.6;
+}
+
+.md-typeset .hero .actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.md-typeset .hero .actions .md-button {
+  font-weight: 600;
+}
+
+/* Feature grid */
+.md-typeset .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 2rem 0;
+}
+
+.md-typeset .grid .card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  padding: 1.25rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.md-typeset .grid .card:hover {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+.md-typeset .grid .card .card-icon {
+  font-size: 1.5em;
+  margin-bottom: 0.5rem;
+}
+
+.md-typeset .grid .card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1em;
+}
+
+.md-typeset .grid .card p {
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Algorithm comparison table */
+.md-typeset table.algo-table th {
+  background: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+  font-weight: 600;
+}
+
+/* Output block styling */
+.md-typeset .output-block {
+  background: var(--md-code-bg-color);
+  border-radius: 6px;
+  padding: 1rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8em;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.md-typeset .output-block .highlight-row {
+  color: var(--md-accent-fg-color);
+  font-weight: 700;
+}
+
+/* How it works diagram */
+.md-typeset .architecture-flow {
+  text-align: center;
+  padding: 1rem 0;
+}
+
+/* Section dividers */
+.md-typeset hr {
+  border-color: var(--md-default-fg-color--lightest);
+}
+
+/* Better admonition spacing */
+.md-typeset .admonition {
+  margin: 1.5em 0;
+}
+
+/* Compact nav tabs */
+.md-tabs__link {
+  font-size: 0.78rem;
+}

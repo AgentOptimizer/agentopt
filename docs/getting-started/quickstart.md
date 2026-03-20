@@ -1,10 +1,10 @@
 # Quick Start
 
-This guide walks you through optimizing model selection for a simple two-step agent.
+Optimize model selection for a two-step agent in under 5 minutes.
 
-## 1. Define Your Agent
+## Step 1: Define Your Agent
 
-Wrap your agent in a **factory function** that takes a model configuration dict and returns a callable agent:
+Wrap your agent in a **factory function** that accepts a model config dict and returns a callable:
 
 ```python
 from openai import OpenAI
@@ -32,11 +32,12 @@ def agent_maker(models):
     return run
 ```
 
-The `models` dict maps each agent step (node) to a model name string. AgentOpt will try different models for each node.
+!!! info "How it works"
+    The `models` dict maps each agent step (node) to a model name string. AgentOpt will swap in different models for each node and measure the results.
 
-## 2. Prepare Your Dataset
+## Step 2: Prepare Your Dataset
 
-Create a list of `(input, expected_output)` pairs:
+Create a list of `(input, expected_output)` tuples:
 
 ```python
 dataset = [
@@ -49,16 +50,19 @@ dataset = [
 ]
 ```
 
-## 3. Define Your Evaluation Function
+!!! tip "Dataset size"
+    More samples means more reliable rankings. We recommend **50-100 samples** for production decisions, but even 10-20 samples can surface clear winners during development.
 
-The evaluation function scores agent output against the expected answer. It should return a `float` between 0 and 1 (higher is better):
+## Step 3: Define Your Evaluation Function
+
+Score agent output against the expected answer. Return a `float` in `[0, 1]`:
 
 ```python
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
 ```
 
-## 4. Run Model Selection
+## Step 4: Run Model Selection
 
 ```python
 from agentopt import BruteForceModelSelector
@@ -77,21 +81,21 @@ results = selector.select_best(parallel=True)
 results.print_summary()
 ```
 
-## 5. Use the Results
+## Step 5: Use the Results
 
 ```python
-# Get the best combination
+# Get the winning combination
 best = results.get_best_combo()
 print(best)  # {"planner": "gpt-4o-mini", "solver": "gpt-4.1-nano"}
 
-# Export results
+# Export for later use
 results.to_csv("results.csv")
 results.export_config("optimized_config.yaml")
 ```
 
-## Enabling Disk Cache
+## Enable Disk Cache
 
-To persist cached LLM responses across runs (so re-running is instant and free):
+Persist cached responses across runs so re-running is instant and free:
 
 ```python
 from agentopt.proxy import LLMTracker
@@ -103,8 +107,13 @@ selector = BruteForceModelSelector(
 )
 ```
 
-## Next Steps
+!!! success "Cache survives restarts"
+    With disk caching enabled, if a run is interrupted or you tweak your eval function, all previously-seen LLM calls are served from cache. No API cost, no latency.
 
-- [Selection Algorithms](../concepts/algorithms.md) — Choose a smarter search strategy for large model spaces
-- [How It Works](../concepts/how-it-works.md) — Understand the interception and tracking mechanism
-- [Examples](../examples/openai.md) — See framework-specific examples
+---
+
+**Next steps:**
+
+- [Selection Algorithms](../concepts/algorithms.md) — Choose a smarter strategy for large model spaces
+- [How It Works](../concepts/how-it-works.md) — Understand the interception mechanism
+- [Examples](../examples/openai.md) — Framework-specific examples

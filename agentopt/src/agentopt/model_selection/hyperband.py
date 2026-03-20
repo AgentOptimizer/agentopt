@@ -61,6 +61,20 @@ class HyperbandModelSelector(BaseModelSelector):
         )
         self._B = (self._s_max + 1) * self.max_resource
 
+    def _aggregate_tokens(
+        self, dp_ids: List[str],
+    ) -> Tuple[Dict[str, int], Dict[str, int]]:
+        """Aggregate token usage across datapoint IDs."""
+        dp_tokens = self._fetch_tokens_by_datapoint(dp_ids)
+        input_tokens: Dict[str, int] = {}
+        output_tokens: Dict[str, int] = {}
+        for _, (inp, out) in dp_tokens.items():
+            for model, count in inp.items():
+                input_tokens[model] = input_tokens.get(model, 0) + count
+            for model, count in out.items():
+                output_tokens[model] = output_tokens.get(model, 0) + count
+        return input_tokens, output_tokens
+
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
@@ -124,14 +138,9 @@ class HyperbandModelSelector(BaseModelSelector):
                 for idx in current_indices:
                     combo = all_combos[idx]
                     combo_name = self._combo_name(combo)
-                    data_id_prefix = (
-                        f"{combo_name}::s{s}_i{i}_b{batch_start}"
-                    )
+                    stage_label = f"{combo_name}::s{s}_i{i}"
                     scores, latencies, dp_ids = self._evaluate_combo(
-                        combo,
-                        batch,
-                        label=combo_name,
-                        data_id_prefix=data_id_prefix,
+                        combo, batch, label=stage_label,
                     )
                     combo_scores[idx].extend(scores)
                     combo_latencies[idx].extend(latencies)
@@ -181,7 +190,7 @@ class HyperbandModelSelector(BaseModelSelector):
                 avg_latency = sum(latencies) / len(latencies)
             else:
                 accuracy, avg_latency = 0.0, 0.0
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
+            input_tokens, output_tokens = self._aggregate_tokens(dp_ids)
             dp_results = (
                 self._build_datapoint_results(scores, latencies, dp_ids)
                 if dp_ids
@@ -269,22 +278,15 @@ class HyperbandModelSelector(BaseModelSelector):
 
                 stage_s = s
                 stage_i = i
-                stage_batch_start = batch_start
 
                 async def _eval_batch(
                     idx: int,
                 ) -> Tuple[int, List[float], List[float], List[str]]:
                     combo = all_combos[idx]
                     combo_name = self._combo_name(combo)
-                    data_id_prefix = (
-                        f"{combo_name}::s{stage_s}_i{stage_i}_b{stage_batch_start}"
-                    )
+                    stage_label = f"{combo_name}::s{stage_s}_i{stage_i}"
                     scores, latencies, dp_ids = await self._evaluate_combo_async(
-                        combo,
-                        batch,
-                        label=combo_name,
-                        data_id_prefix=data_id_prefix,
-                        max_concurrent=max_concurrent,
+                        combo, batch, label=stage_label, max_concurrent=max_concurrent,
                     )
                     return idx, scores, latencies, dp_ids
 
@@ -347,7 +349,7 @@ class HyperbandModelSelector(BaseModelSelector):
                 avg_latency = sum(latencies) / len(latencies)
             else:
                 accuracy, avg_latency = 0.0, 0.0
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
+            input_tokens, output_tokens = self._aggregate_tokens(dp_ids)
             dp_results = (
                 self._build_datapoint_results(scores, latencies, dp_ids)
                 if dp_ids

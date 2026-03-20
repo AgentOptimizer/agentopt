@@ -425,39 +425,28 @@ class BaseModelSelector(ABC):
         combo: Dict[str, ModelCandidate],
         evaluation_tasks: Dataset,
         label: str = "",
-        data_id_prefix: Optional[str] = None,
     ) -> Tuple[List[float], List[float], List[str]]:
         """Build an agent for combo and evaluate it on tasks.
 
         Returns (scores, latencies, datapoint_ids).
         """
         agent = self.agent_fn(combo)
-        return self._evaluate_agent(
-            agent,
-            evaluation_tasks,
-            label,
-            data_id_prefix=data_id_prefix,
-        )
+        return self._evaluate_agent(agent, evaluation_tasks, label)
 
     def _evaluate_agent(
-        self,
-        agent: Any,
-        evaluation_tasks: Dataset,
-        label: str = "",
-        data_id_prefix: Optional[str] = None,
+        self, agent: Any, evaluation_tasks: Dataset, label: str = "",
     ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent against tasks.
 
         Returns (scores, latencies, datapoint_ids).
         """
-        dp_prefix = data_id_prefix if data_id_prefix is not None else label
         scores: List[float] = []
         latencies: List[float] = []
         datapoint_ids: List[str] = []
         total = len(evaluation_tasks)
 
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
-            dp_id = f"{dp_prefix}::dp_{i}"
+            dp_id = f"{label}::dp_{i}"
             try:
                 with self._tracker.track(data_id=dp_id, combo_id=label):
                     start_time = time.time()
@@ -481,7 +470,6 @@ class BaseModelSelector(ABC):
         combo: Dict[str, ModelCandidate],
         evaluation_tasks: Dataset,
         label: str = "",
-        data_id_prefix: Optional[str] = None,
         max_concurrent: int = 20,
     ) -> Tuple[List[float], List[float], List[str]]:
         """Build an agent for combo and evaluate async.
@@ -490,11 +478,7 @@ class BaseModelSelector(ABC):
         """
         agent = self.agent_fn(combo)
         return await self._evaluate_agent_async(
-            agent,
-            evaluation_tasks,
-            label,
-            max_concurrent,
-            data_id_prefix=data_id_prefix,
+            agent, evaluation_tasks, label, max_concurrent,
         )
 
     async def _evaluate_agent_async(
@@ -503,13 +487,11 @@ class BaseModelSelector(ABC):
         evaluation_tasks: Dataset,
         label: str = "",
         max_concurrent: int = 20,
-        data_id_prefix: Optional[str] = None,
     ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent asynchronously.
 
         Returns (scores, latencies, datapoint_ids).
         """
-        dp_prefix = data_id_prefix if data_id_prefix is not None else label
         import contextvars as _ctx
 
         semaphore = asyncio.Semaphore(max_concurrent)
@@ -521,7 +503,7 @@ class BaseModelSelector(ABC):
         )
 
         async def _eval_single(idx: int, input_data: Any, expected_answer: Any) -> None:
-            dp_id = f"{dp_prefix}::dp_{idx + 1}"
+            dp_id = f"{label}::dp_{idx + 1}"
             async with semaphore:
                 try:
                     with self._tracker.track(data_id=dp_id, combo_id=label):

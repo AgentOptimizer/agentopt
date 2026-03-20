@@ -8,9 +8,7 @@ from .epsilon_lucb import EpsilonLUCBModelSelector
 from .hill_climbing import HillClimbingModelSelector
 from .lm_proposal import LMProposalModelSelector
 from .random_search import RandomSearchModelSelector
-from .threshold_successive_elimination import (
-    ThresholdBanditSEModelSelector,
-)
+from .threshold_successive_elimination import ThresholdBanditSEModelSelector
 
 __all__ = [
     "BaseModelSelector",

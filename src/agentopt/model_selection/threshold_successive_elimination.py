@@ -86,7 +86,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 combo = all_combos[idx]
                 combo_name = self._combo_name(combo)
                 scores, latencies, dp_ids = self._evaluate_combo(
-                    combo, init_batch, label=combo_name
+                    combo, init_batch, label=combo_name, dp_offset=offset
                 )
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
@@ -113,7 +113,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 combo = all_combos[idx]
                 combo_name = self._combo_name(combo)
                 scores, latencies, dp_ids = self._evaluate_combo(
-                    combo, batch, label=combo_name
+                    combo, batch, label=combo_name, dp_offset=offset - 1
                 )
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
@@ -153,7 +153,9 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 break
             round_num += 1
 
-        return self._build_results(all_combos, combo_scores, combo_latencies, combo_dp_ids)
+        return self._build_results(
+            all_combos, combo_scores, combo_latencies, combo_dp_ids
+        )
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
@@ -190,7 +192,11 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 combo = all_combos[idx]
                 combo_name = self._combo_name(combo)
                 scores, latencies, dp_ids = await self._evaluate_combo_async(
-                    combo, init_batch, label=combo_name, max_concurrent=max_concurrent
+                    combo,
+                    init_batch,
+                    label=combo_name,
+                    max_concurrent=max_concurrent,
+                    dp_offset=offset,
                 )
                 return idx, scores, latencies, dp_ids
 
@@ -231,7 +237,11 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 combo = all_combos[idx]
                 combo_name = self._combo_name(combo)
                 scores, latencies, dp_ids = await self._evaluate_combo_async(
-                    combo, batch, label=combo_name, max_concurrent=max_concurrent
+                    combo,
+                    batch,
+                    label=combo_name,
+                    max_concurrent=max_concurrent,
+                    dp_offset=offset - 1,
                 )
                 return idx, scores, latencies, dp_ids
 
@@ -282,7 +292,9 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 break
             round_num += 1
 
-        return self._build_results(all_combos, combo_scores, combo_latencies, combo_dp_ids)
+        return self._build_results(
+            all_combos, combo_scores, combo_latencies, combo_dp_ids
+        )
 
     def _confidence_bounds(self, scores: List[float]) -> Tuple[float, float, float]:
         n = len(scores)
@@ -313,7 +325,9 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 accuracy, avg_latency = 0.0, 0.0
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             dp_results = (
-                self._build_datapoint_results(scores, latencies, dp_ids) if dp_ids else []
+                self._build_datapoint_results(scores, latencies, dp_ids)
+                if dp_ids
+                else []
             )
             all_results.append(
                 self._make_result(

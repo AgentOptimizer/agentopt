@@ -86,6 +86,8 @@ class SelectionResults(BaseModel):
     """Results from model selection."""
 
     results: List[ModelResult] = Field(default_factory=list)
+    selection_wall_time_seconds: Optional[float] = None
+    selection_cost: Optional[float] = None
 
     def __iter__(self):
         return iter(self.results)
@@ -293,6 +295,16 @@ class SelectionResults(BaseModel):
                 f"price: {fmt_price(best_result)})"
             )
         lines.append("")
+
+        # Selection overhead
+        parts = []
+        if self.selection_wall_time_seconds is not None:
+            parts.append(f"{self.selection_wall_time_seconds:.2f}s")
+        if self.selection_cost is not None:
+            parts.append(f"${self.selection_cost:.6f}")
+        if parts:
+            lines.append(f"{pad} Selection overhead: {', '.join(parts)}")
+            lines.append("")
 
         return "\n".join(lines)
 
@@ -667,10 +679,27 @@ class BaseModelSelector(ABC):
         Returns:
             SelectionResults containing all model evaluation results.
         """
+        t0 = time.time()
         try:
-            return self._run_selection(parallel, max_concurrent)
+            result = self._run_selection(parallel, max_concurrent)
         finally:
             self._tracker.stop()
+
+        result.selection_wall_time_seconds = time.time() - t0
+
+        # Cost: only non-cached calls
+        input_tokens: Dict[str, int] = {}
+        output_tokens: Dict[str, int] = {}
+        for r in self._tracker.get_records():
+            if r.cached:
+                continue
+            input_tokens[r.model] = input_tokens.get(r.model, 0) + r.prompt_tokens
+            output_tokens[r.model] = output_tokens.get(r.model, 0) + r.completion_tokens
+        result.selection_cost = compute_price(
+            input_tokens, output_tokens, custom_prices=self._custom_prices,
+        )
+
+        return result
 
     @abstractmethod
     def _run_selection(

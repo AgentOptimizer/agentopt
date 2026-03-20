@@ -108,6 +108,8 @@ AgentOpt provides 6 selection algorithms — you don't always need to evaluate e
 | `RandomSearchModelSelector` | Quick exploration | Samples a random fraction |
 | `HillClimbingModelSelector` | Topology-aware search | Greedy search using model quality/speed rankings |
 | `ArmEliminationModelSelector` | Early pruning | Eliminates statistically dominated combinations |
+| `EpsilonLUCBModelSelector` | Best-arm identification | Stops when LUCB confidence gap is within user `epsilon` |
+| `ThresholdBanditSEModelSelector` | Thresholding objectives | Classifies combinations above/below user `threshold` |
 | `LMProposalModelSelector` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
 | `BayesianOptimizationModelSelector` | Expensive evaluations | GP-based optimization (requires `torch`, `botorch`) |
 

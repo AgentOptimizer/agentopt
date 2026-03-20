@@ -228,8 +228,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
                     return idx, scores, latencies, dp_ids
 
             round_results = await asyncio.gather(
-                *[_eval_batch(idx) for idx in sorted(active)],
-                return_exceptions=True,
+                *[_eval_batch(idx) for idx in sorted(active)], return_exceptions=True,
             )
 
             for res in round_results:

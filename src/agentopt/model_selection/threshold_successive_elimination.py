@@ -76,6 +76,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
 
         offset = 0
         init_batch_size = min(self.n_initial, n_total)
+        assert init_batch_size > 0
         init_batch = dataset_list[offset : offset + init_batch_size]
         print(
             f"\nInitial round [samples {offset}-{offset + init_batch_size}, "
@@ -178,6 +179,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
 
         offset = 0
         init_batch_size = min(self.n_initial, n_total)
+        assert init_batch_size > 0
         init_batch = dataset_list[offset : offset + init_batch_size]
         n_combo_init, dp_concurrent_init = self._compute_concurrency(
             max_concurrent, init_batch_size
@@ -204,8 +206,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 return idx, scores, latencies, dp_ids
 
         init_results = await asyncio.gather(
-            *[_eval_initial(idx) for idx in sorted(active)],
-            return_exceptions=True,
+            *[_eval_initial(idx) for idx in sorted(active)], return_exceptions=True,
         )
 
         for res in init_results:
@@ -256,8 +257,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                     return idx, scores, latencies, dp_ids
 
             round_results = await asyncio.gather(
-                *[_eval_batch(idx) for idx in sorted(active)],
-                return_exceptions=True,
+                *[_eval_batch(idx) for idx in sorted(active)], return_exceptions=True,
             )
 
             for res in round_results:

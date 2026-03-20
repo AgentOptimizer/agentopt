@@ -71,6 +71,7 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
 
         offset = 0
         init_batch_size = min(self.n_initial, n_total)
+        assert init_batch_size > 0
         init_batch = dataset_list[offset : offset + init_batch_size]
         for idx in range(n_arms):
             combo = all_combos[idx]
@@ -139,6 +140,7 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
 
         offset = 0
         init_batch_size = min(self.n_initial, n_total)
+        assert init_batch_size > 0
         init_batch = dataset_list[offset : offset + init_batch_size]
         n_combo_init, dp_concurrent_init = self._compute_concurrency(
             max_concurrent, init_batch_size
@@ -161,8 +163,7 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
                 return idx, scores, latencies, dp_ids
 
         round_results = await asyncio.gather(
-            *[_eval_initial(idx) for idx in range(n_arms)],
-            return_exceptions=True,
+            *[_eval_initial(idx) for idx in range(n_arms)], return_exceptions=True,
         )
         for res in round_results:
             if isinstance(res, Exception):
@@ -213,8 +214,7 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
                     return idx, scores, latencies, dp_ids
 
             round_results = await asyncio.gather(
-                *[_eval_pair(idx) for idx in sample_idxs],
-                return_exceptions=True,
+                *[_eval_pair(idx) for idx in sample_idxs], return_exceptions=True,
             )
             for res in round_results:
                 if isinstance(res, Exception):

@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, PrivateAttr
 
-from agentproxy import LLMTracker
+from agentopt.proxy import LLMTracker
 
 from ..base_models import (
     Dataset,
@@ -545,7 +545,7 @@ class BaseModelSelector(ABC):
         return scores, latencies, datapoint_ids
 
     # ------------------------------------------------------------------
-    # Token tracking via agentproxy
+    # Token tracking via agentopt.proxy
     # ------------------------------------------------------------------
 
     def _fetch_tokens(self, combo_id: str) -> Tuple[Dict[str, int], Dict[str, int]]:

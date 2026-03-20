@@ -5,7 +5,7 @@ This example shows how to use agentopt with a plain Python agent
 that makes OpenAI SDK calls directly. No framework or proxy needed.
 
 Prerequisites:
-    1. pip install openai agentopt agentproxy
+    1. pip install openai agentopt
     2. Set OPENAI_API_KEY environment variable
 """
 
@@ -26,7 +26,7 @@ from agentopt import (
     LMProposalModelSelector,
     RandomSearchModelSelector,
 )
-from agentproxy import LLMTracker, ResponseCache
+from agentopt import LLMTracker, ResponseCache
 
 SELECTORS = {
     "brute_force": BruteForceModelSelector,

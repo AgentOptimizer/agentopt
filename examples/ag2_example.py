@@ -2,12 +2,12 @@
 Example: AG2 agent with agentopt.
 
 Prerequisites:
-    1. pip install ag2 agentopt agentproxy
+    1. pip install ag2 agentopt
     2. Set OPENAI_API_KEY environment variable
 
 Note: AG2's run() API spawns a background thread which breaks context
 propagation. This example uses initiate_chat() which blocks in the
-caller's thread and is required for agentproxy compatibility.
+caller's thread and is required for agentopt.proxy compatibility.
 """
 
 from dotenv import load_dotenv
@@ -82,7 +82,7 @@ def agent_maker(models: Dict[str, Any]):
 
         # NOTE: use initiate_chat(), not run().
         # run() spawns a background thread that breaks contextvar propagation.
-        # initiate_chat() blocks in the caller's thread — required for agentproxy.
+        # initiate_chat() blocks in the caller's thread — required for agentopt.proxy.
         chat_result = user_proxy.initiate_chat(
             planner, message=f"Answer this question: {question}", max_turns=4,
         )

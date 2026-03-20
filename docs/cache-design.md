@@ -8,7 +8,7 @@
 
 During model selection, the evaluation harness runs the same dataset across multiple model combinations. Many combinations share identical sub-calls (e.g. a shared planner prompt). Without caching, these redundant calls hit the API, wasting money and time.
 
-The cache sits at the HTTP layer inside agentproxy's interceptor. It is transparent to agent code and framework internals — no code changes required.
+The cache sits at the HTTP layer inside the agentopt.proxy interceptor. It is transparent to agent code and framework internals — no code changes required.
 
 ```
 agent(input_data)
@@ -24,7 +24,7 @@ Caching is enabled by default via `LLMTracker(cache=True)`.
 
 ## 2. Architecture
 
-Two main classes in `agentproxy/src/agentproxy/cache.py`:
+Two main classes in `src/agentopt/proxy/cache.py`:
 
 ### `ResponseCache`
 

@@ -14,7 +14,7 @@ The user provides:
 3. **`eval_fn`** — a scoring function that compares expected and actual outputs
 4. **`dataset`** — (input, expected_answer) pairs
 
-The framework evaluates combinations, tracks token usage and latency via `agentproxy`, and returns ranked results.
+The framework evaluates combinations, tracks token usage and latency via `agentopt.proxy`, and returns ranked results.
 
 ```python
 selector = ModelSelector(
@@ -30,7 +30,7 @@ results = selector.select_best(parallel=True)
 
 ## 2. Core Abstractions
 
-Defined in `agentopt/src/agentopt/base_models.py` and `model_selection/base.py`.
+Defined in `src/agentopt/base_models.py` and `src/agentopt/model_selection/base.py`.
 
 ### Types
 
@@ -362,7 +362,7 @@ Uses a Gaussian Process surrogate model to predict combination performance and a
 
 ## 7. Model Topology
 
-**File:** `agentopt/src/agentopt/model_topology.py`
+**File:** `src/agentopt/model_topology.py`
 
 Pre-built rankings that encode general-impression ordering of LLM models. Used by hill climbing to define neighbor moves.
 
@@ -401,7 +401,7 @@ Uses **OpenRouter naming convention** (`provider/model-name`).
 
 ## 8. Pricing
 
-**File:** `agentopt/src/agentopt/model_price.py`
+**File:** `src/agentopt/model_price.py`
 **Data:** `model_price.json` (repo root)
 
 ### Lookup strategy
@@ -440,21 +440,24 @@ selector = ModelSelector(
 ## 9. Package Structure
 
 ```
-agentopt/
-├── pyproject.toml
-└── src/
-    └── agentopt/
-        ├── __init__.py                # Public API; ModelSelector = BruteForceModelSelector
-        ├── base_models.py             # EvalFn, ModelCandidate, ModelsConfig, Dataset, AgentFn
-        ├── model_price.py             # get_model_price(), compute_price(), MODEL_PRICES
-        ├── model_topology.py          # QUALITY_RANKING, SPEED_RANKING, neighbor functions
-        └── model_selection/
-            ├── __init__.py
-            ├── base.py                # BaseModelSelector, DatapointResult, ModelResult, SelectionResults
-            ├── brute_force.py         # BruteForceModelSelector
-            ├── random_search.py       # RandomSearchModelSelector
-            ├── hill_climbing.py       # HillClimbingModelSelector
-            ├── arm_elimination.py     # ArmEliminationModelSelector
-            ├── hyperband.py           # HyperbandModelSelector
-            └── bayesian_optimization.py  # BayesianOptimizationModelSelector
+src/agentopt/
+├── __init__.py                # Public API; ModelSelector = BruteForceModelSelector
+├── base_models.py             # EvalFn, ModelCandidate, ModelsConfig, Dataset, AgentFn
+├── model_price.py             # get_model_price(), compute_price(), MODEL_PRICES
+├── model_topology.py          # QUALITY_RANKING, SPEED_RANKING, neighbor functions
+├── proxy/                     # HTTP-layer LLM call tracking (was agentproxy)
+│   ├── __init__.py
+│   ├── tracker.py
+│   ├── interceptor.py
+│   ├── cache.py
+│   └── models.py
+└── model_selection/
+    ├── __init__.py
+    ├── base.py                # BaseModelSelector, DatapointResult, ModelResult, SelectionResults
+    ├── brute_force.py         # BruteForceModelSelector
+    ├── random_search.py       # RandomSearchModelSelector
+    ├── hill_climbing.py       # HillClimbingModelSelector
+    ├── arm_elimination.py     # ArmEliminationModelSelector
+    ├── hyperband.py           # HyperbandModelSelector
+    └── bayesian_optimization.py  # BayesianOptimizationModelSelector
 ```

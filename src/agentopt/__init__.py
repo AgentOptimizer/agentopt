@@ -6,7 +6,7 @@ that builds your agent with the given model candidates (string names or
 LLM instances), then let a ModelSelector find the best combination.
 """
 
-from agentproxy import CallRecord, LLMTracker
+from agentopt.proxy import CallRecord, LLMTracker, ResponseCache
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
 from .model_selection import (
@@ -37,6 +37,7 @@ __all__ = [
     "BaseModelSelector",
     "LLMTracker",
     "CallRecord",
+    "ResponseCache",
     # Selectors
     "BruteForceModelSelector",
     "RandomSearchModelSelector",

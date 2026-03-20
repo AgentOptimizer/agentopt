@@ -1,4 +1,4 @@
-# `agentproxy` — HTTP-Layer Context and Observability for LLM Agents
+# `agentopt.proxy` — HTTP-Layer Context and Observability for LLM Agents
 
 > **Core thesis:** Instead of reaching into agent frameworks to find where LLM calls are made, we patch at the HTTP layer — the one chokepoint all frameworks share. Context is propagated via Python's `contextvar` mechanism, requiring zero changes to agent code.
 
@@ -31,7 +31,7 @@ This produces one adapter per framework, each with its own mutation strategy, an
 
 ### Monkey-patching `httpx.Client.send()`
 
-When `tracker.start()` is called, agentproxy replaces `httpx.Client.send` and `httpx.AsyncClient.send` at the class level:
+When `tracker.start()` is called, agentopt.proxy replaces `httpx.Client.send` and `httpx.AsyncClient.send` at the class level:
 
 ```python
 _original_send = httpx.Client.send
@@ -66,7 +66,7 @@ It doesn't matter how many abstraction layers are above. Every HTTP request in `
 A `contextvar` is a Python built-in that acts like a scoped global variable — each thread and each async task gets its own independent value. The evaluation harness sets the context once at the trajectory boundary; the patched `send()` reads it on every HTTP call below.
 
 ```python
-# module level in agentproxy
+# module level in agentopt.proxy
 _current_data_id  = ContextVar("data_id",  default=None)
 _current_combo_id = ContextVar("combo_id", default=None)
 _current_agent_id = ContextVar("agent_id", default=None)
@@ -235,7 +235,7 @@ with tracker.track(data_id="dp_1", combo_id="..."):
 ### `LLMTracker`
 
 ```python
-from agentproxy import LLMTracker
+from agentopt.proxy import LLMTracker
 
 tracker = LLMTracker()
 tracker.start()   # installs httpx patch
@@ -294,15 +294,12 @@ class CallRecord:
 ## 7. Package Structure
 
 ```
-agentproxy/
-├── pyproject.toml
-└── src/
-    └── agentproxy/
-        ├── __init__.py        # Public API: LLMTracker, CallRecord, ResponseCache, CacheStats
-        ├── tracker.py         # LLMTracker — context management + record storage + cache control
-        ├── interceptor.py     # httpx monkey-patching + usage extraction + cache integration
-        ├── cache.py           # ResponseCache, CacheEntry, CacheStats, _make_cache_key
-        └── models.py          # CallRecord dataclass
+src/agentopt/proxy/
+├── __init__.py        # Public API: LLMTracker, CallRecord, ResponseCache
+├── tracker.py         # LLMTracker — context management + record storage + cache control
+├── interceptor.py     # httpx monkey-patching + usage extraction + cache integration
+├── cache.py           # ResponseCache, CacheEntry, _make_cache_key
+└── models.py          # CallRecord dataclass
 ```
 
 ---
@@ -325,13 +322,13 @@ agentproxy/
 
 ### Out of scope
 
-- **Runtime model swapping** — requires a reference to the LLM object inside the agent. `agent_maker` owns that; `agentproxy` does not.
+- **Runtime model swapping** — requires a reference to the LLM object inside the agent. `agent_maker` owns that; `agentopt.proxy` does not.
 - **Streaming response tracking** — no complete body at `send()` return time. Future work.
 - **`requests` library** — only `httpx` is patched. Can be added with the same pattern if needed.
 
 ---
 
-## 9. What agentproxy Does Not Do (and Why)
+## 9. What agentopt.proxy Does Not Do (and Why)
 
 The previous `ModelProxy` design attempted to control the backend by wrapping LLM objects and swapping models at runtime. This required one `FrameworkAdapter` per framework, each with its own mutation strategy, and imposed structural constraints on agent design.
 
@@ -339,7 +336,7 @@ For the target use case — **offline model selection by agent-token-cost** — 
 
 The tradeoff:
 
-| | agentproxy (new) | ModelProxy (old) |
+| | agentopt.proxy (current) | ModelProxy (old) |
 |---|---|---|
 | Token tracking | ✅ | ✅ |
 | Cost attribution | ✅ trajectory-level | ✅ per-agent level |

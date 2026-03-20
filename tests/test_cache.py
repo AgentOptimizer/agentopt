@@ -7,8 +7,8 @@ import threading
 import httpx
 import pytest
 
-from agentproxy import LLMTracker
-from agentproxy.cache import CacheEntry, ResponseCache, _make_cache_key
+from agentopt.proxy import LLMTracker
+from agentopt.proxy.cache import CacheEntry, ResponseCache, _make_cache_key
 
 # ---------------------------------------------------------------------------
 # Helpers

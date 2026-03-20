@@ -4,41 +4,35 @@ Framework-agnostic LLM model selection for multi-agent systems. Find the best mo
 
 ## Architecture
 
-This monorepo contains two packages:
-
 ```
 agentopt/                    # repo root
-├── agentproxy/              # HTTP-layer LLM call tracking (standalone)
-│   ├── pyproject.toml       # depends only on httpx
-│   └── src/agentproxy/
-│       ├── tracker.py       # LLMTracker — context management + record storage
-│       ├── interceptor.py   # httpx monkey-patching + usage extraction
-│       ├── cache.py         # API-level response caching (LRU, thread-safe)
-│       └── models.py        # CallRecord dataclass
-├── agentopt/                # Model selection optimizer
-│   ├── pyproject.toml       # depends on pydantic + agentproxy
-│   └── src/agentopt/
-│       ├── model_selection/ # 7 selection algorithms
-│       ├── model_topology.py
-│       ├── model_price.py
-│       └── base_models.py
+├── pyproject.toml
+├── src/agentopt/
+│   ├── proxy/               # HTTP-layer LLM call tracking
+│   │   ├── tracker.py       # LLMTracker — context management + record storage
+│   │   ├── interceptor.py   # httpx monkey-patching + usage extraction
+│   │   ├── cache.py         # API-level response caching (LRU, thread-safe)
+│   │   └── models.py        # CallRecord dataclass
+│   ├── model_selection/     # 7 selection algorithms
+│   ├── model_topology.py
+│   ├── model_price.py
+│   └── base_models.py
 ├── docs/                    # Design documents
 ├── examples/                # Framework integration examples
 └── model_price.json
 ```
 
-**agentproxy** intercepts all LLM calls at the `httpx` layer — the one chokepoint every LLM SDK shares. No proxy server, no framework adapters, no code changes to your agents.
+**agentopt.proxy** intercepts all LLM calls at the `httpx` layer — the one chokepoint every LLM SDK shares. No proxy server, no framework adapters, no code changes to your agents.
 
-**agentopt** uses agentproxy to measure token usage and latency while evaluating model combinations across agent roles.
+**agentopt** uses the proxy layer to measure token usage and latency while evaluating model combinations across agent roles.
 
 ---
 
 ## Quickstart
 
 ```bash
-# Install both packages
-uv pip install -e agentproxy
-uv pip install -e agentopt
+# Install
+uv pip install -e .
 
 # Set your API key
 export OPENAI_API_KEY='...'
@@ -49,12 +43,12 @@ python examples/custom_agent_example.py
 
 ---
 
-## agentproxy — LLM Call Tracking
+## agentopt.proxy — LLM Call Tracking
 
-agentproxy can be used standalone for observability, independent of model selection.
+The proxy module can be used standalone for observability, independent of model selection.
 
 ```python
-from agentproxy import LLMTracker
+from agentopt import LLMTracker
 
 tracker = LLMTracker()
 tracker.start()   # patches httpx.Client.send at the class level
@@ -74,7 +68,7 @@ tracker.stop()    # restores original httpx
 
 ### How it works
 
-Every LLM SDK (OpenAI, Anthropic, LangChain, CrewAI, etc.) uses `httpx` under the hood. agentproxy patches `httpx.Client.send()` and `httpx.AsyncClient.send()` at the class level, so it sees every LLM call in the process:
+Every LLM SDK (OpenAI, Anthropic, LangChain, CrewAI, etc.) uses `httpx` under the hood. agentopt.proxy patches `httpx.Client.send()` and `httpx.AsyncClient.send()` at the class level, so it sees every LLM call in the process:
 
 ```
 your_agent()
@@ -278,7 +272,7 @@ results.export_config("config.yaml")  # export best combo as YAML
 
 ## Framework compatibility
 
-agentproxy works with any framework that uses `httpx` for HTTP calls:
+agentopt.proxy works with any framework that uses `httpx` for HTTP calls:
 
 | Framework | Compatible | Notes |
 |-----------|-----------|-------|
@@ -295,13 +289,12 @@ agentproxy works with any framework that uses `httpx` for HTTP calls:
 ## Installation
 
 ```bash
-# Core packages
-uv pip install -e agentproxy
-uv pip install -e agentopt
+# Core package
+uv pip install -e .
 
 # With Bayesian optimization
-uv pip install -e "agentopt[bayesian]"
+uv pip install -e ".[bayesian]"
 
 # With example dependencies
-uv pip install -e "agentopt[examples]"
+uv pip install -e ".[examples]"
 ```

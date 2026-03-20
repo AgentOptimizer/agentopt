@@ -679,6 +679,7 @@ class BaseModelSelector(ABC):
         Returns:
             SelectionResults containing all model evaluation results.
         """
+        record_offset = len(self._tracker.get_records())
         t0 = time.time()
         try:
             result = self._run_selection(parallel, max_concurrent)
@@ -687,10 +688,10 @@ class BaseModelSelector(ABC):
 
         result.selection_wall_time_seconds = time.time() - t0
 
-        # Cost: only non-cached calls
+        # Cost: only non-cached calls made during this run
         input_tokens: Dict[str, int] = {}
         output_tokens: Dict[str, int] = {}
-        for r in self._tracker.get_records():
+        for r in self._tracker.get_records()[record_offset:]:
             if r.cached:
                 continue
             input_tokens[r.model] = input_tokens.get(r.model, 0) + r.prompt_tokens

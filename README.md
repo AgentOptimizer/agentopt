@@ -10,7 +10,7 @@ AgentOpt solves this automatically. Give it your agent and a small evaluation da
 
 - **Non-intrusive**: Wrap your agent in a simple factory function — we take care of the rest. No framework adapters, no code changes to your agent internals.
 - **Framework-agnostic**: Works with OpenAI SDK, LangChain, LangGraph, CrewAI, LlamaIndex, AG2, or any framework that uses `httpx` for LLM calls.
-- **Smart search algorithms**: 6 selection algorithms from brute force to Bayesian optimization, so you don't have to evaluate every combination.
+- **Smart search algorithms**: selection algorithms from brute force to advanced methods like Bayesian optimization, so you don't have to evaluate every combination.
 - **Automatic tracking**: Transparently intercepts all LLM calls to measure token usage, latency, and cost — no manual instrumentation.
 - **Response caching**: Identical LLM calls are cached (in-memory + SQLite on disk), so re-running experiments is instant and free.
 
@@ -100,7 +100,7 @@ Output:
 
 ## Selection Algorithms
 
-AgentOpt provides 6 selection algorithms — you don't always need to evaluate every combination:
+AgentOpt provides advanced selection algorithms — you don't always need to evaluate every combination:
 
 | Algorithm | Best for | How it works |
 |-----------|----------|-------------|

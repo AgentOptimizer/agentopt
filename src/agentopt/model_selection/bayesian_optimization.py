@@ -419,7 +419,9 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         Y_list: List[float] = []
         all_results: List[ModelResult] = []
 
-        async def evaluate_combo(combo: Tuple[int, ...]) -> Tuple:
+        async def evaluate_combo(
+            combo: Tuple[int, ...], dp_concurrent: int = max_concurrent,
+        ) -> Tuple:
             combo_dict = self._bo_index_combo_to_dict(
                 combo, node_names, candidate_lists, n_nodes
             )
@@ -428,7 +430,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 combo_dict,
                 self.dataset,
                 label=combo_name,
-                max_concurrent=max_concurrent,
+                max_concurrent=dp_concurrent,
             )
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
@@ -545,8 +547,19 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             for combo in batch:
                 evaluated.add(combo)
 
+            dp_batch_size = len(self.dataset)
+            n_combo_bo, dp_concurrent_bo = self._compute_concurrency(
+                max_concurrent, dp_batch_size
+            )
+            bo_combo_sem = asyncio.Semaphore(n_combo_bo)
+
+            async def _throttled_eval_combo(c: Tuple[int, ...]) -> Tuple:
+                async with bo_combo_sem:
+                    return await evaluate_combo(c, dp_concurrent=dp_concurrent_bo)
+
             batch_results = await asyncio.gather(
-                *(evaluate_combo(combo) for combo in batch), return_exceptions=True,
+                *(_throttled_eval_combo(combo) for combo in batch),
+                return_exceptions=True,
             )
 
             for j, (combo, res) in enumerate(zip(batch, batch_results), 1):

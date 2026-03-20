@@ -671,6 +671,26 @@ class BaseModelSelector(ABC):
         variance = sum((s - mean) ** 2 for s in scores) / (n - 1)
         return mean, math.sqrt(variance)
 
+    @staticmethod
+    def _compute_concurrency(max_concurrent: int, batch_size: int,) -> Tuple[int, int]:
+        """Compute combo-level and datapoint-level concurrency limits.
+
+        Prioritises datapoint parallelism: every datapoint in a combo runs
+        concurrently before additional combos are started.
+
+        ``dp_concurrent = min(max_concurrent, batch_size)`` — a single combo
+        never uses more than ``max_concurrent`` slots.  Then
+        ``n_combo = max_concurrent // dp_concurrent``.
+
+        Returns:
+            (n_combo_parallel, dp_concurrent_per_combo)
+        """
+        if batch_size <= 0:
+            return max(max_concurrent, 1), 1
+        dp_concurrent = min(max(max_concurrent, 1), batch_size)
+        n_combo = max(max_concurrent, 1) // dp_concurrent
+        return n_combo, dp_concurrent
+
     def select_best(
         self, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
@@ -683,7 +703,8 @@ class BaseModelSelector(ABC):
 
         Args:
             parallel: If True, evaluate combinations concurrently.
-            max_concurrent: Max concurrent API calls per combination.
+            max_concurrent: Max total concurrent API calls across all
+                combinations and datapoints.
 
         Returns:
             SelectionResults containing all model evaluation results.

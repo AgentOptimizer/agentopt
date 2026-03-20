@@ -148,39 +148,44 @@ class RandomSearchModelSelector(BaseModelSelector):
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos, sampled = self._get_sampled_combinations()
 
+        batch_size = len(self.dataset)
+        n_combo, dp_concurrent = self._compute_concurrency(max_concurrent, batch_size)
+        combo_sem = asyncio.Semaphore(n_combo)
+
         print(f"\n{'='*60}")
         print(
             f"Random search (async): "
             f"{len(sampled)}/{len(all_combos)} combinations "
             f"({self.sample_fraction:.1%} sample), "
-            f"max {max_concurrent} concurrent per combo"
+            f"max {max_concurrent} total concurrent"
         )
         print(f"{'='*60}\n")
 
         async def _eval_combo(
             combo: Dict[str, ModelCandidate],
         ) -> Tuple[str, ModelResult]:
-            combo_name = self._combo_name(combo)
-            print(f"  Evaluating: {combo_name}")
-            scores, latencies, dp_ids = await self._evaluate_combo_async(
-                combo, self.dataset, label=combo_name, max_concurrent=max_concurrent
-            )
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
-            accuracy, _ = self._compute_stats(scores)
-            latency = sum(latencies) / len(latencies) if latencies else 0.0
-            dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
-            result = self._make_result(
-                model_name=combo_name,
-                accuracy=accuracy,
-                latency_seconds=latency,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                attribute="combination",
-                is_best=False,
-                datapoint_results=dp_results,
-            )
-            print(f"  {result}")
-            return combo_name, result
+            async with combo_sem:
+                combo_name = self._combo_name(combo)
+                print(f"  Evaluating: {combo_name}")
+                scores, latencies, dp_ids = await self._evaluate_combo_async(
+                    combo, self.dataset, label=combo_name, max_concurrent=dp_concurrent
+                )
+                input_tokens, output_tokens = self._fetch_tokens(combo_name)
+                accuracy, _ = self._compute_stats(scores)
+                latency = sum(latencies) / len(latencies) if latencies else 0.0
+                dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
+                result = self._make_result(
+                    model_name=combo_name,
+                    accuracy=accuracy,
+                    latency_seconds=latency,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    attribute="combination",
+                    is_best=False,
+                    datapoint_results=dp_results,
+                )
+                print(f"  {result}")
+                return combo_name, result
 
         combo_results = await asyncio.gather(
             *[_eval_combo(c) for c in sampled], return_exceptions=True,

@@ -15,12 +15,12 @@ from .cache import CacheEntry, ResponseCache, _make_cache_key
 # ContextVars for attribution
 # ---------------------------------------------------------------------------
 
-_data_id_var: ContextVar[Optional[str]] = ContextVar("agentproxy_data_id", default=None)
+_data_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_data_id", default=None)
 _combo_id_var: ContextVar[Optional[str]] = ContextVar(
-    "agentproxy_combo_id", default=None
+    "agentopt_combo_id", default=None
 )
 _agent_id_var: ContextVar[Optional[str]] = ContextVar(
-    "agentproxy_agent_id", default=None
+    "agentopt_agent_id", default=None
 )
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ def _get_request_body(request: httpx.Request) -> Optional[dict]:
     The parsed body is stored in request.extensions so that repeated calls
     for the same request instance do not re-deserialize the content.
     """
-    cache_key = "_agentproxy_json_body"
+    cache_key = "_agentopt_json_body"
     if cache_key in request.extensions:
         return request.extensions[cache_key]
 

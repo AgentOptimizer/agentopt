@@ -45,7 +45,7 @@ class LMProposalModelSelector(BaseModelSelector):
         invoke_fn: Optional[Callable] = None,
         proposer_model: str = "gpt-4.1",
         proposer_client: Any = None,
-        objective: str = "maximize accuracy and then minimize atency and cost",
+        objective: str = "maximize accuracy and then minimize latency and cost",
         dataset_preview_size: int = 10,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,

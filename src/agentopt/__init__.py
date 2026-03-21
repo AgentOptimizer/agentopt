@@ -6,6 +6,8 @@ that builds your agent with the given model candidates (string names or
 LLM instances), then let a ModelSelector find the best combination.
 """
 
+__version__ = "0.3.0"
+
 from agentopt.proxy import CallRecord, LLMTracker
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
@@ -33,6 +35,8 @@ except ImportError:
     pass
 
 __all__ = [
+    # Metadata
+    "__version__",
     # Core API
     "ModelSelector",
     "BaseModelSelector",

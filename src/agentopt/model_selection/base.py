@@ -566,7 +566,7 @@ class BaseModelSelector(ABC):
         return scores, latencies, datapoint_ids
 
     # ------------------------------------------------------------------
-    # Token tracking via agentproxy
+    # Token tracking via agentopt.proxy
     # ------------------------------------------------------------------
 
     def _fetch_tokens(self, combo_id: str) -> Tuple[Dict[str, int], Dict[str, int]]:

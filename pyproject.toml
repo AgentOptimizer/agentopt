@@ -7,8 +7,25 @@ name = "agentopt"
 version = "0.3.0"
 description = "Find the right LLM models for your AI agents — automatic model selection with accuracy/cost/latency tradeoffs"
 requires-python = ">=3.10"
-license = "MIT"
+license = "Apache-2.0"
 readme = "README.md"
+authors = [
+    { name = "AgentOptimizer Team" },
+]
+keywords = ["llm", "model-selection", "agents", "optimization", "pareto"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "httpx>=0.24.0",
     "pydantic>=2.0.0",

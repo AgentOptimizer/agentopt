@@ -675,15 +675,33 @@ class BaseModelSelector(ABC):
     def _compute_concurrency(max_concurrent: int, batch_size: int,) -> Tuple[int, int]:
         """Compute combo-level and datapoint-level concurrency limits.
 
-        Prioritises datapoint parallelism: every datapoint in a combo runs
-        concurrently before additional combos are started.
+        Splits ``max_concurrent`` into two tiers so the total number of
+        in-flight API calls never exceeds the budget:
 
-        ``dp_concurrent = min(max_concurrent, batch_size)`` — a single combo
-        never uses more than ``max_concurrent`` slots.  Then
-        ``n_combo = max_concurrent // dp_concurrent``.
+        * **Datapoint concurrency** (inner): how many datapoints within a
+          single combo evaluate concurrently.  Set to
+          ``min(max_concurrent, batch_size)`` — saturate the batch first.
+        * **Combo concurrency** (outer): how many combos run in parallel.
+          Set to ``max_concurrent // dp_concurrent`` — use remaining slots.
+
+        The product ``n_combo * dp_concurrent <= max_concurrent`` always holds.
+
+        Args:
+            max_concurrent: Total concurrent API call budget across all
+                combos and datapoints.
+            batch_size: Number of datapoints to evaluate per combo in
+                the current round.
 
         Returns:
-            (n_combo_parallel, dp_concurrent_per_combo)
+            Tuple of ``(n_combo_parallel, dp_concurrent_per_combo)``.
+
+        Examples:
+            >>> BaseModelSelector._compute_concurrency(20, 5)
+            (4, 5)   # 4 combos x 5 datapoints = 20 slots
+            >>> BaseModelSelector._compute_concurrency(20, 100)
+            (1, 20)  # batch is large, cap dp at 20, 1 combo at a time
+            >>> BaseModelSelector._compute_concurrency(20, 1)
+            (20, 1)  # 1 dp per combo, run 20 combos in parallel
         """
         if batch_size <= 0:
             return max(max_concurrent, 1), 1

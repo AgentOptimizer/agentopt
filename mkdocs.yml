@@ -52,6 +52,7 @@ nav:
   - Concepts:
     - How It Works: concepts/how-it-works.md
     - Selection Algorithms: concepts/algorithms.md
+    - Parallel Evaluation: concepts/parallelism.md
     - Response Caching: concepts/caching.md
   - Examples:
     - OpenAI SDK: examples/openai.md

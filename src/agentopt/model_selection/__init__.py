@@ -8,6 +8,7 @@ from .epsilon_lucb import EpsilonLUCBModelSelector
 from .hill_climbing import HillClimbingModelSelector
 from .lm_proposal import LMProposalModelSelector
 from .random_search import RandomSearchModelSelector
+from .streaming_brute_force import StreamingBruteForceModelSelector
 from .threshold_successive_elimination import ThresholdBanditSEModelSelector
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "EpsilonLUCBModelSelector",
     "ThresholdBanditSEModelSelector",
     "LMProposalModelSelector",
+    "StreamingBruteForceModelSelector",
     "BayesianOptimizationModelSelector",
     "DatapointResult",
     "ModelResult",

@@ -20,6 +20,7 @@ from .model_selection import (
     ModelResult,
     RandomSearchModelSelector,
     SelectionResults,
+    StreamingBruteForceModelSelector,
     ThresholdBanditSEModelSelector,
 )
 
@@ -45,6 +46,7 @@ __all__ = [
     "ArmEliminationModelSelector",
     "EpsilonLUCBModelSelector",
     "ThresholdBanditSEModelSelector",
+    "StreamingBruteForceModelSelector",
     "LMProposalModelSelector",
     "BayesianOptimizationModelSelector",
     # Result types

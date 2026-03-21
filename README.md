@@ -110,6 +110,7 @@ AgentOpt provides advanced selection algorithms — you don't always need to eva
 | `ArmEliminationModelSelector` | Early pruning | Eliminates statistically dominated combinations |
 | `EpsilonLUCBModelSelector` | Best-arm identification | Stops when LUCB confidence gap is within user `epsilon` |
 | `ThresholdBanditSEModelSelector` | Thresholding objectives | Classifies combinations above/below user `threshold` |
+| `StreamingBruteForceModelSelector` | Incoming data streams | Updates brute-force metrics incrementally as new batches arrive |
 | `LMProposalModelSelector` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
 | `BayesianOptimizationModelSelector` | Expensive evaluations | GP-based optimization (requires `torch`, `botorch`) |
 
@@ -206,6 +207,23 @@ selector = BruteForceModelSelector(
     eval_fn=eval_fn,
     dataset=dataset,
 )
+```
+
+### Streaming incoming data
+
+```python
+from agentopt import StreamingBruteForceModelSelector
+
+selector = StreamingBruteForceModelSelector(
+    agent_fn=agent_maker,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=warm_start_dataset,  # required seed dataset
+)
+
+for batch in stream_of_labeled_batches:
+    selector.update(batch)  # batch: Sequence[(input_data, expected_answer)]
+    print("Current best:", selector.best_combo())
 ```
 
 ## Development

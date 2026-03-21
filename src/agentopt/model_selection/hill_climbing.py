@@ -393,11 +393,22 @@ class HillClimbingModelSelector(BaseModelSelector):
                 print(f"  No improving moves at iteration {iteration + 1}. Stopping.")
                 break
 
+            batch_size = len(self.dataset)
+            n_combo_nb, dp_concurrent_nb = self._compute_concurrency(
+                max_concurrent, batch_size
+            )
+            neighbor_sem = asyncio.Semaphore(n_combo_nb)
+
+            async def _eval_neighbor_throttled(
+                n: Dict[str, ModelCandidate],
+            ) -> Tuple[str, float, float, Dict[str, int], Dict[str, int], List, bool]:
+                async with neighbor_sem:
+                    return await self._evaluate_cached_async(
+                        n, max_concurrent=dp_concurrent_nb
+                    )
+
             eval_results = await asyncio.gather(
-                *(
-                    self._evaluate_cached_async(n, max_concurrent=max_concurrent)
-                    for n in neighbors
-                )
+                *(_eval_neighbor_throttled(n) for n in neighbors)
             )
             best_neighbor = self._pick_best_neighbor(
                 eval_results, neighbors, seen, accuracy, latency, tol

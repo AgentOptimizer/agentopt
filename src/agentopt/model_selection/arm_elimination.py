@@ -190,7 +190,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         print(f"\n{'='*60}")
         print(
             f"Arm elimination (async): {len(all_combos)} combinations, "
-            f"{n_total} samples, max {max_concurrent} concurrent"
+            f"{n_total} samples, max {max_concurrent} total concurrent"
         )
         print(f"{'='*60}")
 
@@ -201,6 +201,11 @@ class ArmEliminationModelSelector(BaseModelSelector):
         while active and offset < n_total:
             batch_end = min(offset + batch_size, n_total)
             batch = dataset_list[offset:batch_end]
+            current_batch_size = len(batch)
+            n_combo_round, dp_concurrent_round = self._compute_concurrency(
+                max_concurrent, current_batch_size
+            )
+            round_sem = asyncio.Semaphore(n_combo_round)
 
             print(
                 f"\nRound {round_num} [samples {offset}-{batch_end}, "
@@ -210,16 +215,17 @@ class ArmEliminationModelSelector(BaseModelSelector):
             async def _eval_batch(
                 idx: int,
             ) -> Tuple[int, List[float], List[float], List[str]]:
-                combo = all_combos[idx]
-                combo_name = self._combo_name(combo)
-                scores, latencies, dp_ids = await self._evaluate_combo_async(
-                    combo,
-                    batch,
-                    label=combo_name,
-                    max_concurrent=max_concurrent,
-                    dp_offset=offset,
-                )
-                return idx, scores, latencies, dp_ids
+                async with round_sem:
+                    combo = all_combos[idx]
+                    combo_name = self._combo_name(combo)
+                    scores, latencies, dp_ids = await self._evaluate_combo_async(
+                        combo,
+                        batch,
+                        label=combo_name,
+                        max_concurrent=dp_concurrent_round,
+                        dp_offset=offset,
+                    )
+                    return idx, scores, latencies, dp_ids
 
             round_results = await asyncio.gather(
                 *[_eval_batch(idx) for idx in sorted(active)], return_exceptions=True,

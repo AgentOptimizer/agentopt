@@ -71,18 +71,18 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
 
         offset = 0
         init_batch_size = min(self.n_initial, n_total)
-        if init_batch_size > 0:
-            init_batch = dataset_list[offset : offset + init_batch_size]
-            for idx in range(n_arms):
-                combo = all_combos[idx]
-                combo_name = self._combo_name(combo)
-                scores, latencies, dp_ids = self._evaluate_combo(
-                    combo, init_batch, label=combo_name, dp_offset=offset
-                )
-                combo_scores[idx].extend(scores)
-                combo_latencies[idx].extend(latencies)
-                combo_dp_ids[idx].extend(dp_ids)
-            offset += init_batch_size
+        assert init_batch_size > 0
+        init_batch = dataset_list[offset : offset + init_batch_size]
+        for idx in range(n_arms):
+            combo = all_combos[idx]
+            combo_name = self._combo_name(combo)
+            scores, latencies, dp_ids = self._evaluate_combo(
+                combo, init_batch, label=combo_name, dp_offset=offset
+            )
+            combo_scores[idx].extend(scores)
+            combo_latencies[idx].extend(latencies)
+            combo_dp_ids[idx].extend(dp_ids)
+        offset += init_batch_size
 
         round_num = 1
         while active and offset < n_total:
@@ -134,43 +134,54 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
         print(
             f"Epsilon-LUCB (async): {n_arms} combinations, "
             f"{n_total} samples, epsilon={self.epsilon}, "
-            f"max {max_concurrent} concurrent"
+            f"max {max_concurrent} total concurrent"
         )
         print(f"{'='*60}")
 
         offset = 0
         init_batch_size = min(self.n_initial, n_total)
-        if init_batch_size > 0:
-            init_batch = dataset_list[offset : offset + init_batch_size]
+        assert init_batch_size > 0
+        init_batch = dataset_list[offset : offset + init_batch_size]
+        n_combo_init, dp_concurrent_init = self._compute_concurrency(
+            max_concurrent, init_batch_size
+        )
+        init_combo_sem = asyncio.Semaphore(n_combo_init)
 
-            async def _eval_initial(
-                idx: int,
-            ) -> Tuple[int, List[float], List[float], List[str]]:
+        async def _eval_initial(
+            idx: int,
+        ) -> Tuple[int, List[float], List[float], List[str]]:
+            async with init_combo_sem:
                 combo = all_combos[idx]
                 combo_name = self._combo_name(combo)
                 scores, latencies, dp_ids = await self._evaluate_combo_async(
                     combo,
                     init_batch,
                     label=combo_name,
-                    max_concurrent=max_concurrent,
+                    max_concurrent=dp_concurrent_init,
                     dp_offset=offset,
                 )
                 return idx, scores, latencies, dp_ids
 
-            round_results = await asyncio.gather(
-                *[_eval_initial(idx) for idx in range(n_arms)], return_exceptions=True,
-            )
-            for res in round_results:
-                if isinstance(res, Exception):
-                    logger.warning("Initial LUCB batch evaluation error: %s", res)
-                    continue
-                idx, scores, latencies, dp_ids = res
-                combo_scores[idx].extend(scores)
-                combo_latencies[idx].extend(latencies)
-                combo_dp_ids[idx].extend(dp_ids)
-            offset += init_batch_size
+        round_results = await asyncio.gather(
+            *[_eval_initial(idx) for idx in range(n_arms)], return_exceptions=True,
+        )
+        for res in round_results:
+            if isinstance(res, Exception):
+                logger.warning("Initial LUCB batch evaluation error: %s", res)
+                continue
+            idx, scores, latencies, dp_ids = res
+            combo_scores[idx].extend(scores)
+            combo_latencies[idx].extend(latencies)
+            combo_dp_ids[idx].extend(dp_ids)
+        offset += init_batch_size
 
         round_num = 1
+        # Per-round batch_size is always 1
+        n_combo_round, dp_concurrent_round = self._compute_concurrency(
+            max_concurrent, 1
+        )
+        round_combo_sem = asyncio.Semaphore(n_combo_round)
+
         while active and offset < n_total:
             h_idx, l_idx, h_lcb, l_ucb = self._choose_lucb_pair(active, combo_scores)
             gap = l_ucb - h_lcb
@@ -190,16 +201,17 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
             async def _eval_pair(
                 idx: int,
             ) -> Tuple[int, List[float], List[float], List[str]]:
-                combo = all_combos[idx]
-                combo_name = self._combo_name(combo)
-                scores, latencies, dp_ids = await self._evaluate_combo_async(
-                    combo,
-                    batch,
-                    label=combo_name,
-                    max_concurrent=max_concurrent,
-                    dp_offset=offset - 1,
-                )
-                return idx, scores, latencies, dp_ids
+                async with round_combo_sem:
+                    combo = all_combos[idx]
+                    combo_name = self._combo_name(combo)
+                    scores, latencies, dp_ids = await self._evaluate_combo_async(
+                        combo,
+                        batch,
+                        label=combo_name,
+                        max_concurrent=dp_concurrent_round,
+                        dp_offset=offset - 1,
+                    )
+                    return idx, scores, latencies, dp_ids
 
             round_results = await asyncio.gather(
                 *[_eval_pair(idx) for idx in sample_idxs], return_exceptions=True,

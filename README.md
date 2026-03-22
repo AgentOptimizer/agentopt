@@ -41,9 +41,9 @@ pip install "agentopt[bayesian]"
 
 ## Quick Start
 
-Say you have an agent (implemented in arbitrary framework), we simply ask you wrap up your agent into a class with two methods:
+**Step 1**: Say you have an agent (implemented in arbitrary framework), we simply ask you wrap up your agent into a class with two methods:
 
-- `__init__(self, models)` — set up your agent. `models` is a dictionary mapping each step name to a model name, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`. Use it to configure which LLM each step of your agent uses.
+- `__init__(self, models)` — set up your agent. `models` is a dictionary mapping each step name to a model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`. Use it to configure which LLM each step of your agent uses.
 - `run(self, input_data)` — execute your agent on a single datapoint and return the output.
 
 
@@ -134,7 +134,7 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
     # aggregate scores → accuracy, track latency & cost automatically
 ```
 
-This works, but evaluating every combination is expensive. AgentOpt provides **smart selection algorithms** that skip clearly worse combinations and select which datapoints to run — finding the best model combination with far fewer evaluations:
+This works, but evaluating every combination is expensive. AgentOpt provides **smart selection algorithms** that eliminate clearly worse combinations early and intelligently select which datapoints to evaluate — finding the best model combination with far fewer evaluations. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
 
 ## Selection Algorithms
 

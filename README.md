@@ -36,7 +36,7 @@ AgentOpt works with **almost any agent implementation** and requires **minimal w
 ```bash
 pip install agentopt
 ```
-## A Naive Example
+## Quick Start
 
 Say you have an agent with two LLM steps (a planner and a solver) and you want to find the best model for each. A naive approach would be:
 
@@ -52,16 +52,11 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
         actual = agent.run(input_data)       # run on each datapoint
         score = eval_fn(expected, actual)    # score the output
 
-#rank the model combo <- by quality score, latency & cost
+# rank combos by quality score, latency & cost
 ```
 
-AgentOpt automates this with **efficient algorithms, parallelization, cost&latency tracking, and caching**. You just provide the four pieces: 
-- an agent
-- a set of model candidates
-- a dataset
-- a score function
+AgentOpt automates this with **efficient algorithms, parallelization, cost & latency tracking, and caching**. You just provide four things: an agent, model candidates, a dataset, and a score function.
 
-## Quick Start
 **Step 1**: Say you have an agent (implemented in arbitrary way), we simply ask you wrap up your agent into a class with two methods:
 
 - `__init__(self, models)` — receive a model configuration and do your agent creation. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
@@ -181,7 +176,7 @@ AgentOpt includes a rich set of selection algorithms. Advanced users may get sig
 selector = ModelSelector(
     agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
     method="epsilon_lucb",
-    epsilon="0.5"
+    epsilon=0.5
 )
 results = selector.select_best(parallel=True)
 ```

@@ -2,7 +2,7 @@
 Example: LangChain agent with agentopt.
 
 Prerequisites:
-    1. pip install langchain langchain-openai agentopt
+    1. pip install langchain-classic langchain-openai agentopt
     2. Set OPENAI_API_KEY environment variable
 """
 
@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI

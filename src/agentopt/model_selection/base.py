@@ -508,29 +508,33 @@ class SelectionResults(BaseModel):
 class BaseModelSelector(ABC):
     """Abstract base class for model selectors.
 
-    Uses the factory pattern: ``agent_fn(combo_dict)`` returns a runnable
-    agent for each model combination. No ModelProxy or framework adapters.
+    Provide an agent class with ``__init__(self, models)`` and
+    ``run(self, input_data)`` methods.  For each model combination the
+    selector instantiates the class and calls ``run`` on every datapoint.
     """
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
-        models: ModelsConfig,
-        eval_fn: EvalFn,
-        dataset: Dataset,
+        agent: Any = None,
+        models: ModelsConfig = None,
+        eval_fn: EvalFn = None,
+        dataset: Dataset = None,
         invoke_fn: Optional[Callable] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
         tracker: Optional[LLMTracker] = None,
+        *,
+        agent_fn: Optional[Callable[[Dict[str, ModelCandidate]], Any]] = None,
     ) -> None:
         """
         Initialize the model selector.
 
         Args:
-            agent_fn: Factory function ``(combo_dict) -> agent``. Takes a dict
-                mapping node names to model candidates (string names or
-                framework-specific model instances) and returns a runnable
-                agent.
+            agent: Agent class implementing ``__init__(self, models)`` and
+                ``run(self, input_data)``.  The selector will call
+                ``agent(combo_dict)`` to create an instance, then call
+                ``instance.run(input_data)`` for each datapoint.
+                No base class is required — duck typing only.
             models: Dict mapping node names to candidate model specs, e.g.
                 ``{"planner": ["gpt-4o", "gpt-4o-mini"]}`` or prebuilt
                 LLM instances.
@@ -538,8 +542,7 @@ class BaseModelSelector(ABC):
                 (higher is better).
             dataset: Sequence of ``(input_data, expected_answer)`` pairs.
             invoke_fn: Optional callable ``(agent, input_data) -> result``.
-                If not provided, the agent is called directly as
-                ``agent(input_data)``.
+                If not provided, ``agent.run(input_data)`` is called.
             model_prices: Optional custom pricing overrides. Maps model names
                 to dicts with ``'input_price'`` and ``'output_price'`` keys
                 ($/MTok).
@@ -548,7 +551,17 @@ class BaseModelSelector(ABC):
                 ``{"planner": "Decomposes queries into sub-tasks"}``.
             tracker: Optional :class:`LLMTracker` instance. If not provided,
                 one is created and started automatically.
+            agent_fn: *Deprecated.* Factory function ``(combo_dict) -> agent``.
+                Kept for backward compatibility — prefer ``agent`` instead.
         """
+        # Resolve agent vs agent_fn
+        if agent is None and agent_fn is not None:
+            agent = agent_fn
+        if agent is None:
+            raise TypeError("'agent' is required")
+        if models is None or eval_fn is None or dataset is None:
+            raise TypeError("'models', 'eval_fn', and 'dataset' are required")
+
         validate_dataset(dataset)
 
         self._custom_prices: Optional[Dict[str, Tuple[float, float]]] = (
@@ -560,14 +573,28 @@ class BaseModelSelector(ABC):
             else None
         )
 
-        self.agent_fn = agent_fn
+        self.agent_fn = agent
         self.eval_fn = eval_fn
         self.dataset = dataset
         self._models = models
         self._node_names = list(models.keys())
-        self.invoke_fn = invoke_fn
         self.model_prices = model_prices
         self.node_descriptions = node_descriptions
+
+        # For class-based agents, default invoke_fn calls .run()
+        if invoke_fn is not None:
+            self.invoke_fn = invoke_fn
+        elif isinstance(agent, type) and hasattr(agent, "run"):
+            # Check if .run is async so we generate the right wrapper
+            run_method = getattr(agent, "run", None)
+            if inspect.iscoroutinefunction(run_method):
+                async def _async_invoke(a: Any, inp: Any) -> Any:
+                    return await a.run(inp)
+                self.invoke_fn = _async_invoke
+            else:
+                self.invoke_fn = lambda a, inp: a.run(inp)
+        else:
+            self.invoke_fn = None
 
         if tracker is not None:
             self._tracker = tracker

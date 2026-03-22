@@ -22,24 +22,27 @@ class RandomSearchModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
-        models: Dict[str, List[ModelCandidate]],
-        eval_fn: EvalFn,
-        dataset: Dataset,
+        agent: Any = None,
+        models: Dict[str, List[ModelCandidate]] = None,
+        eval_fn: EvalFn = None,
+        dataset: Dataset = None,
         invoke_fn: Optional[Callable] = None,
         sample_fraction: float = 0.25,
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        *,
+        agent_fn: Optional[Callable] = None,
     ) -> None:
         super().__init__(
-            agent_fn=agent_fn,
+            agent=agent,
             models=models,
             eval_fn=eval_fn,
             dataset=dataset,
             invoke_fn=invoke_fn,
             model_prices=model_prices,
             tracker=tracker,
+            agent_fn=agent_fn,
         )
         if not 0 < sample_fraction <= 1:
             raise ValueError("sample_fraction must be in the range (0, 1].")

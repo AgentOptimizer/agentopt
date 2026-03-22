@@ -68,40 +68,33 @@ def divide(a: float, b: float) -> float:
     return a / b
 
 
-class _AsyncRunner:
-    """Callable wrapper whose async __call__ is detected by the framework."""
+class MathAgent:
+    """LlamaIndex math agent with calculator tools."""
 
-    def __init__(self, workflow):
-        self._workflow = workflow
+    def __init__(self, models: Dict[str, Any]):
+        llm = (
+            models["agent"]
+            if not isinstance(models["agent"], str)
+            else LlamaOpenAI(model=models["agent"])
+        )
 
-    async def __call__(self, input_data):
+        agent = FunctionAgent(
+            name="MathAgent",
+            description="Solves math problems using calculator tools",
+            tools=[multiply, add, subtract, divide],
+            llm=llm,
+            system_prompt=(
+                "You are a helpful assistant that can perform mathematical operations. "
+                "When asked to calculate something, use the available tools to compute the result."
+            ),
+        )
+
+        self._workflow = AgentWorkflow(agents=[agent], root_agent="MathAgent")
+
+    async def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
         response = await self._workflow.run(user_msg=question)
         return str(response)
-
-
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds a LlamaIndex math agent with the given model."""
-    llm = (
-        models["agent"]
-        if not isinstance(models["agent"], str)
-        else LlamaOpenAI(model=models["agent"])
-    )
-
-    agent = FunctionAgent(
-        name="MathAgent",
-        description="Solves math problems using calculator tools",
-        tools=[multiply, add, subtract, divide],
-        llm=llm,
-        system_prompt=(
-            "You are a helpful assistant that can perform mathematical operations. "
-            "When asked to calculate something, use the available tools to compute the result."
-        ),
-    )
-
-    workflow = AgentWorkflow(agents=[agent], root_agent="MathAgent")
-
-    return _AsyncRunner(workflow)
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -179,7 +172,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent_fn=agent_maker,
+        agent=MathAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

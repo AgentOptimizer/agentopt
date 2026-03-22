@@ -52,58 +52,57 @@ class AgentState(TypedDict):
     answer: str
 
 
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds a LangGraph planner+solver agent."""
-    planner_llm = (
-        models["planner"]
-        if not isinstance(models["planner"], str)
-        else ChatOpenAI(model=models["planner"])
-    )
-    solver_llm = (
-        models["solver"]
-        if not isinstance(models["solver"], str)
-        else ChatOpenAI(model=models["solver"])
-    )
+class LangGraphAgent:
+    """LangGraph planner+solver agent."""
 
-    def planner_node(state: AgentState) -> dict:
-        response = planner_llm.invoke(
-            [
-                {
-                    "role": "system",
-                    "content": "Create a brief plan to answer the question.",
-                }
-            ]
-            + state["messages"]
+    def __init__(self, models: Dict[str, Any]):
+        planner_llm = (
+            models["planner"]
+            if not isinstance(models["planner"], str)
+            else ChatOpenAI(model=models["planner"])
         )
-        return {"plan": response.content}
-
-    def solver_node(state: AgentState) -> dict:
-        response = solver_llm.invoke(
-            [
-                {
-                    "role": "system",
-                    "content": f"Follow this plan and answer concisely:\n{state['plan']}",
-                },
-                state["messages"][-1],
-            ]
+        solver_llm = (
+            models["solver"]
+            if not isinstance(models["solver"], str)
+            else ChatOpenAI(model=models["solver"])
         )
-        return {"answer": response.content}
 
-    graph = StateGraph(AgentState)
-    graph.add_node("planner", planner_node)
-    graph.add_node("solver", solver_node)
-    graph.set_entry_point("planner")
-    graph.add_edge("planner", "solver")
-    graph.add_edge("solver", END)
-    app = graph.compile()
+        def planner_node(state: AgentState) -> dict:
+            response = planner_llm.invoke(
+                [
+                    {
+                        "role": "system",
+                        "content": "Create a brief plan to answer the question.",
+                    }
+                ]
+                + state["messages"]
+            )
+            return {"plan": response.content}
 
-    # Return a callable that takes input and returns the answer
-    def run(input_data):
+        def solver_node(state: AgentState) -> dict:
+            response = solver_llm.invoke(
+                [
+                    {
+                        "role": "system",
+                        "content": f"Follow this plan and answer concisely:\n{state['plan']}",
+                    },
+                    state["messages"][-1],
+                ]
+            )
+            return {"answer": response.content}
+
+        graph = StateGraph(AgentState)
+        graph.add_node("planner", planner_node)
+        graph.add_node("solver", solver_node)
+        graph.set_entry_point("planner")
+        graph.add_edge("planner", "solver")
+        graph.add_edge("solver", END)
+        self._app = graph.compile()
+
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
-        result = app.invoke({"messages": [{"role": "user", "content": question}]})
+        result = self._app.invoke({"messages": [{"role": "user", "content": question}]})
         return result["answer"]
-
-    return run
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -184,7 +183,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent_fn=agent_maker,
+        agent=LangGraphAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

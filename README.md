@@ -24,7 +24,7 @@ AgentOpt solves this automatically. Give it your agent and a small evaluation da
 
 ## Key Features
 
-- **Non-intrusive**: Wrap your agent in a simple factory function — we take care of the rest. No framework adapters, no code changes to your agent internals.
+- **Non-intrusive**: Define your agent as a class with `__init__` and `run` — we take care of the rest. No framework adapters, no code changes to your agent internals.
 - **Framework-agnostic**: Works with OpenAI SDK, LangChain, LangGraph, CrewAI, LlamaIndex, AG2, or any framework that uses `httpx` for LLM calls.
 - **Smart search algorithms**: Selection algorithms from brute force to advanced methods like Bayesian optimization, so you don't have to evaluate every combination.
 - **Automatic tracking**: Transparently intercepts all LLM calls to measure token usage, latency, and cost — no manual instrumentation.
@@ -41,32 +41,33 @@ pip install "agentopt[bayesian]"
 
 ## Quick Start
 
-**Step 1**: Wrap your agent in a factory function that accepts a model configuration:
+**Step 1**: Define your agent as a class with `__init__(self, models)` and `run(self, input_data)`:
 
 ```python
 from openai import OpenAI
 
-client = OpenAI()
+class MyAgent:
+    def __init__(self, models):
+        self.client = OpenAI()
+        self.planner_model = models["planner"]
+        self.solver_model = models["solver"]
 
-def agent_maker(models):
-    """Build an agent for a given model combination."""
-    def run(input_data):
+    def run(self, input_data):
         # Step 1: Plan
-        plan = client.chat.completions.create(
-            model=models["planner"],
+        plan = self.client.chat.completions.create(
+            model=self.planner_model,
             messages=[{"role": "user", "content": f"Plan: {input_data}"}],
         ).choices[0].message.content
 
         # Step 2: Solve
-        answer = client.chat.completions.create(
-            model=models["solver"],
+        answer = self.client.chat.completions.create(
+            model=self.solver_model,
             messages=[
                 {"role": "system", "content": f"Follow this plan:\n{plan}"},
                 {"role": "user", "content": input_data},
             ],
         ).choices[0].message.content
         return answer
-    return run
 ```
 
 **Step 2**: Define your evaluation dataset and scoring function:
@@ -89,7 +90,7 @@ def eval_fn(expected, actual):
 from agentopt import BruteForceModelSelector
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
         "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
@@ -161,8 +162,8 @@ your_agent(input)
 ```
 
 For each model combination, AgentOpt:
-1. Builds your agent with the candidate models
-2. Runs it on every datapoint in your evaluation set
+1. Instantiates your agent class with the candidate models
+2. Calls `run()` on every datapoint in your evaluation set
 3. Tracks token usage, latency, and cost automatically
 4. Scores the output using your evaluation function
 5. Reports the Pareto-optimal combinations
@@ -214,7 +215,7 @@ Pass framework-specific LLM objects instead of model name strings:
 from langchain_openai import ChatOpenAI
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models={
         "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
         "solver":  [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],

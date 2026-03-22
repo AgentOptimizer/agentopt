@@ -56,16 +56,20 @@ def _resolve_model(candidate: Any) -> str:
     return getattr(candidate, "model", str(candidate))
 
 
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds a simple planner+solver agent for the given models."""
-    client = OpenAI()
+class QAAgent:
+    """A simple planner+solver agent using the OpenAI SDK."""
 
-    def run(input_data):
+    def __init__(self, models: Dict[str, Any]):
+        self.client = OpenAI()
+        self.planner_model = _resolve_model(models["planner"])
+        self.solver_model = _resolve_model(models["solver"])
+
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
 
         # Step 1: Planner generates a plan
-        plan_response = client.chat.completions.create(
-            model=_resolve_model(models["planner"]),
+        plan_response = self.client.chat.completions.create(
+            model=self.planner_model,
             messages=[
                 {
                     "role": "system",
@@ -77,8 +81,8 @@ def agent_maker(models: Dict[str, Any]):
         plan = plan_response.choices[0].message.content
 
         # Step 2: Solver executes the plan
-        solve_response = client.chat.completions.create(
-            model=_resolve_model(models["solver"]),
+        solve_response = self.client.chat.completions.create(
+            model=self.solver_model,
             messages=[
                 {
                     "role": "system",
@@ -88,8 +92,6 @@ def agent_maker(models: Dict[str, Any]):
             ],
         )
         return solve_response.choices[0].message.content
-
-    return run
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -148,7 +150,7 @@ def main():
     if args.selector == "threshold_successive_elimination":
         selector_kwargs["threshold"] = args.threshold
     selector = selector_cls(
-        agent_fn=agent_maker,
+        agent=QAAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

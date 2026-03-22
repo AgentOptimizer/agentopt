@@ -48,45 +48,47 @@ except ImportError:
     pass
 
 
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds an AG2 planner+solver agent pair."""
-    planner_config = (
-        models["planner"]
-        if isinstance(models["planner"], dict)
-        else {"model": models["planner"]}
-    )
-    solver_config = (
-        models["solver"]
-        if isinstance(models["solver"], dict)
-        else {"model": models["solver"]}
-    )
+class AG2Agent:
+    """AG2 planner+solver agent pair."""
 
-    planner = autogen.AssistantAgent(
-        name="Planner",
-        system_message="You are a planning assistant. Create a brief plan to answer the question. End your response with PLAN_DONE.",
-        llm_config=planner_config,
-    )
-    solver = autogen.AssistantAgent(
-        name="Solver",
-        system_message="You are a solver. Given a plan, produce a concise final answer. End your response with TERMINATE.",
-        llm_config=solver_config,
-    )
-    user_proxy = autogen.UserProxyAgent(
-        name="UserProxy",
-        human_input_mode="NEVER",
-        max_consecutive_auto_reply=4,
-        is_termination_msg=lambda x: "TERMINATE" in (x.get("content") or ""),
-        code_execution_config=False,
-    )
+    def __init__(self, models: Dict[str, Any]):
+        planner_config = (
+            models["planner"]
+            if isinstance(models["planner"], dict)
+            else {"model": models["planner"]}
+        )
+        solver_config = (
+            models["solver"]
+            if isinstance(models["solver"], dict)
+            else {"model": models["solver"]}
+        )
 
-    def run(input_data):
+        self.planner = autogen.AssistantAgent(
+            name="Planner",
+            system_message="You are a planning assistant. Create a brief plan to answer the question. End your response with PLAN_DONE.",
+            llm_config=planner_config,
+        )
+        self.solver = autogen.AssistantAgent(
+            name="Solver",
+            system_message="You are a solver. Given a plan, produce a concise final answer. End your response with TERMINATE.",
+            llm_config=solver_config,
+        )
+        self.user_proxy = autogen.UserProxyAgent(
+            name="UserProxy",
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=4,
+            is_termination_msg=lambda x: "TERMINATE" in (x.get("content") or ""),
+            code_execution_config=False,
+        )
+
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
 
         # NOTE: use initiate_chat(), not run().
         # run() spawns a background thread that breaks contextvar propagation.
         # initiate_chat() blocks in the caller's thread — required for agentopt.proxy.
-        chat_result = user_proxy.initiate_chat(
-            planner, message=f"Answer this question: {question}", max_turns=4,
+        chat_result = self.user_proxy.initiate_chat(
+            self.planner, message=f"Answer this question: {question}", max_turns=4,
         )
 
         # Extract the last non-empty assistant message as the answer
@@ -94,8 +96,6 @@ def agent_maker(models: Dict[str, Any]):
             if msg.get("role") == "assistant" and msg.get("content"):
                 return msg["content"].replace("TERMINATE", "").strip()
         return ""
-
-    return run
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -176,7 +176,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent_fn=agent_maker,
+        agent=AG2Agent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

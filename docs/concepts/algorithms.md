@@ -18,7 +18,7 @@ AgentOpt provides 6 selection algorithms. Choose based on your search space size
 
     ```python
     selector = AnySelector(
-        agent_fn=agent_maker,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,
@@ -36,7 +36,7 @@ Evaluates every combination in the Cartesian product.
 from agentopt import BruteForceModelSelector
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -59,7 +59,7 @@ Samples a random fraction of all combinations.
 from agentopt import RandomSearchModelSelector
 
 selector = RandomSearchModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -86,7 +86,7 @@ Greedy local search with random restarts. Defines "neighbors" using model qualit
 from agentopt import HillClimbingModelSelector
 
 selector = HillClimbingModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -115,7 +115,7 @@ Progressively eliminates statistically dominated combinations. Starts with a sma
 from agentopt import ArmEliminationModelSelector
 
 selector = ArmEliminationModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -144,7 +144,7 @@ Uses a proposer LLM to shortlist promising combinations before evaluation. The p
 from agentopt import LMProposalModelSelector
 
 selector = LMProposalModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -171,7 +171,7 @@ Uses a Gaussian Process surrogate to predict accuracy for unevaluated combinatio
 from agentopt import BayesianOptimizationModelSelector
 
 selector = BayesianOptimizationModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,

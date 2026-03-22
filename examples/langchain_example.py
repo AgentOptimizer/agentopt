@@ -68,23 +68,22 @@ PROMPT = ChatPromptTemplate.from_messages(
 )
 
 
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds a LangChain tool-calling agent."""
-    llm = (
-        models["agent"]
-        if not isinstance(models["agent"], str)
-        else ChatOpenAI(model=models["agent"], disable_streaming=True)
-    )
+class LangChainAgent:
+    """LangChain tool-calling agent."""
 
-    agent = create_tool_calling_agent(llm, TOOLS, PROMPT)
-    executor = AgentExecutor(agent=agent, tools=TOOLS, verbose=False)
+    def __init__(self, models: Dict[str, Any]):
+        llm = (
+            models["agent"]
+            if not isinstance(models["agent"], str)
+            else ChatOpenAI(model=models["agent"], disable_streaming=True)
+        )
+        agent = create_tool_calling_agent(llm, TOOLS, PROMPT)
+        self.executor = AgentExecutor(agent=agent, tools=TOOLS, verbose=False)
 
-    def run(input_data):
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
-        result = executor.invoke({"input": question})
+        result = self.executor.invoke({"input": question})
         return result["output"]
-
-    return run
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -164,7 +163,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent_fn=agent_maker,
+        agent=LangChainAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

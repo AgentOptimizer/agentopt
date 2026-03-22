@@ -4,36 +4,38 @@ Optimize model selection for a two-step agent in under 5 minutes.
 
 ## Step 1: Define Your Agent
 
-Wrap your agent in a **factory function** that accepts a model config dict and returns a callable:
+Define your agent as a **class** with `__init__(self, models)` and `run(self, input_data)` methods:
 
 ```python
 from openai import OpenAI
 
 client = OpenAI()
 
-def agent_maker(models):
-    """Build an agent for a given model combination."""
-    def run(input_data):
+class MyAgent:
+    """An agent for a given model combination."""
+    def __init__(self, models):
+        self.models = models
+
+    def run(self, input_data):
         # Step 1: Plan
         plan = client.chat.completions.create(
-            model=models["planner"],
+            model=self.models["planner"],
             messages=[{"role": "user", "content": f"Plan: {input_data}"}],
         ).choices[0].message.content
 
         # Step 2: Solve
         answer = client.chat.completions.create(
-            model=models["solver"],
+            model=self.models["solver"],
             messages=[
                 {"role": "system", "content": f"Follow this plan:\n{plan}"},
                 {"role": "user", "content": input_data},
             ],
         ).choices[0].message.content
         return answer
-    return run
 ```
 
 !!! info "How it works"
-    The `models` dict maps each agent step (node) to a model name string. AgentOpt will swap in different models for each node and measure the results.
+    The `models` dict maps each agent step (node) to a model name string. AgentOpt will swap in different models for each node and measure the results. No base class is required — just implement `__init__(self, models)` and `run(self, input_data)`.
 
 ## Step 2: Prepare Your Dataset
 
@@ -68,7 +70,7 @@ def eval_fn(expected, actual):
 from agentopt import BruteForceModelSelector
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
         "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],

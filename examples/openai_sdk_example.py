@@ -60,30 +60,28 @@ def _resolve_model(candidate: Any) -> str:
     return getattr(candidate, "model", str(candidate))
 
 
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds an OpenAI Agents SDK planner+solver agent pair."""
-    planner = Agent(
-        name="Planner",
-        model=_resolve_model(models["planner"]),
-        instructions="Create a brief plan to answer the question. Be concise.",
-        tools=[search],
-    )
-    solver = Agent(
-        name="Solver",
-        model=_resolve_model(models["solver"]),
-        instructions="Given a plan, produce a concise final answer.",
-        handoffs=[],
-    )
+class PlannerSolverAgent:
+    """OpenAI Agents SDK planner+solver agent pair."""
 
-    # Wire planner → solver via handoff
-    planner_with_handoff = planner.clone(handoffs=[solver])
+    def __init__(self, models: Dict[str, Any]):
+        planner = Agent(
+            name="Planner",
+            model=_resolve_model(models["planner"]),
+            instructions="Create a brief plan to answer the question. Be concise.",
+            tools=[search],
+        )
+        solver = Agent(
+            name="Solver",
+            model=_resolve_model(models["solver"]),
+            instructions="Given a plan, produce a concise final answer.",
+            handoffs=[],
+        )
+        self.planner = planner.clone(handoffs=[solver])
 
-    def run(input_data):
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
-        result = Runner.run_sync(planner_with_handoff, question)
+        result = Runner.run_sync(self.planner, question)
         return result.final_output
-
-    return run
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -168,7 +166,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent_fn=agent_maker,
+        agent=PlannerSolverAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

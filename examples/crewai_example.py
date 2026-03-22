@@ -44,33 +44,36 @@ except ImportError:
     pass
 
 
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds a CrewAI crew with researcher + writer agents."""
-    researcher_llm = (
-        models["researcher"]
-        if not isinstance(models["researcher"], str)
-        else LLM(model=models["researcher"])
-    )
-    writer_llm = (
-        models["writer"]
-        if not isinstance(models["writer"], str)
-        else LLM(model=models["writer"])
-    )
-    researcher = Agent(
-        role="Researcher",
-        goal="Research the topic and provide accurate information",
-        backstory="You are a knowledgeable researcher.",
-        llm=researcher_llm,
-    )
-    writer = Agent(
-        role="Writer",
-        goal="Write a concise answer based on research",
-        backstory="You are a skilled writer who distills information.",
-        llm=writer_llm,
-    )
+class ResearchWriterAgent:
+    """CrewAI crew with researcher + writer agents."""
 
-    def run(input_data):
+    def __init__(self, models: Dict[str, Any]):
+        self.researcher_llm = (
+            models["researcher"]
+            if not isinstance(models["researcher"], str)
+            else LLM(model=models["researcher"])
+        )
+        self.writer_llm = (
+            models["writer"]
+            if not isinstance(models["writer"], str)
+            else LLM(model=models["writer"])
+        )
+
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
+
+        researcher = Agent(
+            role="Researcher",
+            goal="Research the topic and provide accurate information",
+            backstory="You are a knowledgeable researcher.",
+            llm=self.researcher_llm,
+        )
+        writer = Agent(
+            role="Writer",
+            goal="Write a concise answer based on research",
+            backstory="You are a skilled writer who distills information.",
+            llm=self.writer_llm,
+        )
 
         research_task = Task(
             description=f"Research this question: {question}",
@@ -83,11 +86,9 @@ def agent_maker(models: Dict[str, Any]):
             agent=writer,
         )
 
-        crew = Crew(agents=[researcher, writer], tasks=[research_task, write_task],)
+        crew = Crew(agents=[researcher, writer], tasks=[research_task, write_task])
         result = crew.kickoff()
         return str(result)
-
-    return run
 
 
 def eval_fn(expected: str, actual) -> float:
@@ -184,7 +185,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent_fn=agent_maker,
+        agent=ResearchWriterAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

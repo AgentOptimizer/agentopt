@@ -9,12 +9,15 @@ Using AgentOpt with LlamaIndex LLM instances.
 from llama_index.llms.openai import OpenAI as LlamaOpenAI
 from agentopt import BruteForceModelSelector
 
-def agent_maker(models):
-    def run(input_data):
+class LlamaIndexAgent:
+    def __init__(self, models):
+        self.models = models
+
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
 
-        planner = LlamaOpenAI(model=models["planner"])
-        solver = LlamaOpenAI(model=models["solver"])
+        planner = LlamaOpenAI(model=self.models["planner"])
+        solver = LlamaOpenAI(model=self.models["solver"])
 
         plan = planner.complete(f"Create a brief plan to answer: {question}").text
 
@@ -22,10 +25,9 @@ def agent_maker(models):
             f"Follow this plan and answer concisely:\n{plan}\n\nQuestion: {question}"
         ).text
         return answer
-    return run
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=LlamaIndexAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini"],
         "solver":  ["gpt-4o", "gpt-4o-mini"],

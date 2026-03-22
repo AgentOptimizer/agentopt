@@ -47,9 +47,13 @@ class ModelResult(BaseModel):
     output_tokens: Dict[str, int] = Field(default_factory=dict)
     attribute: str
     is_best: bool = False
-    num_samples: int = 1
     datapoint_results: List[DatapointResult] = Field(default_factory=list)
     _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
+
+    @property
+    def num_samples(self) -> int:
+        """Number of datapoints evaluated; falls back to 1 for failed combos."""
+        return len(self.datapoint_results) or 1
 
     @property
     def total_input_tokens(self) -> int:

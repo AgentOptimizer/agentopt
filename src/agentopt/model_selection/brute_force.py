@@ -78,7 +78,6 @@ class BruteForceModelSelector(BaseModelSelector):
                     output_tokens=output_tokens,
                     attribute="combination",
                     is_best=False,
-                    num_samples=max(len(scores), 1),
                     datapoint_results=dp_results,
                 )
                 print(f"  {result}")
@@ -153,7 +152,6 @@ class BruteForceModelSelector(BaseModelSelector):
                     output_tokens=output_tokens,
                     attribute="combination",
                     is_best=False,
-                    num_samples=max(len(scores), 1),
                     datapoint_results=dp_results,
                 )
                 print(f"  {result}")

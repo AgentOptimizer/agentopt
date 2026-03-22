@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentopt"
-version = "0.3.0"
+version = "0.1.0"
 description = "Find the right LLM models for your AI agents — automatic model selection with accuracy/cost/latency tradeoffs"
 requires-python = ">=3.10"
 license = "Apache-2.0"

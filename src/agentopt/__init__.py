@@ -6,7 +6,7 @@ that builds your agent with the given model candidates (string names or
 LLM instances), then let a ModelSelector find the best combination.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.1.0"
 
 from agentopt.proxy import CallRecord, LLMTracker
 

@@ -16,12 +16,8 @@ from .cache import CacheEntry, ResponseCache, _make_cache_key
 # ---------------------------------------------------------------------------
 
 _data_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_data_id", default=None)
-_combo_id_var: ContextVar[Optional[str]] = ContextVar(
-    "agentopt_combo_id", default=None
-)
-_agent_id_var: ContextVar[Optional[str]] = ContextVar(
-    "agentopt_agent_id", default=None
-)
+_combo_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_combo_id", default=None)
+_agent_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_agent_id", default=None)
 
 # ---------------------------------------------------------------------------
 # State

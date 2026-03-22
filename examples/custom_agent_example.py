@@ -56,7 +56,7 @@ def _resolve_model(candidate: Any) -> str:
     return getattr(candidate, "model", str(candidate))
 
 
-class QAAgent:
+class MyAgent:
     """A simple planner+solver agent using the OpenAI SDK."""
 
     def __init__(self, models: Dict[str, Any]):
@@ -150,7 +150,7 @@ def main():
     if args.selector == "threshold_successive_elimination":
         selector_kwargs["threshold"] = args.threshold
     selector = selector_cls(
-        agent=QAAgent,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

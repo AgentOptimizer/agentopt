@@ -44,7 +44,7 @@ except ImportError:
     pass
 
 
-class ResearchWriterAgent:
+class MyAgent:
     """CrewAI crew with researcher + writer agents."""
 
     def __init__(self, models: Dict[str, Any]):
@@ -185,7 +185,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent=ResearchWriterAgent,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

@@ -48,7 +48,7 @@ except ImportError:
     pass
 
 
-class AG2Agent:
+class MyAgent:
     """AG2 planner+solver agent pair."""
 
     def __init__(self, models: Dict[str, Any]):
@@ -176,7 +176,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent=AG2Agent,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

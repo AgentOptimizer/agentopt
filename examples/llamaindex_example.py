@@ -68,7 +68,7 @@ def divide(a: float, b: float) -> float:
     return a / b
 
 
-class MathAgent:
+class MyAgent:
     """LlamaIndex math agent with calculator tools."""
 
     def __init__(self, models: Dict[str, Any]):
@@ -172,7 +172,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent=MathAgent,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

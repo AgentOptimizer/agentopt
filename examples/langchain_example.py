@@ -68,7 +68,7 @@ PROMPT = ChatPromptTemplate.from_messages(
 )
 
 
-class LangChainAgent:
+class MyAgent:
     """LangChain tool-calling agent."""
 
     def __init__(self, models: Dict[str, Any]):
@@ -163,7 +163,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent=LangChainAgent,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

@@ -52,7 +52,7 @@ class AgentState(TypedDict):
     answer: str
 
 
-class LangGraphAgent:
+class MyAgent:
     """LangGraph planner+solver agent."""
 
     def __init__(self, models: Dict[str, Any]):
@@ -183,7 +183,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent=LangGraphAgent,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

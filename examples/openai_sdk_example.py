@@ -60,7 +60,7 @@ def _resolve_model(candidate: Any) -> str:
     return getattr(candidate, "model", str(candidate))
 
 
-class PlannerSolverAgent:
+class MyAgent:
     """OpenAI Agents SDK planner+solver agent pair."""
 
     def __init__(self, models: Dict[str, Any]):
@@ -166,7 +166,7 @@ def main():
         selector_kwargs["threshold"] = args.threshold
 
     selector = selector_cls(
-        agent=PlannerSolverAgent,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,

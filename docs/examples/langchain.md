@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from agentopt import BruteForceModelSelector
 
-class LangChainAgent:
+class MyAgent:
     def __init__(self, models):
         self.planner = models["planner"]  # ChatOpenAI instance
         self.solver = models["solver"]    # ChatOpenAI instance
@@ -40,7 +40,7 @@ dataset = [
 ]
 
 selector = BruteForceModelSelector(
-    agent=LangChainAgent,
+    agent=MyAgent,
     models={
         "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
         "solver":  [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],

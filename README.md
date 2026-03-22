@@ -41,7 +41,9 @@ pip install "agentopt[bayesian]"
 
 ## Quick Start
 
-**Step 1**: Define your agent as a class with `__init__(self, models)` and `run(self, input_data)`:
+**Step 1**: Define your agent as a class with `__init__(self, models)` and `run(self, input_data)`.
+`models` is a dictionary mapping each step name to a model name (e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`).
+`input_data` is a single datapoint from your evaluation dataset.
 
 ```python
 from openai import OpenAI
@@ -70,7 +72,7 @@ class MyAgent:
         return answer
 ```
 
-**Step 2**: Define your evaluation dataset and scoring function:
+**Step 2**: Define your evaluation dataset — a list of `(input_data, expected_output)` pairs:
 
 ```python
 dataset = [
@@ -79,12 +81,17 @@ dataset = [
     ("What color is the sky?", "blue"),
     # ... ideally ~100 samples
 ]
+```
 
+**Step 3**: Define your evaluation function. It compares the output of `agent.run(input_data)` against the `expected_output` from the dataset, and returns a score:
+
+```python
 def eval_fn(expected, actual):
+    """Score the agent's output (actual) against the expected answer."""
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
 ```
 
-**Step 3**: Run model selection:
+**Step 4**: Run model selection. The `models` dict maps each step name to a **list of candidate models** to try. AgentOpt picks one from each list, constructs the agent, and evaluates it:
 
 ```python
 from agentopt import BruteForceModelSelector
@@ -92,9 +99,9 @@ from agentopt import BruteForceModelSelector
 selector = BruteForceModelSelector(
     agent=MyAgent,
     models={
-        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-    },
+        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],  # 3 options
+        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],  # 3 options
+    },  # → 3 × 3 = 9 combinations to evaluate
     eval_fn=eval_fn,
     dataset=dataset,
 )
@@ -114,6 +121,18 @@ Output:
        3  planner=gpt-4o + solver=gpt-4o              100.00%    2.70s  $0.014355
     ...
 ```
+
+Under the hood, brute force does:
+```python
+for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
+    agent = MyAgent(combo)
+    for input_data, expected in dataset:
+        actual = agent.run(input_data)
+        score = eval_fn(expected, actual)    # score each datapoint
+    # aggregate scores → accuracy, track latency & cost automatically
+```
+
+This works, but evaluating every combination is expensive. AgentOpt provides **smart selection algorithms** that skip clearly worse combinations and select which datapoints to run — finding the best model combination with far fewer evaluations:
 
 ## Selection Algorithms
 

@@ -572,13 +572,19 @@ class SelectionResults(BaseModel):
         prices = [r.price for r in unique]  # type: ignore[misc]
         is_best = [r.is_best for r in unique]
 
+        # Build numbered labels: (1), (2), ...
+        num_labels = [f"({i})" for i in range(1, len(unique) + 1)]
+
         pairs = [
             (accs, lats, "Accuracy", "Latency (s)", False, True),
             (accs, prices, "Accuracy", "Price ($)", False, True),
             (lats, prices, "Latency (s)", "Price ($)", True, True),
         ]
 
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        fig = plt.figure(figsize=(20, 5))
+        # Reserve right margin for the legend.
+        gs = fig.add_gridspec(1, 3, left=0.04, right=0.75, wspace=0.3)
+        axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
         fig.suptitle("Pareto Frontiers", fontsize=14, fontweight="bold")
 
         for ax, (xs, ys, xlabel, ylabel, x_min, y_min) in zip(axes, pairs):
@@ -623,7 +629,7 @@ class SelectionResults(BaseModel):
                 )
 
             # Highlight best combo.
-            for x, y, b, name in zip(xs, ys, is_best, names):
+            for x, y, b in zip(xs, ys, is_best):
                 if b:
                     ax.scatter(
                         [x],
@@ -636,24 +642,46 @@ class SelectionResults(BaseModel):
                         label="Best",
                     )
 
-            # Labels for all points.
-            for x, y, name in zip(xs, ys, names):
-                short = name if len(name) <= 30 else name[:27] + "..."
+            # Number labels on points.
+            for x, y, lbl in zip(xs, ys, num_labels):
                 ax.annotate(
-                    short,
+                    lbl,
                     (x, y),
                     textcoords="offset points",
                     xytext=(5, 5),
-                    fontsize=6,
-                    alpha=0.8,
+                    fontsize=7,
+                    fontweight="bold",
                 )
+
+            # Invert "lower is better" axes so better is always top-right,
+            # producing a concave frontier.
+            if x_min:
+                ax.invert_xaxis()
+            if y_min:
+                ax.invert_yaxis()
 
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
             ax.legend(fontsize=7, loc="best")
             ax.grid(True, alpha=0.3)
 
-        plt.tight_layout()
+        # External legend mapping numbers to combo names.
+        legend_lines = [f"({i}) {name}" for i, name in enumerate(names, 1)]
+        fig.text(
+            0.77,
+            0.5,
+            "\n".join(legend_lines),
+            fontsize=8,
+            verticalalignment="center",
+            fontfamily="monospace",
+            bbox=dict(
+                boxstyle="round,pad=0.5",
+                facecolor="lightyellow",
+                edgecolor="gray",
+                alpha=0.9,
+            ),
+        )
+
         if path:
             fig.savefig(path, dpi=150, bbox_inches="tight")
             print(f"Pareto plot saved to {path}")

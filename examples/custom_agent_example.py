@@ -160,6 +160,7 @@ def main():
         parallel=args.parallel, max_concurrent=args.max_concurrent
     )
     results.print_summary()
+    results.plot_pareto()
 
     # Export optimized config
     best = results.get_best_combo()

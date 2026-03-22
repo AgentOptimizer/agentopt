@@ -47,6 +47,7 @@ examples = [
     "openai-agents",
     "python-dotenv",
 ]
+plot = ["matplotlib>=3.5"]
 dev = ["pytest>=8.0"]
 docs = ["mkdocs-material", "mkdocstrings[python]"]
 

@@ -39,6 +39,13 @@ def divide(a: float, b: float) -> float:
     return a / b
 
 
+# ---------------------------------------------------------------------------
+# Step 1: Define your agent class.
+# __init__(models) receives a dict like {"agent": "gpt-4o-mini"}.
+# run(input_data) runs the agent on a single datapoint and returns the output.
+# Note: run() can be async — AgentOpt detects this automatically.
+# ---------------------------------------------------------------------------
+
 class MyAgent:
     """LlamaIndex math agent with calculator tools."""
 
@@ -63,9 +70,9 @@ class MyAgent:
         return str(response)
 
 
-def eval_fn(expected, actual):
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
-
+# ---------------------------------------------------------------------------
+# Step 2: Evaluation dataset — (input_data, expected_output) pairs.
+# ---------------------------------------------------------------------------
 
 dataset = [
     ("What is 2 + 2?", "4"),
@@ -73,6 +80,19 @@ dataset = [
     ("What is 10 - 4?", "6"),
 ]
 
+
+# ---------------------------------------------------------------------------
+# Step 3: Evaluation function — score agent output against expected answer.
+# ---------------------------------------------------------------------------
+
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Run model selection.
+# Single step ("agent") × 3 models = 3 combinations.
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     selector = ModelSelector(
@@ -82,7 +102,7 @@ if __name__ == "__main__":
         },
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",
+        method="brute_force",  # or "auto" for smarter selection algorithms
     )
 
     results = selector.select_best(parallel=True)

@@ -15,6 +15,12 @@ from crewai import Agent, Crew, LLM, Task
 from agentopt import ModelSelector
 
 
+# ---------------------------------------------------------------------------
+# Step 1: Define your agent class.
+# __init__(models) receives a dict like {"researcher": "gpt-4o", "writer": "gpt-4o-mini"}.
+# run(input_data) runs the agent on a single datapoint and returns the output.
+# ---------------------------------------------------------------------------
+
 class MyAgent:
     """CrewAI crew with researcher + writer agents."""
 
@@ -52,9 +58,10 @@ class MyAgent:
         return str(result)
 
 
-def eval_fn(expected, actual):
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
-
+# ---------------------------------------------------------------------------
+# Step 2: Evaluation dataset — (input_data, expected_output) pairs.
+# Mix of easy, medium, and hard questions to differentiate model combos.
+# ---------------------------------------------------------------------------
 
 dataset = [
     # Easy – every combo should get these
@@ -74,10 +81,23 @@ dataset = [
         "What is the probability both are red? Give the fraction.",
         "5/14",
     ),
-    ("Find the remainder when 2^100 is divided by 7.", "2",),
-    ("What is the determinant of the matrix [[1,2,3],[4,5,6],[7,8,9]]?", "0",),
+    ("Find the remainder when 2^100 is divided by 7.", "2"),
+    ("What is the determinant of the matrix [[1,2,3],[4,5,6],[7,8,9]]?", "0"),
 ]
 
+
+# ---------------------------------------------------------------------------
+# Step 3: Evaluation function — score agent output against expected answer.
+# ---------------------------------------------------------------------------
+
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Run model selection.
+# Two steps ("researcher", "writer") × 3 models = 9 combinations.
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     selector = ModelSelector(
@@ -88,7 +108,7 @@ if __name__ == "__main__":
         },
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",
+        method="brute_force",  # or "auto" for smarter selection algorithms
     )
 
     results = selector.select_best(parallel=True)

@@ -18,6 +18,14 @@ from openai import OpenAI
 from agentopt import ModelSelector
 
 
+# ---------------------------------------------------------------------------
+# Step 1: Define your agent as a class with __init__(models) and run(input_data).
+#
+# __init__ receives a model configuration dict, e.g.
+#   {"planner": "gpt-4o-mini", "solver": "gpt-4o"}
+# run() takes a single datapoint and returns the agent's output.
+# ---------------------------------------------------------------------------
+
 class MyAgent:
     """A simple planner+solver agent using the OpenAI SDK."""
 
@@ -47,9 +55,11 @@ class MyAgent:
         return answer
 
 
-def eval_fn(expected, actual):
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
-
+# ---------------------------------------------------------------------------
+# Step 2: Define your evaluation dataset — (input_data, expected_output) pairs.
+# We recommend 50-100 samples for production decisions,
+# but even 10-20 samples can surface clear winners during development.
+# ---------------------------------------------------------------------------
 
 dataset = [
     ("What is the capital of France?", "Paris"),
@@ -60,6 +70,21 @@ dataset = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Step 3: Define your evaluation function.
+# It compares agent output against expected output and returns a score.
+# ---------------------------------------------------------------------------
+
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Run model selection.
+# Map each agent step to a list of candidate models.
+# AgentOpt tries all combinations and ranks them by accuracy, latency, and cost.
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     selector = ModelSelector(
         agent=MyAgent,
@@ -69,7 +94,7 @@ if __name__ == "__main__":
         },
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",
+        method="brute_force",  # or "auto" for smarter selection algorithms
     )
 
     results = selector.select_best(parallel=True)

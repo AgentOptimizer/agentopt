@@ -25,6 +25,12 @@ class AgentState(TypedDict):
     answer: str
 
 
+# ---------------------------------------------------------------------------
+# Step 1: Define your agent class.
+# __init__(models) receives a dict like {"planner": "gpt-4o", "solver": "gpt-4o-mini"}.
+# run(input_data) runs the agent on a single datapoint and returns the output.
+# ---------------------------------------------------------------------------
+
 class MyAgent:
     """LangGraph planner+solver agent."""
 
@@ -61,9 +67,9 @@ class MyAgent:
         return result["answer"]
 
 
-def eval_fn(expected, actual):
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
-
+# ---------------------------------------------------------------------------
+# Step 2: Evaluation dataset — (input_data, expected_output) pairs.
+# ---------------------------------------------------------------------------
 
 dataset = [
     ("What is the capital of France?", "Paris"),
@@ -71,6 +77,19 @@ dataset = [
     ("What color is the sky on a clear day?", "blue"),
 ]
 
+
+# ---------------------------------------------------------------------------
+# Step 3: Evaluation function — score agent output against expected answer.
+# ---------------------------------------------------------------------------
+
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Run model selection.
+# Two steps ("planner", "solver") × 3 models = 9 combinations.
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     selector = ModelSelector(
@@ -81,7 +100,7 @@ if __name__ == "__main__":
         },
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",
+        method="brute_force",  # or "auto" for smarter selection algorithms
     )
 
     results = selector.select_best(parallel=True)

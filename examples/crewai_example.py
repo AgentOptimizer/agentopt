@@ -95,9 +95,25 @@ def eval_fn(expected: str, actual) -> float:
 
 
 dataset = [
-    ("What is the capital of France?", "Paris"),
-    ("What is 2 + 2?", "4"),
-    ("What color is the sky on a clear day?", "blue"),
+    # Easy – every combo should get these
+    ("What is 7 * 8?", "56"),
+    ("What is the derivative of x^3?", "3x^2"),
+    # Medium
+    ("What is the integral of 1/(1+x^2) dx?", "arctan"),
+    ("If log base 2 of x equals 5, what is x?", "32"),
+    # Hard – weaker combos likely fail
+    (
+        "What is the sum of the series 1/1! + 1/2! + 1/3! + ... + 1/10! "
+        "rounded to 6 decimal places?",
+        "1.718282",
+    ),
+    (
+        "A bag has 5 red and 3 blue balls. Two are drawn without replacement. "
+        "What is the probability both are red? Give the fraction.",
+        "5/14",
+    ),
+    ("Find the remainder when 2^100 is divided by 7.", "2",),
+    ("What is the determinant of the matrix [[1,2,3],[4,5,6],[7,8,9]]?", "0",),
 ]
 
 

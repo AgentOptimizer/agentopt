@@ -570,6 +570,9 @@ class SelectionResults(BaseModel):
         else:
             unique = all_unique
 
+        # Sort so numbering matches the final results table rank order.
+        unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+
         if len(unique) < 2:
             print("Not enough results with pricing data to plot.")
             return

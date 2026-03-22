@@ -41,9 +41,10 @@ pip install "agentopt[bayesian]"
 
 ## Quick Start
 
-**Step 1**: Wrap your agent (built with any framework) into a class with two methods:
-- `__init__(self, models)` — set up your agent with a given model configuration. `models` is a dict mapping each step to a model name, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
-- `run(self, input_data)` — run your agent on a single datapoint and return the output.
+Say you have an agent (implemented in arbitrary framework), we simply ask you wrap up your agent into a class with two methods:
+
+- `__init__(self, models)` — set up your agent. `models` is a dictionary mapping each step name to a model name, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`. Use it to configure which LLM each step of your agent uses.
+- `run(self, input_data)` — execute your agent on a single datapoint and return the output.
 
 
 ```python

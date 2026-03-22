@@ -96,9 +96,9 @@ def eval_fn(expected, actual):
 **Step 4**: Run model selection. The `models` dict maps each step name to a **list of candidate models** to try. AgentOpt picks one from each list, constructs the agent, and evaluates it:
 
 ```python
-from agentopt import BruteForceModelSelector
+from agentopt import ModelSelector
 
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],  # 3 options
@@ -134,27 +134,31 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
     # aggregate scores → accuracy, track latency & cost automatically
 ```
 
-This works, but evaluating every combination is expensive. AgentOpt provides **smart selection algorithms** that eliminate clearly worse combinations early and intelligently select which datapoints to evaluate — finding the best model combination with far fewer evaluations. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
+This works, but evaluating every combination over all datapoints is expensive. AgentOpt provides **smart selection algorithms** that eliminate clearly worse combinations early and intelligently select which datapoints to evaluate — finding the best model combination with far fewer evaluations. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
 
 ## Selection Algorithms
 
 AgentOpt provides advanced selection algorithms — you don't always need to evaluate every combination:
 
-| Algorithm | Best for | How it works |
+| `method=` | Best for | How it works |
 |-----------|----------|-------------|
-| `BruteForceModelSelector` | Small search spaces | Evaluates all combinations |
-| `RandomSearchModelSelector` | Quick exploration | Samples a random fraction |
-| `HillClimbingModelSelector` | Topology-aware search | Greedy search using model quality/speed rankings |
-| `ArmEliminationModelSelector` | Early pruning | Eliminates statistically dominated combinations |
-| `EpsilonLUCBModelSelector` | Best-arm identification | Stops when LUCB confidence gap is within user `epsilon` |
-| `ThresholdBanditSEModelSelector` | Thresholding objectives | Classifies combinations above/below user `threshold` |
-| `LMProposalModelSelector` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
-| `BayesianOptimizationModelSelector` | Expensive evaluations | GP-based optimization (requires `torch`, `botorch`) |
+| `"brute_force"` (default) | Small search spaces | Evaluates all combinations |
+| `"random"` | Quick exploration | Samples a random fraction |
+| `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
+| `"arm_elimination"` | Early pruning | Eliminates statistically dominated combinations |
+| `"epsilon_lucb"` | Best-arm identification | Stops when LUCB confidence gap is within user `epsilon` |
+| `"threshold"` | Thresholding objectives | Classifies combinations above/below user `threshold` |
+| `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
+| `"bayesian"` | Expensive evaluations | GP-based optimization (requires `pip install "agentopt[bayesian]"`) |
 
-All selectors share the same interface:
+Just pass `method=` to switch algorithms:
 
 ```python
-results = selector.select_best(parallel=True, max_concurrent=20)
+selector = ModelSelector(
+    agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+    method="hill_climbing",
+)
+results = selector.select_best(parallel=True)
 ```
 
 ## Framework Compatibility

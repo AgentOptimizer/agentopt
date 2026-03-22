@@ -175,7 +175,7 @@ class ResponseCache:
     def _start_flush_thread(self) -> None:
         self._flush_stop.clear()
         self._flush_thread = threading.Thread(
-            target=self._flush_loop, daemon=True, name="agentproxy-cache-flush",
+            target=self._flush_loop, daemon=True, name="agentopt-cache-flush",
         )
         self._flush_thread.start()
 

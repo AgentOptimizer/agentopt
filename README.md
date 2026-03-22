@@ -1,6 +1,22 @@
-# AgentOpt
+<p align="center">
+  <img src="logo.png" alt="AgentOpt Logo" width="200">
+</p>
 
-**Find the right LLM models for your AI agents.**
+<h1 align="center">AgentOpt</h1>
+
+<p align="center">
+  <strong>Find the right LLM models for your AI agents.</strong>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/agentopt/"><img src="https://img.shields.io/pypi/v/agentopt?logo=python&logoColor=white&color=3776ab" alt="PyPI"></a>
+  <a href="https://pepy.tech/projects/agentopt"><img src="https://static.pepy.tech/badge/agentopt" alt="Downloads"></a>
+  <a href="https://github.com/AgentOptimizer/agentopt"><img src="https://img.shields.io/github/stars/AgentOptimizer/agentopt?style=flat&logo=github&color=181717" alt="GitHub stars"></a>
+  <a href="https://github.com/AgentOptimizer/agentopt/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat" alt="License"></a>
+  <a href="https://agentoptimizer.github.io/agentopt/"><img src="https://img.shields.io/badge/docs-website-blue?style=flat&logo=materialformkdocs&logoColor=white" alt="Docs"></a>
+</p>
+
+---
 
 Choosing the right LLM model is hard. Different models have different cost, performance, and latency tradeoffs. Should you use a thinking model? What effort level? What about different models for different steps of your agent pipeline? The combinatorial space explodes quickly — if your agent has 3 steps and you're considering 5 models per step, that's 125 combinations to evaluate.
 
@@ -10,7 +26,7 @@ AgentOpt solves this automatically. Give it your agent and a small evaluation da
 
 - **Non-intrusive**: Wrap your agent in a simple factory function — we take care of the rest. No framework adapters, no code changes to your agent internals.
 - **Framework-agnostic**: Works with OpenAI SDK, LangChain, LangGraph, CrewAI, LlamaIndex, AG2, or any framework that uses `httpx` for LLM calls.
-- **Smart search algorithms**: selection algorithms from brute force to advanced methods like Bayesian optimization, so you don't have to evaluate every combination.
+- **Smart search algorithms**: Selection algorithms from brute force to advanced methods like Bayesian optimization, so you don't have to evaluate every combination.
 - **Automatic tracking**: Transparently intercepts all LLM calls to measure token usage, latency, and cost — no manual instrumentation.
 - **Response caching**: Identical LLM calls are cached (in-memory + SQLite on disk), so re-running experiments is instant and free.
 
@@ -139,9 +155,9 @@ AgentOpt intercepts LLM calls at the `httpx` transport layer — the one chokepo
 
 ```
 your_agent(input)
-  └── framework internals (LangChain, CrewAI, etc.)
-        └── httpx.Client.send()   ← intercepted here
-              └── LLM API (OpenAI, Anthropic, etc.)
+  +-- framework internals (LangChain, CrewAI, etc.)
+        +-- httpx.Client.send()   <-- intercepted here
+              +-- LLM API (OpenAI, Anthropic, etc.)
 ```
 
 For each model combination, AgentOpt:
@@ -208,6 +224,10 @@ selector = BruteForceModelSelector(
 )
 ```
 
+## Documentation
+
+Full documentation is available at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)**.
+
 ## Development
 
 ```bash
@@ -219,4 +239,4 @@ uv run pytest
 
 ## License
 
-MIT
+Apache 2.0

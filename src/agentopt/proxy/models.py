@@ -1,4 +1,4 @@
-"""Data models for agentproxy."""
+"""Data models for agentopt.proxy."""
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional

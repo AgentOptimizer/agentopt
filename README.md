@@ -106,6 +106,7 @@ selector = ModelSelector(
     },  # → 3 × 3 = 9 combinations to evaluate
     eval_fn=eval_fn,
     dataset=dataset,
+    method="brute_force" ## method="auto" will use more efficient algorithms to find the right models
 )
 
 results = selector.select_best(parallel=True)
@@ -123,10 +124,7 @@ Output:
        3  planner=gpt-4o + solver=gpt-4o              100.00%    2.70s  $0.014355
     ...
 ```
-
-By default (`method="auto"`), AgentOpt uses a smart algorithm that eliminates clearly worse combinations early and intelligently selects which datapoints to evaluate — finding the best model combination without exhaustively trying everything. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
-
-A naive brute force would do:
+With `method="brute_force"`, it enumerates all combinations:
 ```python
 for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
     agent = MyAgent(combo)
@@ -136,7 +134,7 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
     # aggregate scores → accuracy, track latency & cost automatically
 ```
 
-But `method="auto"` is much smarter — it prunes bad combinations after just a few datapoints, so you get the same answer with far fewer API calls.
+We recommend `method="auto"` (the default), which uses smart algorithms that eliminate clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
 
 ## Selection Algorithms
 

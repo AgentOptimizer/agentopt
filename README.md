@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://pypi.org/project/agentopt/"><img src="https://img.shields.io/pypi/v/agentopt?logo=python&logoColor=white&color=3776ab" alt="PyPI"></a>
-  <a href="https://pepy.tech/projects/agentopt"><img src="https://static.pepy.tech/badge/agentopt" alt="Downloads"></a>
-  <a href="https://github.com/AgentOptimizer/agentopt"><img src="https://img.shields.io/github/stars/AgentOptimizer/agentopt?style=flat&logo=github&color=181717" alt="GitHub stars"></a>
+  <!-- <a href="https://pepy.tech/projects/agentopt"><img src="https://static.pepy.tech/badge/agentopt" alt="Downloads"></a> -->
+  <!-- <a href="https://github.com/AgentOptimizer/agentopt"><img src="https://img.shields.io/github/stars/AgentOptimizer/agentopt?style=flat&logo=github&color=181717" alt="GitHub stars"></a> -->
   <a href="https://github.com/AgentOptimizer/agentopt/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat" alt="License"></a>
   <a href="https://agentoptimizer.github.io/agentopt/"><img src="https://img.shields.io/badge/docs-website-blue?style=flat&logo=materialformkdocs&logoColor=white" alt="Docs"></a>
 </p>

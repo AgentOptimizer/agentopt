@@ -124,7 +124,9 @@ Output:
     ...
 ```
 
-Under the hood, brute force does:
+By default (`method="auto"`), AgentOpt uses a smart algorithm that eliminates clearly worse combinations early and intelligently selects which datapoints to evaluate — finding the best model combination without exhaustively trying everything. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
+
+A naive brute force would do:
 ```python
 for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
     agent = MyAgent(combo)
@@ -134,15 +136,16 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
     # aggregate scores → accuracy, track latency & cost automatically
 ```
 
-This works, but evaluating every combination over all datapoints is expensive. AgentOpt provides **smart selection algorithms** that eliminate clearly worse combinations early and intelligently select which datapoints to evaluate — finding the best model combination with far fewer evaluations. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
+But `method="auto"` is much smarter — it prunes bad combinations after just a few datapoints, so you get the same answer with far fewer API calls.
 
 ## Selection Algorithms
 
-AgentOpt provides advanced selection algorithms — you don't always need to evaluate every combination:
+You can also pick a specific algorithm via `method=`:
 
 | `method=` | Best for | How it works |
 |-----------|----------|-------------|
-| `"brute_force"` (default) | Small search spaces | Evaluates all combinations |
+| `"auto"` (default) | General use | Automatically picks the best approach |
+| `"brute_force"` | Small search spaces | Evaluates all combinations |
 | `"random"` | Quick exploration | Samples a random fraction |
 | `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
 | `"arm_elimination"` | Early pruning | Eliminates statistically dominated combinations |
@@ -150,8 +153,6 @@ AgentOpt provides advanced selection algorithms — you don't always need to eva
 | `"threshold"` | Thresholding objectives | Classifies combinations above/below user `threshold` |
 | `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
 | `"bayesian"` | Expensive evaluations | GP-based optimization (requires `pip install "agentopt[bayesian]"`) |
-
-Just pass `method=` to switch algorithms:
 
 ```python
 selector = ModelSelector(

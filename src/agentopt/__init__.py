@@ -32,6 +32,7 @@ except ImportError:
     BayesianOptimizationModelSelector = None
 
 _METHODS = {
+    "auto": ArmEliminationModelSelector,
     "brute_force": BruteForceModelSelector,
     "random": RandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
@@ -48,7 +49,7 @@ def ModelSelector(
     models=None,
     eval_fn=None,
     dataset=None,
-    method="brute_force",
+    method="auto",
     **kwargs,
 ):
     """Create a model selector.
@@ -62,7 +63,8 @@ def ModelSelector(
         models: Dict mapping step names to lists of candidate models.
         eval_fn: Scoring function ``(expected, actual) -> float``.
         dataset: List of ``(input_data, expected_output)`` pairs.
-        method: Selection algorithm. One of ``"brute_force"`` (default),
+        method: Selection algorithm. ``"auto"`` (default) picks the best
+            approach automatically. Other options: ``"brute_force"``,
             ``"random"``, ``"hill_climbing"``, ``"arm_elimination"``,
             ``"epsilon_lucb"``, ``"threshold"``, ``"lm_proposal"``,
             ``"bayesian"``.

@@ -20,15 +20,11 @@
 
 Choosing the right LLM model is hard. Different models have different cost, performance, and latency tradeoffs. Should you use a thinking model? What effort level? What about different models for different steps of your agent pipeline? The combinatorial space explodes quickly — if your agent has 3 steps and you're considering 5 models per step, that's 125 combinations to evaluate.
 
-AgentOpt solves this automatically. Give it your agent and a small evaluation dataset (~100 samples), and it will efficiently search the model combination space to present you with the **Pareto curve of accuracy/cost/latency tradeoffs** — so you can make an informed choice.
+AgentOpt solves this automatically. Give it your agent and a small evaluation dataset (~100 samples), and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice. It works with **almost any agent implementation** and requires **minimal wrappers** to your existing agents.
 
-## Key Features
+## Use Cases
 
-- **Non-intrusive**: Define your agent as a class with `__init__` and `run` — we take care of the rest. No framework adapters, no code changes to your agent internals.
-- **Framework-agnostic**: Works with OpenAI SDK, LangChain, LangGraph, CrewAI, LlamaIndex, AG2, or any framework that uses `httpx` for LLM calls.
-- **Smart search algorithms**: Selection algorithms from brute force to advanced methods like Bayesian optimization, so you don't have to evaluate every combination.
-- **Automatic tracking**: Transparently intercepts all LLM calls to measure token usage, latency, and cost — no manual instrumentation.
-- **Response caching**: Identical LLM calls are cached (in-memory + SQLite on disk), so re-running experiments is instant and free.
+*Coming soon — model selection is a first-order problem: in many cases, a simple model swap can cut costs by 10x without sacrificing performance.*
 
 ## Installation
 

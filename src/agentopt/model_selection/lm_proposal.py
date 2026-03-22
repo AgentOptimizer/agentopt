@@ -42,25 +42,20 @@ class LMProposalModelSelector(BaseModelSelector):
         models: Dict[str, List[ModelCandidate]] = None,
         eval_fn: EvalFn = None,
         dataset: Dataset = None,
-        invoke_fn: Optional[Callable] = None,
         proposer_model: str = "gpt-4.1",
         proposer_client: Any = None,
         objective: str = "maximize accuracy and then minimize latency and cost",
         dataset_preview_size: int = 10,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
-        *,
-        agent_fn: Optional[Callable] = None,
     ) -> None:
         super().__init__(
             agent=agent,
             models=models,
             eval_fn=eval_fn,
             dataset=dataset,
-            invoke_fn=invoke_fn,
             model_prices=model_prices,
             node_descriptions=node_descriptions,
-            agent_fn=agent_fn,
         )
         if dataset_preview_size < 1:
             raise ValueError("dataset_preview_size must be >= 1.")

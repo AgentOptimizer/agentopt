@@ -519,12 +519,9 @@ class BaseModelSelector(ABC):
         models: ModelsConfig = None,
         eval_fn: EvalFn = None,
         dataset: Dataset = None,
-        invoke_fn: Optional[Callable] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
         tracker: Optional[LLMTracker] = None,
-        *,
-        agent_fn: Optional[Callable[[Dict[str, ModelCandidate]], Any]] = None,
     ) -> None:
         """
         Initialize the model selector.
@@ -541,8 +538,6 @@ class BaseModelSelector(ABC):
             eval_fn: Function ``(expected, actual) -> bool | float``
                 (higher is better).
             dataset: Sequence of ``(input_data, expected_answer)`` pairs.
-            invoke_fn: Optional callable ``(agent, input_data) -> result``.
-                If not provided, ``agent.run(input_data)`` is called.
             model_prices: Optional custom pricing overrides. Maps model names
                 to dicts with ``'input_price'`` and ``'output_price'`` keys
                 ($/MTok).
@@ -551,12 +546,7 @@ class BaseModelSelector(ABC):
                 ``{"planner": "Decomposes queries into sub-tasks"}``.
             tracker: Optional :class:`LLMTracker` instance. If not provided,
                 one is created and started automatically.
-            agent_fn: *Deprecated.* Factory function ``(combo_dict) -> agent``.
-                Kept for backward compatibility — prefer ``agent`` instead.
         """
-        # Resolve agent vs agent_fn
-        if agent is None and agent_fn is not None:
-            agent = agent_fn
         if agent is None:
             raise TypeError("'agent' is required")
         if models is None or eval_fn is None or dataset is None:
@@ -573,7 +563,7 @@ class BaseModelSelector(ABC):
             else None
         )
 
-        self.agent_fn = agent
+        self.agent = agent
         self.eval_fn = eval_fn
         self.dataset = dataset
         self._models = models
@@ -581,20 +571,9 @@ class BaseModelSelector(ABC):
         self.model_prices = model_prices
         self.node_descriptions = node_descriptions
 
-        # For class-based agents, default invoke_fn calls .run()
-        if invoke_fn is not None:
-            self.invoke_fn = invoke_fn
-        elif isinstance(agent, type) and hasattr(agent, "run"):
-            # Check if .run is async so we generate the right wrapper
-            run_method = getattr(agent, "run", None)
-            if inspect.iscoroutinefunction(run_method):
-                async def _async_invoke(a: Any, inp: Any) -> Any:
-                    return await a.run(inp)
-                self.invoke_fn = _async_invoke
-            else:
-                self.invoke_fn = lambda a, inp: a.run(inp)
-        else:
-            self.invoke_fn = None
+        # Detect whether agent.run() is async
+        run_method = getattr(agent, "run", None)
+        self._is_async_run = inspect.iscoroutinefunction(run_method)
 
         if tracker is not None:
             self._tracker = tracker
@@ -646,10 +625,8 @@ class BaseModelSelector(ABC):
     # ------------------------------------------------------------------
 
     def _invoke_agent(self, agent: Any, input_data: Any) -> Any:
-        """Call agent with input_data, using invoke_fn if provided."""
-        if self.invoke_fn is not None:
-            return self.invoke_fn(agent, input_data)
-        return agent(input_data)
+        """Call agent.run(input_data)."""
+        return agent.run(input_data)
 
     def _evaluate_combo(
         self,
@@ -662,7 +639,7 @@ class BaseModelSelector(ABC):
 
         Returns (scores, latencies, datapoint_ids).
         """
-        agent = self.agent_fn(combo)
+        agent = self.agent(combo)
         return self._evaluate_agent(agent, evaluation_tasks, label, dp_offset=dp_offset)
 
     def _evaluate_agent(
@@ -713,7 +690,7 @@ class BaseModelSelector(ABC):
 
         Returns (scores, latencies, datapoint_ids).
         """
-        agent = self.agent_fn(combo)
+        agent = self.agent(combo)
         return await self._evaluate_agent_async(
             agent, evaluation_tasks, label, max_concurrent, dp_offset=dp_offset
         )
@@ -736,9 +713,7 @@ class BaseModelSelector(ABC):
         total = len(evaluation_tasks)
         results: List[Optional[dict]] = [None] * total
 
-        is_async = inspect.iscoroutinefunction(
-            self.invoke_fn if self.invoke_fn else getattr(agent, "__call__", None)
-        )
+        is_async = self._is_async_run
 
         async def _eval_single(idx: int, input_data: Any, expected_answer: Any) -> None:
             dp_id = f"{label}::dp_{dp_offset + idx + 1}"

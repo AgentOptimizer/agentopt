@@ -9,6 +9,10 @@
 </p>
 
 <p align="center">
+  <em>A simple model swap can cut your agent's costs by 10–100x without sacrificing performance.</em>
+</p>
+
+<p align="center">
   <a href="https://pypi.org/project/agentopt/"><img src="https://img.shields.io/pypi/v/agentopt?logo=python&logoColor=white&color=3776ab" alt="PyPI"></a>
   <!-- <a href="https://pepy.tech/projects/agentopt"><img src="https://static.pepy.tech/badge/agentopt" alt="Downloads"></a> -->
   <!-- <a href="https://github.com/AgentOptimizer/agentopt"><img src="https://img.shields.io/github/stars/AgentOptimizer/agentopt?style=flat&logo=github&color=181717" alt="GitHub stars"></a> -->
@@ -17,10 +21,11 @@
 </p>
 
 ---
+Choosing models for your agent is surprisingly hard. Which family? Small or big? Thinking or non-thinking? And different steps may need different models. The combinatorial space explodes fast — 3 steps × 8 models = **512 combinations** to evaluate.
 
-Choosing the right LLM model is hard. Different models have different cost, performance, and latency tradeoffs. Should you use a thinking model? What effort level? What about different models for different steps of your agent pipeline? The combinatorial space explodes quickly — if your agent has 3 steps and you're considering 5 models per step, that's 125 combinations to evaluate.
+AgentOpt solves this automatically. Give it your agent and a small evaluation dataset, and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice. 
 
-AgentOpt solves this automatically. Give it your agent and a small evaluation dataset (~100 samples), and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice. It works with **almost any agent implementation** and requires **minimal wrappers** to your existing agents.
+AgentOpt works with **almost any agent implementation** and requires **minimal wrappers** to your existing agents.
 
 ## Use Cases
 
@@ -31,13 +36,11 @@ AgentOpt solves this automatically. Give it your agent and a small evaluation da
 ```bash
 pip install agentopt
 ```
-## Quick Start
+## A Naive Example
 
-**The idea**: To find the right models for your agent, you need four things — an agent, a set of model candidates, a dataset, and an evaluation function. A naive approach would be:
+Say you have an agent with two LLM steps (a planner and a solver) and you want to find the best model for each. A naive approach would be:
 
 ```python
-# Say you have an agent with two LLM steps ("planner" and "solver"),
-# and you want to find the best model for each step.
 models = {
     "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
     "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
@@ -48,12 +51,17 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
     for input_data, expected in dataset:
         actual = agent.run(input_data)       # run on each datapoint
         score = eval_fn(expected, actual)    # score the output
-    # aggregate scores → quality score, track latency & cost
+
+#rank the model combo <- by quality score, latency & cost
 ```
 
-AgentOpt automates this with **smart algorithms, parallelization, and caching**. You just provide the four pieces:
+AgentOpt automates this with **efficient algorithms, parallelization, cost&latency tracking, and caching**. You just provide the four pieces: 
+- an agent
+- a set of model candidates
+- a dataset
+- a score function
 
-
+## Quick Start
 **Step 1**: Say you have an agent (implemented in arbitrary way), we simply ask you wrap up your agent into a class with two methods:
 
 - `__init__(self, models)` — receive a model configuration and do your agent creation. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.

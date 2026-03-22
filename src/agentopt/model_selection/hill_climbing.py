@@ -23,7 +23,6 @@ class HillClimbingModelSelector(BaseModelSelector):
         models: Dict[str, List[ModelCandidate]] = None,
         eval_fn: EvalFn = None,
         dataset: Dataset = None,
-        invoke_fn: Optional[Callable] = None,
         max_iterations: int = 20,
         num_restarts: int = 3,
         patience: int = 3,
@@ -31,18 +30,14 @@ class HillClimbingModelSelector(BaseModelSelector):
         batch_size: int = 1,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
-        *,
-        agent_fn: Optional[Callable] = None,
     ) -> None:
         super().__init__(
             agent=agent,
             models=models,
             eval_fn=eval_fn,
             dataset=dataset,
-            invoke_fn=invoke_fn,
             model_prices=model_prices,
             tracker=tracker,
-            agent_fn=agent_fn,
         )
         self.max_iterations = max_iterations
         self.num_restarts = num_restarts

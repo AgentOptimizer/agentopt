@@ -560,7 +560,15 @@ class SelectionResults(BaseModel):
                 r.is_best and not seen[r.model_name].is_best
             ):
                 seen[r.model_name] = r
-        unique = [r for r in seen.values() if r.price is not None]
+        all_unique = [r for r in seen.values() if r.price is not None]
+
+        # For bandit algorithms, only plot the final layer (combos with the
+        # most datapoints) so all plotted combos are directly comparable.
+        if all_unique:
+            max_samples = max(r.num_samples for r in all_unique)
+            unique = [r for r in all_unique if r.num_samples == max_samples]
+        else:
+            unique = all_unique
 
         if len(unique) < 2:
             print("Not enough results with pricing data to plot.")

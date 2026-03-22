@@ -41,6 +41,20 @@ pip install "agentopt[bayesian]"
 
 ## Quick Start
 
+**The idea**: To find the right models for your agent, you need four things — an agent, a set of model candidates, a dataset, and an evaluation function. A naive approach would be:
+
+```python
+for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
+    agent = MyAgent(combo)                   # build agent with this model combo
+    for input_data, expected in dataset:
+        actual = agent.run(input_data)       # run on each datapoint
+        score = eval_fn(expected, actual)    # score the output
+    # aggregate scores → accuracy, track latency & cost
+```
+
+AgentOpt automates this with smart algorithms, parallelization, and caching. You just provide the four pieces:
+
+
 **Step 1**: Say you have an agent (implemented in arbitrary framework), we simply ask you wrap up your agent into a class with two methods:
 
 - `__init__(self, models)` — receive a model configuration. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
@@ -124,17 +138,7 @@ Output:
        3  planner=gpt-4o + solver=gpt-4o              100.00%    2.70s  $0.014355
     ...
 ```
-With `method="brute_force"`, it enumerates all combinations:
-```python
-for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
-    agent = MyAgent(combo)
-    for input_data, expected in dataset:
-        actual = agent.run(input_data)
-        score = eval_fn(expected, actual)    # score each datapoint
-    # aggregate scores → accuracy, track latency & cost automatically
-```
-
-We recommend `method="auto"` (the default), which uses smart algorithms that eliminate clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls. Combined with **parallelization** and **response caching**, the search is both fast and cheap.
+With `method="auto"` (the default), AgentOpt uses smart algorithms that eliminate clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls. Use `method="brute_force"` to evaluate all combinations exhaustively.
 
 ## Selection Algorithms
 

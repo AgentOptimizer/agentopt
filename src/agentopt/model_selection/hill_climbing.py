@@ -280,6 +280,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                 output_tokens=output_tokens,
                 attribute="combination",
                 is_best=False,
+                num_samples=max(len(dp_results), 1),
                 datapoint_results=dp_results,
             )
             suffix = " (cached)" if cached else ""
@@ -364,6 +365,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                 output_tokens=output_tokens,
                 attribute="combination",
                 is_best=False,
+                num_samples=max(len(dp_results), 1),
                 datapoint_results=dp_results,
             )
             suffix = " (cached)" if cached else ""

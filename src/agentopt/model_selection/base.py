@@ -47,6 +47,7 @@ class ModelResult(BaseModel):
     output_tokens: Dict[str, int] = Field(default_factory=dict)
     attribute: str
     is_best: bool = False
+    num_samples: int = 1
     datapoint_results: List[DatapointResult] = Field(default_factory=list)
     _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
 
@@ -60,10 +61,13 @@ class ModelResult(BaseModel):
 
     @property
     def price(self) -> Optional[float]:
-        """Total cost in USD, or ``None`` if pricing is unavailable."""
-        return compute_price(
+        """Per-sample cost in USD, or ``None`` if pricing is unavailable."""
+        total = compute_price(
             self.input_tokens, self.output_tokens, custom_prices=self._custom_prices
         )
+        if total is None:
+            return None
+        return total / self.num_samples
 
     def __str__(self) -> str:
         tok_parts = []
@@ -207,12 +211,33 @@ class SelectionResults(BaseModel):
                 row["price"] = f"{p:.6f}" if p is not None else ""
                 writer.writerow(row)
 
+    @staticmethod
+    def _recompute_metrics(
+        r: "ModelResult", n: int,
+    ) -> Tuple[float, float, Optional[float]]:
+        """Recompute accuracy, latency, per-sample price from first *n* datapoints."""
+        subset = r.datapoint_results[:n]
+        if not subset:
+            return r.accuracy, r.latency_seconds, r.price
+        accuracy = sum(dp.score for dp in subset) / len(subset)
+        latency = sum(dp.latency_seconds for dp in subset) / len(subset)
+        agg_in: Dict[str, int] = {}
+        agg_out: Dict[str, int] = {}
+        for dp in subset:
+            for model, cnt in dp.input_tokens.items():
+                agg_in[model] = agg_in.get(model, 0) + cnt
+            for model, cnt in dp.output_tokens.items():
+                agg_out[model] = agg_out.get(model, 0) + cnt
+        total = compute_price(agg_in, agg_out, custom_prices=r._custom_prices)
+        price = total / len(subset) if total is not None else None
+        return accuracy, latency, price
+
     def __str__(self) -> str:
         if not self.results:
             return "No results."
 
         # Deduplicate by model_name, preferring entries with is_best=True.
-        seen: Dict[str, ModelResult] = {}
+        seen: Dict[str, "ModelResult"] = {}
         for r in self.results:
             if r.model_name not in seen or (
                 r.is_best and not seen[r.model_name].is_best
@@ -220,8 +245,9 @@ class SelectionResults(BaseModel):
                 seen[r.model_name] = r
         unique = list(seen.values())
 
-        # Sort: best accuracy first, ties broken by lowest latency.
-        unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+        # Determine layer boundaries from distinct num_samples values.
+        sample_counts = sorted({r.num_samples for r in unique if r.datapoint_results})
+        use_layers = len(sample_counts) > 1
 
         # Format helpers.
         def fmt_acc(v: float) -> str:
@@ -230,11 +256,142 @@ class SelectionResults(BaseModel):
         def fmt_lat(v: float) -> str:
             return f"{v:.2f}s"
 
-        def fmt_price(r: ModelResult) -> str:
-            p = r.price
+        def fmt_price_val(p: Optional[float]) -> str:
             return f"${p:.6f}" if p is not None else "N/A"
 
-        # Compute column widths.
+        def fmt_price(r: "ModelResult") -> str:
+            return fmt_price_val(r.price)
+
+        marker = ">>>"
+        pad = " " * len(marker)
+
+        if not use_layers:
+            # --- Flat table (single layer / non-bandit) ---
+            unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+            return self._render_flat(unique, fmt_acc, fmt_lat, fmt_price, marker, pad)
+
+        # --- Layered table (bandit algorithms) ---
+        total_combos = len(unique)
+        lines: List[str] = []
+        lines.append("")
+        lines.append(pad + " Model Selection Results")
+
+        for layer_idx, n_samples in enumerate(sample_counts):
+            is_final = layer_idx == len(sample_counts) - 1
+            layer_results = [r for r in unique if r.num_samples >= n_samples]
+            # Recompute metrics at this layer's sample count.
+            recomputed: List[Tuple["ModelResult", float, float, Optional[float]]] = []
+            for r in layer_results:
+                acc, lat, price = self._recompute_metrics(r, n_samples)
+                recomputed.append((r, acc, lat, price))
+            recomputed.sort(key=lambda t: (-t[1], t[2]))
+
+            # Eliminated = combos with exactly this num_samples (won't appear next layer).
+            eliminated = (
+                [r.model_name for r in unique if r.num_samples == n_samples]
+                if not is_final
+                else []
+            )
+
+            # Column widths for this layer.
+            rank_h, model_h, acc_h, lat_h, price_h = (
+                "Rank",
+                "Model",
+                "Accuracy",
+                "Latency",
+                "Price",
+            )
+            rank_w = max(len(rank_h), len(str(len(recomputed))))
+            model_w = max(len(model_h), *(len(t[0].model_name) for t in recomputed),)
+            acc_w = max(len(acc_h), *(len(fmt_acc(t[1])) for t in recomputed))
+            lat_w = max(len(lat_h), *(len(fmt_lat(t[2])) for t in recomputed))
+            price_w = max(
+                len(price_h), *(len(fmt_price_val(t[3])) for t in recomputed),
+            )
+
+            def row(
+                rank_s: str,
+                model_s: str,
+                acc_s: str,
+                lat_s: str,
+                price_s: str,
+                best: bool,
+            ) -> str:
+                prefix = marker if best else pad
+                return (
+                    f"{prefix} {rank_s:>{rank_w}}  "
+                    f"{model_s:<{model_w}}  "
+                    f"{acc_s:>{acc_w}}  "
+                    f"{lat_s:>{lat_w}}  "
+                    f"{price_s:>{price_w}}"
+                )
+
+            header_row = row(rank_h, model_h, acc_h, lat_h, price_h, False)
+            sep = pad + " " + "-" * (len(header_row) - len(pad) - 1)
+
+            label = "Final" if is_final else f"Round {layer_idx + 1}"
+            lines.append("")
+            lines.append(
+                f"{pad} {label} "
+                f"({n_samples} datapoints, "
+                f"{len(layer_results)}/{total_combos} combos):"
+            )
+            lines.append(sep)
+            lines.append(header_row)
+            lines.append(sep)
+
+            for i, (r, acc, lat, price) in enumerate(recomputed, 1):
+                is_best = r.is_best and is_final
+                lines.append(
+                    row(
+                        str(i),
+                        r.model_name,
+                        fmt_acc(acc),
+                        fmt_lat(lat),
+                        fmt_price_val(price),
+                        is_best,
+                    )
+                )
+
+            lines.append(sep)
+
+            if eliminated:
+                lines.append(f"{pad} Eliminated: {', '.join(eliminated)}")
+
+        # Best result summary.
+        best_result = next((r for r in unique if r.is_best), None)
+        if best_result:
+            lines.append("")
+            lines.append(
+                f"{pad} Best: {best_result.model_name} "
+                f"(accuracy: {best_result.accuracy:.2%}, "
+                f"latency: {best_result.latency_seconds:.2f}s, "
+                f"price: {fmt_price(best_result)})"
+            )
+        lines.append("")
+
+        # Selection overhead.
+        parts: List[str] = []
+        if self.selection_wall_time_seconds is not None:
+            parts.append(f"{self.selection_wall_time_seconds:.2f}s")
+        if self.selection_cost is not None:
+            parts.append(f"${self.selection_cost:.6f}")
+        if parts:
+            lines.append(f"{pad} Selection overhead: {', '.join(parts)}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def _render_flat(
+        self,
+        unique: List["ModelResult"],
+        fmt_acc: Callable[[float], str],
+        fmt_lat: Callable[[float], str],
+        fmt_price: Callable[["ModelResult"], str],
+        marker: str,
+        pad: str,
+    ) -> str:
+        """Render the original flat table for non-bandit selectors."""
         rank_h, model_h, acc_h, lat_h, price_h = (
             "Rank",
             "Model",
@@ -247,10 +404,6 @@ class SelectionResults(BaseModel):
         acc_w = max(len(acc_h), *(len(fmt_acc(r.accuracy)) for r in unique))
         lat_w = max(len(lat_h), *(len(fmt_lat(r.latency_seconds)) for r in unique))
         price_w = max(len(price_h), *(len(fmt_price(r)) for r in unique))
-
-        # Row builder.
-        marker = ">>>"
-        pad = " " * len(marker)
 
         def row(
             rank_s: str, model_s: str, acc_s: str, lat_s: str, price_s: str, best: bool,
@@ -298,8 +451,7 @@ class SelectionResults(BaseModel):
             )
         lines.append("")
 
-        # Selection overhead
-        parts = []
+        parts: List[str] = []
         if self.selection_wall_time_seconds is not None:
             parts.append(f"{self.selection_wall_time_seconds:.2f}s")
         if self.selection_cost is not None:

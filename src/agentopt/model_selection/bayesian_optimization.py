@@ -138,6 +138,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             output_tokens=output_tokens,
             attribute="combination",
             is_best=False,
+            num_samples=max(len(dp_results), 1),
             datapoint_results=dp_results,
         )
         all_results.append(result)

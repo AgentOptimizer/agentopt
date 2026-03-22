@@ -1,31 +1,65 @@
 # Quick Start
 
-Optimize model selection for a two-step agent in under 5 minutes.
+Optimize model selection for a multi-step agent in under 5 minutes.
+
+## Overview
+
+AgentOpt finds the best LLM model combination for your agent. Here's the idea:
+
+1. You define an **agent class** — it accepts a model config and runs on a datapoint
+2. You provide **candidate models** for each step of your agent
+3. AgentOpt tries different combinations, scores them, and reports the best ones
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  models = {                                                     │
+│      "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],    │
+│      "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],    │
+│  }                                                              │
+│                                                                 │
+│  For each combination (e.g. planner=gpt-4o-mini, solver=gpt-4o)│
+│  AgentOpt does:                                                 │
+│                                                                 │
+│    agent = MyAgent({"planner": "gpt-4o-mini", "solver": "gpt-4o"})
+│                                                                 │
+│    for input_data, expected in dataset:                         │
+│        output = agent.run(input_data)                           │
+│        score  = eval_fn(expected, output)                       │
+│                                                                 │
+│  Then ranks all combinations by accuracy / cost / latency.      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Smart selection algorithms skip combinations that are clearly worse, and parallelization makes everything fast. Response caching ensures identical LLM calls are never repeated.
+
+---
 
 ## Step 1: Define Your Agent
 
-Define your agent as a **class** with `__init__(self, models)` and `run(self, input_data)` methods:
+Write a class with two methods:
+
+- `__init__(self, models)` — receives a `dict` mapping step names to model names (e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`)
+- `run(self, input_data)` — processes one datapoint and returns the output
 
 ```python
 from openai import OpenAI
 
-client = OpenAI()
-
 class MyAgent:
-    """An agent for a given model combination."""
     def __init__(self, models):
-        self.models = models
+        self.client = OpenAI()
+        self.planner_model = models["planner"]
+        self.solver_model = models["solver"]
 
     def run(self, input_data):
         # Step 1: Plan
-        plan = client.chat.completions.create(
-            model=self.models["planner"],
+        plan = self.client.chat.completions.create(
+            model=self.planner_model,
             messages=[{"role": "user", "content": f"Plan: {input_data}"}],
         ).choices[0].message.content
 
         # Step 2: Solve
-        answer = client.chat.completions.create(
-            model=self.models["solver"],
+        answer = self.client.chat.completions.create(
+            model=self.solver_model,
             messages=[
                 {"role": "system", "content": f"Follow this plan:\n{plan}"},
                 {"role": "user", "content": input_data},
@@ -34,8 +68,8 @@ class MyAgent:
         return answer
 ```
 
-!!! info "How it works"
-    The `models` dict maps each agent step (node) to a model name string. AgentOpt will swap in different models for each node and measure the results. No base class is required — just implement `__init__(self, models)` and `run(self, input_data)`.
+!!! info "No base class required"
+    Just implement `__init__` and `run` — duck typing only. Works with any framework: OpenAI, LangChain, CrewAI, LlamaIndex, etc.
 
 ## Step 2: Prepare Your Dataset
 
@@ -64,6 +98,8 @@ def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
 ```
 
+The `eval_fn` is called on the output of `agent.run(input_data)` for each datapoint.
+
 ## Step 4: Run Model Selection
 
 ```python
@@ -82,6 +118,10 @@ selector = BruteForceModelSelector(
 results = selector.select_best(parallel=True)
 results.print_summary()
 ```
+
+The `models` dict maps each step name (matching the keys your `__init__` expects) to a **list of candidates**. AgentOpt picks one from each list, constructs `MyAgent({"planner": pick1, "solver": pick2})`, and evaluates it across your dataset.
+
+With 3 candidates per step and 2 steps, that's 9 combinations. Smart algorithms like `HillClimbingModelSelector` or `BayesianOptimizationModelSelector` can find the best combination without evaluating all of them — and they also select which datapoints to run on, stopping early when the winner is clear.
 
 ## Step 5: Use the Results
 

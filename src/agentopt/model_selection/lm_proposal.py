@@ -126,7 +126,7 @@ class LMProposalModelSelector(BaseModelSelector):
                 output_tokens=output_tokens,
                 attribute="combination",
                 is_best=True,
-                num_samples=len(scores),
+                num_samples=max(len(scores), 1),
                 datapoint_results=dp_results,
             )
             print(f"  {result}")

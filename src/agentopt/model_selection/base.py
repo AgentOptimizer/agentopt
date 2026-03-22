@@ -212,25 +212,50 @@ class SelectionResults(BaseModel):
                 writer.writerow(row)
 
     @staticmethod
-    def _recompute_metrics(
-        r: "ModelResult", n: int,
+    def _build_prefix_sums(
+        r: "ModelResult",
+    ) -> Tuple[List[float], List[float], Dict[str, List[int]], Dict[str, List[int]]]:
+        """Build cumulative sums from datapoint_results for O(1) layer lookups.
+
+        Returns (cum_scores, cum_latencies, cum_input_tokens, cum_output_tokens)
+        where each list has length len(datapoint_results)+1 and index 0 is 0.
+        """
+        dps = r.datapoint_results
+        n = len(dps)
+        cum_scores = [0.0] * (n + 1)
+        cum_lats = [0.0] * (n + 1)
+        # Collect all model names first.
+        all_models: set = set()
+        for dp in dps:
+            all_models.update(dp.input_tokens)
+            all_models.update(dp.output_tokens)
+        cum_in: Dict[str, List[int]] = {m: [0] * (n + 1) for m in all_models}
+        cum_out: Dict[str, List[int]] = {m: [0] * (n + 1) for m in all_models}
+        for i, dp in enumerate(dps):
+            cum_scores[i + 1] = cum_scores[i] + dp.score
+            cum_lats[i + 1] = cum_lats[i] + dp.latency_seconds
+            for m in all_models:
+                cum_in[m][i + 1] = cum_in[m][i] + dp.input_tokens.get(m, 0)
+                cum_out[m][i + 1] = cum_out[m][i] + dp.output_tokens.get(m, 0)
+        return cum_scores, cum_lats, cum_in, cum_out
+
+    @staticmethod
+    def _metrics_at(
+        prefix: Tuple[
+            List[float], List[float], Dict[str, List[int]], Dict[str, List[int]]
+        ],
+        n: int,
+        custom_prices: Optional[Dict[str, Tuple[float, float]]],
     ) -> Tuple[float, float, Optional[float]]:
-        """Recompute accuracy, latency, per-sample price from first *n* datapoints."""
-        subset = r.datapoint_results[:n]
-        if not subset:
-            return r.accuracy, r.latency_seconds, r.price
-        accuracy = sum(dp.score for dp in subset) / len(subset)
-        latency = sum(dp.latency_seconds for dp in subset) / len(subset)
-        agg_in: Dict[str, int] = {}
-        agg_out: Dict[str, int] = {}
-        for dp in subset:
-            for model, cnt in dp.input_tokens.items():
-                agg_in[model] = agg_in.get(model, 0) + cnt
-            for model, cnt in dp.output_tokens.items():
-                agg_out[model] = agg_out.get(model, 0) + cnt
-        total = compute_price(agg_in, agg_out, custom_prices=r._custom_prices)
-        price = total / len(subset) if total is not None else None
-        return accuracy, latency, price
+        """Look up accuracy, latency, per-sample price at *n* datapoints using prefix sums."""
+        cum_scores, cum_lats, cum_in, cum_out = prefix
+        acc = cum_scores[n] / n
+        lat = cum_lats[n] / n
+        agg_in = {m: vals[n] for m, vals in cum_in.items()}
+        agg_out = {m: vals[n] for m, vals in cum_out.items()}
+        total = compute_price(agg_in, agg_out, custom_prices=custom_prices)
+        price = total / n if total is not None else None
+        return acc, lat, price
 
     def __str__(self) -> str:
         if not self.results:
@@ -276,13 +301,22 @@ class SelectionResults(BaseModel):
         lines.append("")
         lines.append(pad + " Model Selection Results")
 
+        # Precompute prefix sums once per result for O(1) layer lookups.
+        prefix_cache = {
+            id(r): self._build_prefix_sums(r) for r in unique if r.datapoint_results
+        }
+
         for layer_idx, n_samples in enumerate(sample_counts):
             is_final = layer_idx == len(sample_counts) - 1
             layer_results = [r for r in unique if r.num_samples >= n_samples]
-            # Recompute metrics at this layer's sample count.
+            # Look up metrics at this layer's sample count.
             recomputed: List[Tuple["ModelResult", float, float, Optional[float]]] = []
             for r in layer_results:
-                acc, lat, price = self._recompute_metrics(r, n_samples)
+                pfx = prefix_cache.get(id(r))
+                if pfx is not None:
+                    acc, lat, price = self._metrics_at(pfx, n_samples, r._custom_prices)
+                else:
+                    acc, lat, price = r.accuracy, r.latency_seconds, r.price
                 recomputed.append((r, acc, lat, price))
             recomputed.sort(key=lambda t: (-t[1], t[2]))
 

@@ -34,30 +34,33 @@ AgentOpt solves this automatically. Give it your agent and a small evaluation da
 
 ```bash
 pip install agentopt
-
-# With Bayesian optimization support
-pip install "agentopt[bayesian]"
 ```
-
 ## Quick Start
 
 **The idea**: To find the right models for your agent, you need four things — an agent, a set of model candidates, a dataset, and an evaluation function. A naive approach would be:
 
 ```python
+# Say you have an agent with two LLM steps ("planner" and "solver"),
+# and you want to find the best model for each step.
+models = {
+    "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+    "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+}   # → 3 × 3 = 9 combinations
+
 for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
     agent = MyAgent(combo)                   # build agent with this model combo
     for input_data, expected in dataset:
         actual = agent.run(input_data)       # run on each datapoint
         score = eval_fn(expected, actual)    # score the output
-    # aggregate scores → accuracy, track latency & cost
+    # aggregate scores → quality score, track latency & cost
 ```
 
-AgentOpt automates this with smart algorithms, parallelization, and caching. You just provide the four pieces:
+AgentOpt automates this with **smart algorithms, parallelization, and caching**. You just provide the four pieces:
 
 
-**Step 1**: Say you have an agent (implemented in arbitrary framework), we simply ask you wrap up your agent into a class with two methods:
+**Step 1**: Say you have an agent (implemented in arbitrary way), we simply ask you wrap up your agent into a class with two methods:
 
-- `__init__(self, models)` — receive a model configuration. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
+- `__init__(self, models)` — receive a model configuration and do your agent creation. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
 - `run(self, input_data)` — run your agent on a single datapoint and return the output.
 
 
@@ -95,7 +98,8 @@ dataset = [
     ("What is the capital of France?", "Paris"),
     ("What is 2 + 2?", "4"),
     ("What color is the sky?", "blue"),
-    # ... ideally ~100 samples
+    # We recommend at least 100 samples for production decisions,
+    # but even 10-20 samples can surface clear winners during development.
 ]
 ```
 
@@ -120,10 +124,10 @@ selector = ModelSelector(
     },  # → 3 × 3 = 9 combinations to evaluate
     eval_fn=eval_fn,
     dataset=dataset,
-    method="brute_force" ## method="auto" will use more efficient algorithms to find the right models
+    method="brute_force",  # or "auto" for smarter selection algorithms
 )
 
-results = selector.select_best(parallel=True)
+results = selector.select_best(parallel=True, max_concurrent=50)
 results.print_summary()
 ```
 
@@ -140,9 +144,22 @@ Output:
 ```
 With `method="auto"` (the default), AgentOpt uses smart algorithms that eliminate clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls. Use `method="brute_force"` to evaluate all combinations exhaustively.
 
+## Framework Compatibility
+
+AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we provide examples for a few popular frameworks, but it literally works with any custom implementation:
+
+| Framework | Status | Example |
+|-----------|--------|---------|
+| OpenAI Agents SDK | Supported | [openai_sdk_example.py](examples/openai_sdk_example.py) |
+| LangChain / LangGraph | Supported | [langchain_example.py](examples/langchain_example.py), [langgraph_example.py](examples/langgraph_example.py) |
+| CrewAI | Supported | [crewai_example.py](examples/crewai_example.py) |
+| LlamaIndex | Supported | [llamaindex_example.py](examples/llamaindex_example.py) |
+| AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
+| OpenAI-Compatible API SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
+
 ## Selection Algorithms
 
-You can also pick a specific algorithm via `method=`:
+AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_selection_example.py](examples/advanced_selection_example.py) for details.
 
 | `method=` | Best for | How it works |
 |-----------|----------|-------------|
@@ -159,24 +176,11 @@ You can also pick a specific algorithm via `method=`:
 ```python
 selector = ModelSelector(
     agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
-    method="hill_climbing",
+    method="epsilon_lucb",
+    epsilon="0.5"
 )
 results = selector.select_best(parallel=True)
 ```
-
-## Framework Compatibility
-
-AgentOpt works with any LLM framework that uses `httpx` under the hood — which is virtually all of them:
-
-| Framework | Status | Example |
-|-----------|--------|---------|
-| OpenAI SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
-| OpenAI Agents SDK | Supported | [openai_sdk_example.py](examples/openai_sdk_example.py) |
-| LangChain / LangGraph | Supported | [langchain_example.py](examples/langchain_example.py), [langgraph_example.py](examples/langgraph_example.py) |
-| CrewAI | Supported | [crewai_example.py](examples/crewai_example.py) |
-| LlamaIndex | Supported | [llamaindex_example.py](examples/llamaindex_example.py) |
-| AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
-| Anthropic SDK | Supported | Uses httpx |
 
 ## How It Works
 
@@ -184,9 +188,9 @@ AgentOpt intercepts LLM calls at the `httpx` transport layer — the one chokepo
 
 ```
 your_agent(input)
-  +-- framework internals (LangChain, CrewAI, etc.)
-        +-- httpx.Client.send()   <-- intercepted here
-              +-- LLM API (OpenAI, Anthropic, etc.)
+  └── framework internals (LangChain, CrewAI, etc.)
+        └── httpx.Client.send()   ← intercepted here
+              └── LLM API (OpenAI, Anthropic, etc.)
 ```
 
 For each model combination, AgentOpt:
@@ -196,75 +200,15 @@ For each model combination, AgentOpt:
 4. Scores the output using your evaluation function
 5. Reports the Pareto-optimal combinations
 
-Response caching ensures that identical LLM calls (same model + same prompt) are never repeated — making iterative experimentation fast and cheap.
-
-## Results API
-
-```python
-results = selector.select_best()
-
-results.print_summary()               # formatted table
-best = results.get_best()             # ModelResult with highest accuracy
-combo = results.get_best_combo()      # {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
-results.to_csv("results.csv")         # export all results
-results.export_config("config.yaml")  # export best combo as YAML
-```
-
-## Advanced Usage
-
-### Custom model pricing
-
-```python
-selector = BruteForceModelSelector(
-    ...,
-    model_prices={
-        "my-custom-model": {"input_price": 2.50, "output_price": 10.00},
-    },
-)
-```
-
-### Persistent disk cache
-
-Cache LLM responses to disk so they survive process restarts:
-
-```python
-from agentopt.proxy import LLMTracker
-
-tracker = LLMTracker(cache_dir="./llm_cache")
-selector = BruteForceModelSelector(..., tracker=tracker)
-results = selector.select_best()  # cache flushed automatically
-```
-
-### Using prebuilt LLM instances
-
-Pass framework-specific LLM objects instead of model name strings:
-
-```python
-from langchain_openai import ChatOpenAI
-
-selector = BruteForceModelSelector(
-    agent=MyAgent,
-    models={
-        "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
-        "solver":  [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
-    },
-    eval_fn=eval_fn,
-    dataset=dataset,
-)
-```
+Response caching (in-memory + SQLite on disk) is enabled by default — identical LLM calls are never repeated, making iterative experimentation fast and cheap.
 
 ## Documentation
 
-Full documentation is available at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)**.
+Full documentation is available at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)**, including:
 
-## Development
-
-```bash
-git clone https://github.com/AgentOptimizer/agentopt.git
-cd agentopt
-uv sync --extra dev
-uv run pytest
-```
+- [Results API](https://agentoptimizer.github.io/agentopt/api/results/) — export results to CSV/YAML, retrieve the best combination
+- [Response caching](https://agentoptimizer.github.io/agentopt/concepts/caching/) — persistent SQLite cache, custom cache directories
+- [Custom model pricing](https://agentoptimizer.github.io/agentopt/api/selectors/) — define pricing for self-hosted or custom models
 
 ## License
 

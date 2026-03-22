@@ -10,58 +10,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import argparse
-import inspect
-from typing import Any, Dict
-
 from crewai import Agent, Crew, LLM, Task
 
-from agentopt import (
-    ArmEliminationModelSelector,
-    BruteForceModelSelector,
-    EpsilonLUCBModelSelector,
-    HillClimbingModelSelector,
-    LMProposalModelSelector,
-    RandomSearchModelSelector,
-    ThresholdBanditSEModelSelector,
-)
-
-SELECTORS = {
-    "brute_force": BruteForceModelSelector,
-    "random": RandomSearchModelSelector,
-    "hill_climbing": HillClimbingModelSelector,
-    "arm_elimination": ArmEliminationModelSelector,
-    "epsilon_lucb": EpsilonLUCBModelSelector,
-    "threshold_successive_elimination": ThresholdBanditSEModelSelector,
-    "lm_proposal": LMProposalModelSelector,
-}
-
-try:
-    from agentopt import BayesianOptimizationModelSelector
-
-    SELECTORS["bayesian_optimization"] = BayesianOptimizationModelSelector
-except ImportError:
-    pass
+from agentopt import ModelSelector
 
 
 class MyAgent:
     """CrewAI crew with researcher + writer agents."""
 
-    def __init__(self, models: Dict[str, Any]):
-        self.researcher_llm = (
-            models["researcher"]
-            if not isinstance(models["researcher"], str)
-            else LLM(model=models["researcher"])
-        )
-        self.writer_llm = (
-            models["writer"]
-            if not isinstance(models["writer"], str)
-            else LLM(model=models["writer"])
-        )
+    def __init__(self, models):
+        self.researcher_llm = LLM(model=models["researcher"])
+        self.writer_llm = LLM(model=models["writer"])
 
     def run(self, input_data):
-        question = input_data if isinstance(input_data, str) else input_data["question"]
-
         researcher = Agent(
             role="Researcher",
             goal="Research the topic and provide accurate information",
@@ -76,12 +37,12 @@ class MyAgent:
         )
 
         research_task = Task(
-            description=f"Research this question: {question}",
+            description=f"Research this question: {input_data}",
             expected_output="Factual information about the topic",
             agent=researcher,
         )
         write_task = Task(
-            description=f"Write a concise answer to: {question}",
+            description=f"Write a concise answer to: {input_data}",
             expected_output="A clear, concise answer",
             agent=writer,
         )
@@ -91,7 +52,7 @@ class MyAgent:
         return str(result)
 
 
-def eval_fn(expected: str, actual) -> float:
+def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
 
 
@@ -118,89 +79,21 @@ dataset = [
 ]
 
 
-def _filter_selector_kwargs(
-    selector_cls, selector_kwargs: Dict[str, Any]
-) -> Dict[str, Any]:
-    params = inspect.signature(selector_cls.__init__).parameters
-    return {k: v for k, v in selector_kwargs.items() if k in params}
-
-
-def main():
-    parser = argparse.ArgumentParser(description="CrewAI model selection example")
-    parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
-    parser.add_argument("--parallel", action="store_true")
-    parser.add_argument("--max-concurrent", type=int, default=20)
-    parser.add_argument(
-        "--use-instances",
-        action="store_true",
-        help="Pass pre-built LLM instances instead of model name strings",
-    )
-    parser.add_argument(
-        "--sample-fraction",
-        type=float,
-        default=0.25,
-        help="Fraction of combinations to evaluate when --selector=random",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=4,
-        help=(
-            "Batch size for batched selectors "
-            "(hill_climbing neighbours and bayesian_optimization candidates)."
-        ),
-    )
-    parser.add_argument(
-        "--epsilon",
-        type=float,
-        default=0.01,
-        help="Epsilon for --selector=epsilon_lucb.",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=0.5,
-        help="Threshold for --selector=threshold_successive_elimination.",
-    )
-    args = parser.parse_args()
-
-    candidates = ["gpt-5.2", "gpt-4o-mini", "gpt-4.1"]
-    if args.use_instances:
-        models = {
-            "researcher": [LLM(model=m) for m in candidates],
-            "writer": [LLM(model=m) for m in candidates],
-        }
-    else:
-        models = {"researcher": candidates, "writer": candidates}
-
-    selector_cls = SELECTORS[args.selector]
-    selector_kwargs: Dict[str, Any] = {}
-    if args.selector == "random":
-        selector_kwargs["sample_fraction"] = args.sample_fraction
-    if args.selector in ("hill_climbing", "bayesian_optimization"):
-        selector_kwargs["batch_size"] = args.batch_size
-    if args.selector == "epsilon_lucb":
-        selector_kwargs["epsilon"] = args.epsilon
-    if args.selector == "threshold_successive_elimination":
-        selector_kwargs["threshold"] = args.threshold
-
-    selector = selector_cls(
+if __name__ == "__main__":
+    selector = ModelSelector(
         agent=MyAgent,
-        models=models,
+        models={
+            "researcher": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+            "writer": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+        },
         eval_fn=eval_fn,
         dataset=dataset,
-        **_filter_selector_kwargs(selector_cls, selector_kwargs),
+        method="brute_force",
     )
 
-    results = selector.select_best(
-        parallel=args.parallel, max_concurrent=args.max_concurrent
-    )
+    results = selector.select_best(parallel=True)
     results.print_summary()
 
     best = results.get_best_combo()
     if best:
         print(f"\nBest combination: {best}")
-
-
-if __name__ == "__main__":
-    main()

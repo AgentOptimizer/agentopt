@@ -91,7 +91,8 @@ class MyAgent:
             self.planner, message=f"Answer this question: {question}", max_turns=4,
         )
 
-        # Extract the last non-empty assistant message as the answer
+        # Extract the last non-empty assistant message as the answer, 
+        # this can be customized as long as the eval_fn can work properly for the output here
         for msg in reversed(chat_result.chat_history):
             if msg.get("role") == "assistant" and msg.get("content"):
                 return msg["content"].replace("TERMINATE", "").strip()

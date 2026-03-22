@@ -120,6 +120,95 @@ All selectors share the same interface:
 results = selector.select_best(parallel=True, max_concurrent=20)
 ```
 
+## Streaming Model Selection (Detailed)
+
+`StreamingBruteForceModelSelector` is the online version of brute force for incoming labeled data.
+
+### When to use it
+
+Use it when:
+- new `(input, expected)` samples arrive continuously (or in periodic batches),
+- you want to keep re-ranking model combinations over time,
+- you want the current best combo at any point without re-running full offline experiments.
+
+### What it optimizes
+
+The current best is chosen with the same tie-break logic as other selectors:
+1. highest accuracy,
+2. then lowest latency,
+3. then lowest cost (if pricing is available).
+
+### Data contract
+
+Each batch must be:
+
+```python
+Sequence[Tuple[input_data, expected_answer]]
+```
+
+Example:
+
+```python
+batch = [
+    ({"question": "What is 3+5?"}, "8"),
+    ({"question": "Capital of France?"}, "Paris"),
+]
+```
+
+### API
+
+```python
+from agentopt import StreamingBruteForceModelSelector
+
+selector = StreamingBruteForceModelSelector(
+    agent_fn=agent_maker,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=warm_start_dataset,  # seed batch used by select_best()
+)
+
+# 1) Evaluate warm-start dataset once
+selector.select_best(parallel=True, max_concurrent=20)
+
+# 2) Update incrementally as new data arrives
+selector.update(batch, parallel=True, max_concurrent=20)
+
+# 3) Inspect current ranking / best combo
+results = selector.results()
+best_combo = selector.best_combo()
+```
+
+Methods:
+- `select_best(...)`: evaluates the initial seed dataset once.
+- `update(batch, ...)`: evaluates all combos on the new batch and appends metrics.
+- `update_one(input_data, expected_answer, ...)`: single-sample convenience method.
+- `results()`: cumulative leaderboard over all streamed batches seen so far.
+- `best_combo()`: current best `{"node": "model"}` mapping.
+
+### Internal update loop
+
+For each incoming batch:
+1. validate batch format,
+2. evaluate every combo on that batch (sequential or async),
+3. append new scores/latencies/tokens to cumulative per-combo state,
+4. recompute ranking and mark the current best combo.
+
+### Minimal online loop
+
+```python
+for batch in stream_of_labeled_batches:
+    selector.update(batch, parallel=True, max_concurrent=20)
+    best = selector.best_combo()
+    print("best now:", best)
+```
+
+### Notes / caveats
+
+- This is still **brute force per batch**: every combo is evaluated on each update.
+- It is simple and stable, but can be expensive with large combo spaces.
+- For large spaces, start with smaller candidate sets or move to pruning selectors
+  (`ArmEliminationModelSelector`, `EpsilonLUCBModelSelector`, etc.) for offline filtering first.
+
 ## Framework Compatibility
 
 AgentOpt works with any LLM framework that uses `httpx` under the hood — which is virtually all of them:

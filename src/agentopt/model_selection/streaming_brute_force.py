@@ -20,7 +20,15 @@ class StreamingBruteForceModelSelector(BaseModelSelector):
     - call ``update(batch)`` as new labeled data arrives
     - call ``results()`` / ``best_combo()`` at any time
     - optional: still supports ``select_best()`` over the initial dataset
+
+    Convergence policy (internal defaults, not user-facing):
+    - best combo must stay unchanged
+    - best accuracy improvement stays below 2%
+    - for 10 consecutive batch updates
     """
+
+    _CONVERGENCE_DELTA = 0.02
+    _CONVERGENCE_PATIENCE_BATCHES = 10
 
     def __init__(
         self,
@@ -53,6 +61,10 @@ class StreamingBruteForceModelSelector(BaseModelSelector):
         }
         self._seen_samples = 0
         self._seed_consumed = False
+        self._converged = False
+        self._stable_batches = 0
+        self._best_combo_signature: Optional[Tuple[Tuple[str, str], ...]] = None
+        self._best_accuracy: Optional[float] = None
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
@@ -68,6 +80,13 @@ class StreamingBruteForceModelSelector(BaseModelSelector):
         self, batch: Dataset, parallel: bool = False, max_concurrent: int = 20,
     ) -> SelectionResults:
         """Evaluate all combinations on a new incoming batch."""
+        if self._converged:
+            print(
+                "\nStreaming selector converged; skipping new batch. "
+                "Current best combo is stable."
+            )
+            return self.results()
+
         validate_dataset(batch)
 
         if parallel:
@@ -75,7 +94,10 @@ class StreamingBruteForceModelSelector(BaseModelSelector):
         else:
             self._update_sequential(batch)
         self._seen_samples += len(batch)
-        return self.results()
+
+        results = self.results()
+        self._update_convergence_state(results)
+        return results
 
     def update_one(
         self,
@@ -139,6 +161,27 @@ class StreamingBruteForceModelSelector(BaseModelSelector):
         """Return current best combination as node->model dict."""
         return self.results().get_best_combo()
 
+    def has_converged(self) -> bool:
+        """Whether streaming updates have converged under internal policy."""
+        return self._converged
+
+    def should_continue(self) -> bool:
+        """Whether caller should continue feeding new batches."""
+        return not self._converged
+
+    def convergence_state(self) -> Dict[str, Any]:
+        """Return convergence diagnostics for logging/monitoring."""
+        return {
+            "converged": self._converged,
+            "stable_batches": self._stable_batches,
+            "required_stable_batches": self._CONVERGENCE_PATIENCE_BATCHES,
+            "delta": self._CONVERGENCE_DELTA,
+            "best_accuracy": self._best_accuracy,
+            "best_combo": dict(self._best_combo_signature)
+            if self._best_combo_signature is not None
+            else None,
+        }
+
     def _update_sequential(self, batch: Dataset) -> None:
         dp_offset = self._seen_samples
         total = len(self._all_combos)
@@ -193,3 +236,44 @@ class StreamingBruteForceModelSelector(BaseModelSelector):
             self._combo_scores[idx].extend(scores)
             self._combo_latencies[idx].extend(latencies)
             self._combo_dp_ids[idx].extend(dp_ids)
+
+    @staticmethod
+    def _combo_signature(combo: Optional[Dict[str, str]]) -> Optional[Tuple[Tuple[str, str], ...]]:
+        if combo is None:
+            return None
+        return tuple(sorted((str(k), str(v)) for k, v in combo.items()))
+
+    def _update_convergence_state(self, results: SelectionResults) -> None:
+        best = results.get_best()
+        if best is None:
+            return
+
+        combo_sig = self._combo_signature(results.get_best_combo())
+        if combo_sig is None:
+            return
+
+        current_acc = best.accuracy
+        if self._best_combo_signature is None or self._best_accuracy is None:
+            self._best_combo_signature = combo_sig
+            self._best_accuracy = current_acc
+            self._stable_batches = 0
+            return
+
+        combo_unchanged = combo_sig == self._best_combo_signature
+        improvement = current_acc - self._best_accuracy
+
+        if combo_unchanged and improvement < self._CONVERGENCE_DELTA:
+            self._stable_batches += 1
+        else:
+            self._stable_batches = 0
+
+        self._best_combo_signature = combo_sig
+        self._best_accuracy = current_acc
+
+        if self._stable_batches >= self._CONVERGENCE_PATIENCE_BATCHES:
+            self._converged = True
+            print(
+                "\nStreaming selector converged: best combo stable for "
+                f"{self._stable_batches} batches with < "
+                f"{self._CONVERGENCE_DELTA:.0%} accuracy improvement."
+            )

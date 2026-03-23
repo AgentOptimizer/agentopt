@@ -541,7 +541,7 @@ class SelectionResults(BaseModel):
 
         Subplots: Accuracy vs Latency, Accuracy vs Price.
 
-        Requires ``matplotlib`` (install with ``pip install agentopt[plot]``).
+        Requires ``matplotlib`` (install with ``pip install agentopt-py[plot]``).
         If *path* is given the figure is saved to that file, otherwise
         ``plt.show()`` is called.
         """
@@ -550,7 +550,7 @@ class SelectionResults(BaseModel):
         except ImportError:
             raise ImportError(
                 "matplotlib is required for plot_pareto. "
-                "Install it with: pip install agentopt[plot]"
+                "Install it with: pip install agentopt-py[plot]"
             )
 
         # Deduplicate (same logic as __str__).

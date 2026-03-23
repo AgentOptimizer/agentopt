@@ -2,7 +2,7 @@
 Example: AG2 agent with agentopt.
 
 Prerequisites:
-    1. pip install ag2 agentopt
+    1. pip install ag2 agentopt-py
     2. Set OPENAI_API_KEY environment variable
 
 Note: AG2's run() API spawns a background thread which breaks context

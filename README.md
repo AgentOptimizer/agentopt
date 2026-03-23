@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/agentopt/"><img src="https://img.shields.io/pypi/v/agentopt?logo=python&logoColor=white&color=3776ab" alt="PyPI"></a>
-  <!-- <a href="https://pepy.tech/projects/agentopt"><img src="https://static.pepy.tech/badge/agentopt" alt="Downloads"></a> -->
+  <a href="https://pypi.org/project/agentopt-py/"><img src="https://img.shields.io/pypi/v/agentopt-py?logo=python&logoColor=white&color=3776ab" alt="PyPI"></a>
+  <!-- <a href="https://pepy.tech/projects/agentopt-py"><img src="https://static.pepy.tech/badge/agentopt-py" alt="Downloads"></a> -->
   <!-- <a href="https://github.com/AgentOptimizer/agentopt"><img src="https://img.shields.io/github/stars/AgentOptimizer/agentopt?style=flat&logo=github&color=181717" alt="GitHub stars"></a> -->
   <a href="https://github.com/AgentOptimizer/agentopt/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat" alt="License"></a>
   <a href="https://agentoptimizer.github.io/agentopt/"><img src="https://img.shields.io/badge/docs-website-blue?style=flat&logo=materialformkdocs&logoColor=white" alt="Docs"></a>
@@ -44,7 +44,7 @@ Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026
 ## Installation
 
 ```bash
-pip install agentopt
+pip install agentopt-py
 ```
 ## Quick Start
 
@@ -177,7 +177,7 @@ If you do not need the strict best model combination and want **more evaluation 
 | `"epsilon_lucb"` | Extra cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
 | `"threshold"` | Thresholding objectives | Bandit; determines whether each combination is above/below a user-defined `threshold` on the performance metric (e.g., mean accuracy) |
 | `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
-| `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt[bayesian]"`) |
+| `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt-py[bayesian]"`) |
 
 ```python
 selector = ModelSelector(

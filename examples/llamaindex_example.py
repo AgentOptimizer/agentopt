@@ -2,7 +2,7 @@
 Example: LlamaIndex agent with agentopt.
 
 Prerequisites:
-    1. pip install llama-index-core llama-index-llms-openai agentopt
+    1. pip install llama-index-core llama-index-llms-openai agentopt-py
     2. Set OPENAI_API_KEY environment variable
 """
 

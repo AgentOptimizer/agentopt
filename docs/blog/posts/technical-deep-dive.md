@@ -181,10 +181,6 @@ We validated AgentOpt across four diverse benchmarks using 9 models on Amazon Be
 
 Arm Elimination is the consistent winner: it achieves near-brute-force accuracy across all four benchmarks while using 40-60% less budget. LM Proposal (asking GPT-4.1 to predict the best combo) matches brute force on GPQA (where the answer is intuitive) but collapses to 34% on HotpotQA and 45% on BFCL. It can't predict that Ministral outperforms Opus as a planner.
 
-### Budget Alternatives
-
-As shown in the cost-savings table above, for every benchmark there exists a combination within 3-5% of the best accuracy that costs 10-100x less. You don't need the most expensive model to get near-optimal results.
-
 ## Get Started
 
 ```bash

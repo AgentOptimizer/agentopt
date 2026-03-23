@@ -171,11 +171,11 @@ AgentOpt includes a rich set of selection algorithms. Advanced users may get sig
 | `"brute_force"` | Small search spaces | Evaluates all combinations |
 | `"random"` | Quick exploration | Samples a random fraction |
 | `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
-| `"arm_elimination"` | Early pruning | Eliminates statistically dominated combinations |
-| `"epsilon_lucb"` | Best-arm identification | Stops when LUCB confidence gap is within user `epsilon` |
-| `"threshold"` | Thresholding objectives | Classifies combinations above/below user `threshold` |
+| `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
+| `"epsilon_lucb"` | Simple regret minimization (epsilon-optimal best-arm identification) | Bandit; stops when an epsilon-optimal best arm is identified |
+| `"threshold"` | Thresholding objectives | Bandit; determines whether each combination is above/below a user-defined `threshold` on the performance metric (e.g., mean accuracy) |
 | `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
-| `"bayesian"` | Expensive evaluations | GP-based optimization (requires `pip install "agentopt[bayesian]"`) |
+| `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt[bayesian]"`) |
 
 ```python
 selector = ModelSelector(

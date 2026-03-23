@@ -198,10 +198,10 @@ pip install agentopt
 ```
 
 ```python
-from agentopt import ArmEliminationModelSelector
+from agentopt import ModelSelector
 
-selector = ArmEliminationModelSelector(
-    agent_fn=your_agent_factory,
+selector = ModelSelector(
+    agent=YourAgent,
     models={"planner": ["gpt-4o", "claude-sonnet-4-6"], "solver": ["gpt-4o-mini", "claude-haiku-4-5"]},
     eval_fn=lambda expected, actual: 1.0 if expected in str(actual) else 0.0,
     dataset=your_eval_dataset,

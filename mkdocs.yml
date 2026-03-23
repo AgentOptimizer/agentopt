@@ -1,8 +1,8 @@
 site_name: AgentOpt
-site_url: https://tianyipeng.github.io/agentopt
+site_url: https://agentoptimizer.github.io/agentopt
 site_description: Find the right LLM models for your AI agents
-repo_url: https://github.com/TianyiPeng/agentopt
-repo_name: TianyiPeng/agentopt
+repo_url: https://github.com/AgentOptimizer/agentopt
+repo_name: AgentOptimizer/agentopt
 
 theme:
   name: material

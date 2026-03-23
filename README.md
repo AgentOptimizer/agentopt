@@ -201,13 +201,60 @@ For each model combination, AgentOpt:
 
 Response caching (in-memory + SQLite on disk) is enabled by default — identical LLM calls are never repeated, making iterative experimentation fast and cheap.
 
+## Results API
+
+```python
+results = selector.select_best()
+
+results.print_summary()               # formatted table
+best = results.get_best()             # ModelResult with highest accuracy
+combo = results.get_best_combo()      # {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
+results.to_csv("results.csv")         # export all results
+results.export_config("config.yaml")  # export best combo as YAML
+```
+
+## Advanced Usage
+
+**Custom model pricing** — define pricing for self-hosted or custom models:
+
+```python
+selector = ModelSelector(
+    ...,
+    model_prices={
+        "my-custom-model": {"input_price": 2.50, "output_price": 10.00},
+    },
+)
+```
+
+**Custom cache directory** — LLM response caching is enabled by default (`.agentopt_cache/`). To customize:
+
+```python
+from agentopt import LLMTracker
+
+tracker = LLMTracker(cache_dir="./my_cache")
+selector = ModelSelector(..., tracker=tracker)
+results = selector.select_best()  # cache flushed automatically
+```
+
+**Using prebuilt LLM instances** — pass framework-specific LLM objects instead of model name strings:
+
+```python
+from langchain_openai import ChatOpenAI
+
+selector = ModelSelector(
+    agent=MyAgent,
+    models={
+        "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
+        "solver":  [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
+    },
+    eval_fn=eval_fn,
+    dataset=dataset,
+)
+```
+
 ## Documentation
 
-Full documentation is available at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)**, including:
-
-- [Results API](https://agentoptimizer.github.io/agentopt/api/results/) — export results to CSV/YAML, retrieve the best combination
-- [Response caching](https://agentoptimizer.github.io/agentopt/concepts/caching/) — persistent SQLite cache, custom cache directories
-- [Custom model pricing](https://agentoptimizer.github.io/agentopt/api/selectors/) — define pricing for self-hosted or custom models
+Full documentation at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)** — including detailed guides on the [Results API](https://agentoptimizer.github.io/agentopt/api/results/), [response caching](https://agentoptimizer.github.io/agentopt/concepts/caching/), and [custom model pricing](https://agentoptimizer.github.io/agentopt/api/selectors/).
 
 ## License
 

@@ -91,7 +91,7 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
 # rank combos by quality score, latency & cost
 ```
 
-But AgentOpt does this efficiently with **smart algorithms, parallelization, cost & latency tracking, and caching**. With `method="auto"` (the default), it eliminates clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls.
+But AgentOpt does this efficiently with **smart algorithms, parallelization, cost & latency tracking, and caching**. With `method="auto"` (the default), it **automatically** homes in on the best combination (wired to `arm_elimination` — strong best-arm identification with far fewer evaluations than `brute_force`), eliminating clearly worse combinations after just a few datapoints.
 
 You just provide four things:
 
@@ -165,23 +165,25 @@ AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we 
 
 AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_selection_example.py](examples/advanced_selection_example.py) for details.
 
+If you do not need the strict best model combination and want **more evaluation savings**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
+
 | `method=` | Best for | How it works |
 |-----------|----------|-------------|
-| `"auto"` (default) | General use | Automatically picks the best approach |
+| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower evaluation cost than `brute_force`) |
 | `"brute_force"` | Small search spaces | Evaluates all combinations |
 | `"random"` | Quick exploration | Samples a random fraction |
 | `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
-| `"arm_elimination"` | Early pruning | Eliminates statistically dominated combinations |
-| `"epsilon_lucb"` | Best-arm identification | Stops when LUCB confidence gap is within user `epsilon` |
-| `"threshold"` | Thresholding objectives | Classifies combinations above/below user `threshold` |
+| `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
+| `"epsilon_lucb"` | Extra cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
+| `"threshold"` | Thresholding objectives | Bandit; determines whether each combination is above/below a user-defined `threshold` on the performance metric (e.g., mean accuracy) |
 | `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
-| `"bayesian"` | Expensive evaluations | GP-based optimization (requires `pip install "agentopt[bayesian]"`) |
+| `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt[bayesian]"`) |
 
 ```python
 selector = ModelSelector(
     agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
     method="epsilon_lucb",
-    epsilon=0.5
+    epsilon=0.01
 )
 results = selector.select_best(parallel=True)
 ```

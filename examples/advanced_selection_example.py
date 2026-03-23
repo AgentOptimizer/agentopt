@@ -3,7 +3,9 @@ Example: Advanced model selection algorithms.
 
 The framework-specific examples (custom_agent_example.py, langchain_example.py, etc.)
 all use method="brute_force" for simplicity. This example demonstrates the other
-selection algorithms available via ModelSelector(method=...).
+selection algorithms available via ModelSelector(method=...). The default
+method="auto" automatically finds the best combination (wired to arm_elimination —
+strong best-arm identification with lower evaluation cost than brute_force).
 
 Prerequisites:
     1. pip install openai agentopt
@@ -88,7 +90,7 @@ models = {
 
 
 def run_auto():
-    """method="auto" — automatically picks the best algorithm (default)."""
+    """method="auto" — automatically finds the best combination (default; wired to arm_elimination — strong best-arm identification, cheaper than brute_force)."""
     selector = ModelSelector(
         agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset, method="auto",
     )
@@ -103,7 +105,7 @@ def run_random():
         eval_fn=eval_fn,
         dataset=dataset,
         method="random",
-        sample_fraction=0.5,  # evaluate 50% of all combinations
+        sample_fraction=0.25,  # evaluate 25% of all combinations
     )
     return selector.select_best(parallel=True)
 
@@ -141,7 +143,7 @@ def run_epsilon_lucb():
         eval_fn=eval_fn,
         dataset=dataset,
         method="epsilon_lucb",
-        epsilon=0.05,  # acceptable gap from the true best
+        epsilon=0.01,  # acceptable gap from the true best
     )
     return selector.select_best(parallel=True)
 
@@ -154,7 +156,7 @@ def run_threshold():
         eval_fn=eval_fn,
         dataset=dataset,
         method="threshold",
-        threshold=0.8,  # minimum acceptable accuracy
+        threshold=0.75,  # minimum acceptable accuracy
     )
     return selector.select_best(parallel=True)
 
@@ -180,6 +182,7 @@ def run_bayesian():
         dataset=dataset,
         method="bayesian",
         batch_size=4,
+        sample_fraction=0.25,  # evaluate 25% of all combinations
     )
     return selector.select_best(parallel=True)
 
@@ -207,7 +210,7 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Available methods:
-  auto              Automatically picks the best algorithm (default)
+  auto              Automatically finds the best combination (wired to arm_elimination; lower evaluation cost than brute_force) (default)
   random            Evaluate a random subset of combinations
   hill_climbing     Greedy search using model quality/speed rankings
   arm_elimination   Eliminate statistically dominated combinations early

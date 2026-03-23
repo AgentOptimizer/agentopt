@@ -181,7 +181,7 @@ AgentOpt includes a rich set of selection algorithms. Advanced users may get sig
 selector = ModelSelector(
     agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
     method="epsilon_lucb",
-    epsilon=0.5
+    epsilon=0.01
 )
 results = selector.select_best(parallel=True)
 ```

@@ -20,6 +20,10 @@
   <a href="https://agentoptimizer.github.io/agentopt/"><img src="https://img.shields.io/badge/docs-website-blue?style=flat&logo=materialformkdocs&logoColor=white" alt="Docs"></a>
 </p>
 
+<p align="center">
+  AgentOpt is supported by <a href="https://daplab.cs.columbia.edu/">DAPLab</a> at Columbia University.
+</p>
+
 ---
 
 ## Why AgentOpt

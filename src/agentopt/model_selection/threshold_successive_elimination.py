@@ -24,7 +24,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
         models: Dict[str, List[ModelCandidate]] = None,
         eval_fn: EvalFn = None,
         dataset: Dataset = None,
-        threshold: float = 0.5,
+        threshold: float = 0.75,
         n_initial: Optional[int] = None,
         confidence: float = 1.0,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,

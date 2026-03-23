@@ -58,8 +58,10 @@ def ModelSelector(
         models: Dict mapping step names to lists of candidate models.
         eval_fn: Scoring function ``(expected, actual) -> float``.
         dataset: List of ``(input_data, expected_output)`` pairs.
-        method: Selection algorithm. ``"auto"`` (default) picks the best
-            approach automatically. Other options: ``"brute_force"``,
+        method: Selection algorithm. ``"auto"`` (default) automatically finds
+            the best combination (same implementation as ``"arm_elimination"`` —
+            strong best-arm identification with lower evaluation cost than
+            ``"brute_force"``). Other options: ``"brute_force"``,
             ``"random"``, ``"hill_climbing"``, ``"arm_elimination"``,
             ``"epsilon_lucb"``, ``"threshold"``, ``"lm_proposal"``,
             ``"bayesian"``.

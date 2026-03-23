@@ -91,7 +91,7 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
 # rank combos by quality score, latency & cost
 ```
 
-But AgentOpt does this efficiently with **smart algorithms, parallelization, cost & latency tracking, and caching**. With `method="auto"` (the default), it eliminates clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls.
+But AgentOpt does this efficiently with **smart algorithms, parallelization, cost & latency tracking, and caching**. With `method="auto"` (the default), it **automatically** homes in on the best combination (wired to `arm_elimination` — strong best-arm identification with far fewer evaluations than `brute_force`), eliminating clearly worse combinations after just a few datapoints.
 
 You just provide four things:
 
@@ -167,7 +167,7 @@ AgentOpt includes a rich set of selection algorithms. Advanced users may get sig
 
 | `method=` | Best for | How it works |
 |-----------|----------|-------------|
-| `"auto"` (default) | General use | Automatically picks the best approach |
+| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower evaluation cost than `brute_force`) |
 | `"brute_force"` | Small search spaces | Evaluates all combinations |
 | `"random"` | Quick exploration | Samples a random fraction |
 | `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |

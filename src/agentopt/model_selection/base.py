@@ -593,7 +593,7 @@ class SelectionResults(BaseModel):
 
         fig = plt.figure(figsize=(14, 5))
         # Reserve right margin for the legend.
-        gs = fig.add_gridspec(1, 2, left=0.06, right=0.72, wspace=0.3)
+        gs = fig.add_gridspec(1, 2, left=0.06, right=0.68, wspace=0.3)
         axes = [fig.add_subplot(gs[0, i]) for i in range(2)]
         fig.suptitle("Pareto Frontiers", fontsize=14, fontweight="bold")
 
@@ -671,7 +671,7 @@ class SelectionResults(BaseModel):
         # External legend mapping numbers to combo names.
         legend_lines = [f"({i}) {name}" for i, name in enumerate(names, 1)]
         fig.text(
-            0.77,
+            0.72,
             0.5,
             "\n".join(legend_lines),
             fontsize=8,

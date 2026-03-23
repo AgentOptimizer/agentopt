@@ -1,8 +1,8 @@
 <p align="center">
-  <img width="400" height="1024" alt="logo" src="https://github.com/user-attachments/assets/c081148a-9e8b-4cf1-9c46-7373b25d28b4" />
+ <img width="200" height="200" alt="logo copy" src="https://github.com/user-attachments/assets/44348d79-d4d8-4087-b790-6d42225bb419" />
+  <br/>
+  <h1 align="center">AgentOpt</h1>
 </p>
-
-<h1 align="center">AgentOpt</h1>
 
 <p align="center">
   <strong>Find the right LLM models for your AI agents.</strong>

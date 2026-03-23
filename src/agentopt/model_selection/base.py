@@ -587,8 +587,8 @@ class SelectionResults(BaseModel):
         num_labels = [f"({i})" for i in range(1, len(unique) + 1)]
 
         pairs = [
-            (accs, lats, "Accuracy", "Latency (s)", False, True),
-            (accs, prices, "Accuracy", "Price ($)", False, True),
+            (lats, accs, "Latency (s)", "Accuracy", True, False),
+            (prices, accs, "Price ($)", "Accuracy", True, False),
         ]
 
         fig = plt.figure(figsize=(14, 5))
@@ -662,13 +662,6 @@ class SelectionResults(BaseModel):
                     fontsize=7,
                     fontweight="bold",
                 )
-
-            # Invert "lower is better" axes so better is always top-right,
-            # producing a concave frontier.
-            if x_min:
-                ax.invert_xaxis()
-            if y_min:
-                ax.invert_yaxis()
 
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)

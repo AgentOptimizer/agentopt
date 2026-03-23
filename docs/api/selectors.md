@@ -10,7 +10,6 @@ All selectors share a common constructor interface and the `select_best()` metho
 | `models` | `Dict[str, List]` | Maps node names to candidate model lists |
 | `eval_fn` | `Callable` | `(expected, actual) -> float` score in `[0, 1]` |
 | `dataset` | `List[Tuple]` | `[(input_data, expected_answer), ...]` |
-| `invoke_fn` | `Callable`, optional | Custom `(agent, input) -> result`. Default: `agent(input)` |
 | `model_prices` | `Dict`, optional | Custom pricing: `{"model": {"input_price": x, "output_price": y}}` |
 | `tracker` | `LLMTracker`, optional | Custom tracker instance (e.g., with disk cache) |
 

@@ -27,6 +27,7 @@ def search(query: str) -> str:
 # run(input_data) runs the agent on a single datapoint and returns the output.
 # ---------------------------------------------------------------------------
 
+
 class MyAgent:
     """OpenAI Agents SDK planner+solver agent pair."""
 
@@ -66,6 +67,7 @@ dataset = [
 # ---------------------------------------------------------------------------
 # Step 3: Evaluation function — score agent output against expected answer.
 # ---------------------------------------------------------------------------
+
 
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0

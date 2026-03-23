@@ -537,9 +537,9 @@ class SelectionResults(BaseModel):
         return mask
 
     def plot_pareto(self, path: Optional[str] = None) -> None:
-        """Generate three pairwise Pareto frontier plots.
+        """Generate two pairwise Pareto frontier plots.
 
-        Subplots: Accuracy vs Latency, Accuracy vs Price, Latency vs Price.
+        Subplots: Accuracy vs Latency, Accuracy vs Price.
 
         Requires ``matplotlib`` (install with ``pip install agentopt[plot]``).
         If *path* is given the figure is saved to that file, otherwise
@@ -589,13 +589,12 @@ class SelectionResults(BaseModel):
         pairs = [
             (accs, lats, "Accuracy", "Latency (s)", False, True),
             (accs, prices, "Accuracy", "Price ($)", False, True),
-            (lats, prices, "Latency (s)", "Price ($)", True, True),
         ]
 
-        fig = plt.figure(figsize=(20, 5))
+        fig = plt.figure(figsize=(14, 5))
         # Reserve right margin for the legend.
-        gs = fig.add_gridspec(1, 3, left=0.04, right=0.75, wspace=0.3)
-        axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
+        gs = fig.add_gridspec(1, 2, left=0.06, right=0.72, wspace=0.3)
+        axes = [fig.add_subplot(gs[0, i]) for i in range(2)]
         fig.suptitle("Pareto Frontiers", fontsize=14, fontweight="bold")
 
         for ax, (xs, ys, xlabel, ylabel, x_min, y_min) in zip(axes, pairs):

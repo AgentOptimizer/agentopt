@@ -26,6 +26,7 @@ from agentopt import ModelSelector
 # run() takes a single datapoint and returns the agent's output.
 # ---------------------------------------------------------------------------
 
+
 class MyAgent:
     """A simple planner+solver agent using the OpenAI SDK."""
 
@@ -36,22 +37,36 @@ class MyAgent:
 
     def run(self, input_data):
         # Step 1: Planner generates a plan
-        plan = self.client.chat.completions.create(
-            model=self.planner_model,
-            messages=[
-                {"role": "system", "content": "You are a planning assistant. Create a brief plan to answer the question."},
-                {"role": "user", "content": input_data},
-            ],
-        ).choices[0].message.content
+        plan = (
+            self.client.chat.completions.create(
+                model=self.planner_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a planning assistant. Create a brief plan to answer the question.",
+                    },
+                    {"role": "user", "content": input_data},
+                ],
+            )
+            .choices[0]
+            .message.content
+        )
 
         # Step 2: Solver executes the plan
-        answer = self.client.chat.completions.create(
-            model=self.solver_model,
-            messages=[
-                {"role": "system", "content": f"Follow this plan and answer concisely:\n{plan}"},
-                {"role": "user", "content": input_data},
-            ],
-        ).choices[0].message.content
+        answer = (
+            self.client.chat.completions.create(
+                model=self.solver_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"Follow this plan and answer concisely:\n{plan}",
+                    },
+                    {"role": "user", "content": input_data},
+                ],
+            )
+            .choices[0]
+            .message.content
+        )
         return answer
 
 
@@ -74,6 +89,7 @@ dataset = [
 # Step 3: Define your evaluation function.
 # It compares agent output against expected output and returns a score.
 # ---------------------------------------------------------------------------
+
 
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0

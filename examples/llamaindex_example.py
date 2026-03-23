@@ -46,6 +46,7 @@ def divide(a: float, b: float) -> float:
 # Note: run() can be async — AgentOpt detects this automatically.
 # ---------------------------------------------------------------------------
 
+
 class MyAgent:
     """LlamaIndex math agent with calculator tools."""
 
@@ -85,6 +86,7 @@ dataset = [
 # Step 3: Evaluation function — score agent output against expected answer.
 # ---------------------------------------------------------------------------
 
+
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
 
@@ -97,9 +99,7 @@ def eval_fn(expected, actual):
 if __name__ == "__main__":
     selector = ModelSelector(
         agent=MyAgent,
-        models={
-            "agent": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-        },
+        models={"agent": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],},
         eval_fn=eval_fn,
         dataset=dataset,
         method="brute_force",  # or "auto" for smarter selection algorithms

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="AgentOpt Logo" width="200">
+  <img width="400" height="1024" alt="logo" src="https://github.com/user-attachments/assets/c081148a-9e8b-4cf1-9c46-7373b25d28b4" />
 </p>
 
 <h1 align="center">AgentOpt</h1>

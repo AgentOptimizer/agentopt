@@ -488,3 +488,13 @@
 .md-main__inner {
   margin-top: 0;
 }
+
+/* Efficient cell highlight: within 5% accuracy AND >50% cost savings */
+.ao-efficient {
+  background: rgba(76, 175, 80, 0.18);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+[data-md-color-scheme="default"] .ao-efficient {
+  background: rgba(76, 175, 80, 0.15);
+}

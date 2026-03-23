@@ -103,7 +103,7 @@ def run_random():
         eval_fn=eval_fn,
         dataset=dataset,
         method="random",
-        sample_fraction=0.5,  # evaluate 50% of all combinations
+        sample_fraction=0.25,  # evaluate 25% of all combinations
     )
     return selector.select_best(parallel=True)
 
@@ -141,7 +141,7 @@ def run_epsilon_lucb():
         eval_fn=eval_fn,
         dataset=dataset,
         method="epsilon_lucb",
-        epsilon=0.05,  # acceptable gap from the true best
+        epsilon=0.01,  # acceptable gap from the true best
     )
     return selector.select_best(parallel=True)
 
@@ -154,7 +154,7 @@ def run_threshold():
         eval_fn=eval_fn,
         dataset=dataset,
         method="threshold",
-        threshold=0.8,  # minimum acceptable accuracy
+        threshold=0.75,  # minimum acceptable accuracy
     )
     return selector.select_best(parallel=True)
 
@@ -180,6 +180,7 @@ def run_bayesian():
         dataset=dataset,
         method="bayesian",
         batch_size=4,
+        sample_fraction=0.25,  # evaluate 25% of all combinations
     )
     return selector.select_best(parallel=True)
 

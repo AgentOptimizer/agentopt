@@ -85,7 +85,7 @@ When the same prompt hits the same model, the cached response is returned instan
 
 For each model combination:
 
-1. **Build** — Call `agent_fn(models)` to construct an agent with the candidate models
+1. **Build** — Instantiate the agent class with the candidate models via `agent(models)`
 2. **Run** — Execute the agent on every datapoint in the evaluation dataset
 3. **Track** — Record token usage, latency, and cost via the interception layer
 4. **Score** — Evaluate each output using `eval_fn(expected, actual)`

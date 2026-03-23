@@ -66,7 +66,7 @@ Give AgentOpt your agent and a small evaluation dataset (~100 samples). It effic
 from agentopt import BruteForceModelSelector
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
         "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
@@ -102,7 +102,7 @@ results.print_summary()
 
     ---
 
-    Wrap your agent in a factory function. No framework adapters, no SDK wrappers, no code changes to your agent internals.
+    Define your agent as a class. No framework adapters, no SDK wrappers, no code changes to your agent internals.
 
 -   :material-puzzle-outline:{ .lg .middle } **Framework-Agnostic**
 

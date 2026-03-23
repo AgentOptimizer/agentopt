@@ -34,22 +34,20 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
-        models: Dict[str, List[ModelCandidate]],
-        eval_fn: EvalFn,
-        dataset: Dataset,
-        invoke_fn: Optional[Callable] = None,
+        agent: Any = None,
+        models: Dict[str, List[ModelCandidate]] = None,
+        eval_fn: EvalFn = None,
+        dataset: Dataset = None,
         batch_size: int = 1,
         sample_fraction: float = 0.25,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
     ) -> None:
         super().__init__(
-            agent_fn=agent_fn,
+            agent=agent,
             models=models,
             eval_fn=eval_fn,
             dataset=dataset,
-            invoke_fn=invoke_fn,
             model_prices=model_prices,
             tracker=tracker,
         )

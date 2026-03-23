@@ -2,7 +2,7 @@
 Example: Custom agent (no framework) with agentopt.
 
 This example shows how to use agentopt with a plain Python agent
-that makes OpenAI SDK calls directly. No framework or proxy needed.
+that makes OpenAI SDK calls directly. No framework needed.
 
 Prerequisites:
     1. pip install openai agentopt
@@ -13,91 +13,54 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import argparse
-from typing import Any, Dict
-
 from openai import OpenAI
 
-from agentopt import (
-    ArmEliminationModelSelector,
-    BruteForceModelSelector,
-    EpsilonLUCBModelSelector,
-    HillClimbingModelSelector,
-    LMProposalModelSelector,
-    RandomSearchModelSelector,
-    ThresholdBanditSEModelSelector,
-)
-from agentopt.proxy import LLMTracker, ResponseCache
-
-SELECTORS = {
-    "brute_force": BruteForceModelSelector,
-    "random": RandomSearchModelSelector,
-    "hill_climbing": HillClimbingModelSelector,
-    "arm_elimination": ArmEliminationModelSelector,
-    "epsilon_lucb": EpsilonLUCBModelSelector,
-    "threshold_successive_elimination": ThresholdBanditSEModelSelector,
-    "lm_proposal": LMProposalModelSelector,
-}
-
-try:
-    from agentopt import BayesianOptimizationModelSelector
-
-    SELECTORS["bayesian_optimization"] = BayesianOptimizationModelSelector
-except ImportError:
-    pass
+from agentopt import ModelSelector
 
 
-def _resolve_model(candidate: Any) -> str:
-    """Extract model name string from a candidate (string, dict, or object)."""
-    if isinstance(candidate, str):
-        return candidate
-    if isinstance(candidate, dict):
-        return candidate["model"]
-    return getattr(candidate, "model", str(candidate))
+# ---------------------------------------------------------------------------
+# Step 1: Define your agent as a class with __init__(models) and run(input_data).
+#
+# __init__ receives a model configuration dict, e.g.
+#   {"planner": "gpt-4o-mini", "solver": "gpt-4o"}
+# run() takes a single datapoint and returns the agent's output.
+# ---------------------------------------------------------------------------
 
+class MyAgent:
+    """A simple planner+solver agent using the OpenAI SDK."""
 
-def agent_maker(models: Dict[str, Any]):
-    """Factory: builds a simple planner+solver agent for the given models."""
-    client = OpenAI()
+    def __init__(self, models):
+        self.client = OpenAI()
+        self.planner_model = models["planner"]
+        self.solver_model = models["solver"]
 
-    def run(input_data):
-        question = input_data if isinstance(input_data, str) else input_data["question"]
-
+    def run(self, input_data):
         # Step 1: Planner generates a plan
-        plan_response = client.chat.completions.create(
-            model=_resolve_model(models["planner"]),
+        plan = self.client.chat.completions.create(
+            model=self.planner_model,
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a planning assistant. Create a brief plan to answer the question.",
-                },
-                {"role": "user", "content": question},
+                {"role": "system", "content": "You are a planning assistant. Create a brief plan to answer the question."},
+                {"role": "user", "content": input_data},
             ],
-        )
-        plan = plan_response.choices[0].message.content
+        ).choices[0].message.content
 
         # Step 2: Solver executes the plan
-        solve_response = client.chat.completions.create(
-            model=_resolve_model(models["solver"]),
+        answer = self.client.chat.completions.create(
+            model=self.solver_model,
             messages=[
-                {
-                    "role": "system",
-                    "content": f"Follow this plan and answer concisely:\n{plan}",
-                },
-                {"role": "user", "content": question},
+                {"role": "system", "content": f"Follow this plan and answer concisely:\n{plan}"},
+                {"role": "user", "content": input_data},
             ],
-        )
-        return solve_response.choices[0].message.content
-
-    return run
+        ).choices[0].message.content
+        return answer
 
 
-def eval_fn(expected: str, actual) -> float:
-    """Simple evaluation: check if the expected answer appears in the actual response."""
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+# ---------------------------------------------------------------------------
+# Step 2: Define your evaluation dataset — (input_data, expected_output) pairs.
+# We recommend 50-100 samples for production decisions,
+# but even 10-20 samples can surface clear winners during development.
+# ---------------------------------------------------------------------------
 
-
-# Dataset: (input_data, expected_answer) pairs
 dataset = [
     ("What is the capital of France?", "Paris"),
     ("What is 2 + 2?", "4"),
@@ -107,79 +70,36 @@ dataset = [
 ]
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Custom agent model selection example")
-    parser.add_argument("--selector", choices=SELECTORS, default="brute_force")
-    parser.add_argument("--parallel", action="store_true")
-    parser.add_argument("--max-concurrent", type=int, default=20)
-    parser.add_argument(
-        "--use-instances",
-        action="store_true",
-        help="Pass config dicts instead of model name strings",
-    )
-    parser.add_argument(
-        "--epsilon",
-        type=float,
-        default=0.01,
-        help="Epsilon for --selector=epsilon_lucb.",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=0.5,
-        help="Threshold for --selector=threshold_successive_elimination.",
-    )
-    args = parser.parse_args()
+# ---------------------------------------------------------------------------
+# Step 3: Define your evaluation function.
+# It compares agent output against expected output and returns a score.
+# ---------------------------------------------------------------------------
 
-    candidates = ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
-    if args.use_instances:
-        models = {
-            "planner": [{"model": m} for m in candidates],
-            "solver": [{"model": m} for m in candidates],
-        }
-    else:
-        models = {"planner": candidates, "solver": candidates}
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
 
-    selector_cls = SELECTORS[args.selector]
-    tracker = LLMTracker(cache_dir="./llm_cache")
-    selector_kwargs: Dict[str, Any] = {}
-    if args.selector == "epsilon_lucb":
-        selector_kwargs["epsilon"] = args.epsilon
-    if args.selector == "threshold_successive_elimination":
-        selector_kwargs["threshold"] = args.threshold
-    selector = selector_cls(
-        agent_fn=agent_maker,
-        models=models,
+
+# ---------------------------------------------------------------------------
+# Step 4: Run model selection.
+# Map each agent step to a list of candidate models.
+# AgentOpt tries all combinations and ranks them by accuracy, latency, and cost.
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    selector = ModelSelector(
+        agent=MyAgent,
+        models={
+            "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+            "solver": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+        },
         eval_fn=eval_fn,
         dataset=dataset,
-        tracker=tracker,
-        **selector_kwargs,
+        method="brute_force",  # or "auto" for smarter selection algorithms
     )
 
-    results = selector.select_best(
-        parallel=args.parallel, max_concurrent=args.max_concurrent
-    )
+    results = selector.select_best(parallel=True)
     results.print_summary()
 
-    # Export optimized config
     best = results.get_best_combo()
     if best:
         print(f"\nBest combination: {best}")
-        results.export_config("examples/optimized_config.yaml")
-        print("Exported optimized config to examples/optimized_config.yaml")
-
-    # Show cache DB on disk
-    from pathlib import Path
-
-    db_path = Path("./llm_cache/cache.db")
-    if db_path.exists():
-        import sqlite3
-
-        conn = sqlite3.connect(str(db_path))
-        (count,) = conn.execute("SELECT COUNT(*) FROM cache").fetchone()
-        conn.close()
-        print(f"\nCache: {count} entries saved to {db_path}")
-
-
-if __name__ == "__main__":
-    main()

@@ -16,7 +16,7 @@ Client-side agent optimization
 <span class="ao-eyebrow-rule"></span>
 </p>
 
-# Choosing the right model for your agents can save <span class="ao-accent">10x money and time</span>
+# Choosing the right model for your agents can save <span class="ao-accent">100x money and time</span>
 
 <p class="ao-sub">
 AgentOpt evaluates model combinations across your full agent pipeline and converges on the Pareto frontier of accuracy, cost, and latency.

@@ -58,6 +58,7 @@ nav:
     - LangChain: examples/langchain.md
     - CrewAI: examples/crewai.md
     - LlamaIndex: examples/llamaindex.md
+  - Benchmark Results: benchmark-results.md
   - API Reference:
     - Selectors: api/selectors.md
     - Results: api/results.md

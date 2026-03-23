@@ -21,6 +21,8 @@
 </p>
 
 ---
+
+## Why AgentOpt
 Choosing models for your agent is surprisingly hard. Which family? Small or big? Thinking or non-thinking? And different steps may need different models. The combinatorial space explodes fast — 3 steps × 8 models = **512 combinations** to evaluate.
 
 AgentOpt solves this automatically. Give it your agent and a small evaluation dataset, and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice. 
@@ -38,79 +40,7 @@ pip install agentopt
 ```
 ## Quick Start
 
-Say you have an agent with two LLM steps (a planner and a solver) and you want to find the best model for each. A naive approach would be:
-
-```python
-models = {
-    "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-    "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-}   # → 3 × 3 = 9 combinations
-
-for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
-    agent = MyAgent(combo)                   # build agent with this model combo
-    for input_data, expected in dataset:
-        actual = agent.run(input_data)       # run on each datapoint
-        score = eval_fn(expected, actual)    # score the output
-
-# rank combos by quality score, latency & cost
-```
-
-AgentOpt automates this with **efficient algorithms, parallelization, cost & latency tracking, and caching**. You just provide four things: an agent, model candidates, a dataset, and a score function.
-
-**Step 1**: Say you have an agent (implemented in arbitrary way), we simply ask you wrap up your agent into a class with two methods:
-
-- `__init__(self, models)` — receive a model configuration and do your agent creation. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
-- `run(self, input_data)` — run your agent on a single datapoint and return the output.
-
-
-```python
-from openai import OpenAI
-
-class MyAgent:
-    def __init__(self, models):
-        self.client = OpenAI()
-        self.planner_model = models["planner"]
-        self.solver_model = models["solver"]
-
-    def run(self, input_data):
-        # Step 1: Plan
-        plan = self.client.chat.completions.create(
-            model=self.planner_model,
-            messages=[{"role": "user", "content": f"Plan: {input_data}"}],
-        ).choices[0].message.content
-
-        # Step 2: Solve
-        answer = self.client.chat.completions.create(
-            model=self.solver_model,
-            messages=[
-                {"role": "system", "content": f"Follow this plan:\n{plan}"},
-                {"role": "user", "content": input_data},
-            ],
-        ).choices[0].message.content
-        return answer
-```
-
-**Step 2**: Define your evaluation dataset — a list of `(input_data, expected_output)` pairs:
-
-```python
-dataset = [
-    ("What is the capital of France?", "Paris"),
-    ("What is 2 + 2?", "4"),
-    ("What color is the sky?", "blue"),
-    # We recommend at least 100 samples for production decisions,
-    # but even 10-20 samples can surface clear winners during development.
-]
-```
-
-**Step 3**: Define your evaluation function. It compares the output of `agent.run(input_data)` against the `expected_output` from the dataset, and returns a score:
-
-```python
-def eval_fn(expected, actual):
-    """Score the agent's output (actual) against the expected answer."""
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
-```
-
-**Step 4**: Run model selection. The `models` dict maps each step name to a **list of candidate models** to try. AgentOpt picks one from each list, constructs the agent, and evaluates it:
+Say you have an agent with two LLM steps (a planner and a solver) and you want to find the best model for each:
 
 ```python
 from agentopt import ModelSelector
@@ -141,7 +71,74 @@ Output:
        3  planner=gpt-4o + solver=gpt-4o              100.00%    2.70s  $0.014355
     ...
 ```
-With `method="auto"` (the default), AgentOpt uses smart algorithms that eliminate clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls. Use `method="brute_force"` to evaluate all combinations exhaustively.
+
+Conceptually, this is what happens under the hood:
+
+```python
+for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
+    agent = MyAgent(combo)                   # build agent with this model combo
+    for input_data, expected in dataset:
+        actual = agent.run(input_data)       # run on each datapoint
+        score = eval_fn(expected, actual)    # score the output
+# rank combos by quality score, latency & cost
+```
+
+But AgentOpt does this efficiently with **smart algorithms, parallelization, cost & latency tracking, and caching**. With `method="auto"` (the default), it eliminates clearly worse combinations after just a few datapoints — finding the best model combination with far fewer API calls.
+
+You just provide four things:
+
+**Agent** — wrap your agent into a class with `__init__(self, models)` and `run(self, input_data)`:
+
+- `__init__(self, models)` — receive a model configuration and do your agent creation. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
+- `run(self, input_data)` — run your agent on a single datapoint and return the output.
+
+```python
+from openai import OpenAI
+
+class MyAgent:
+    def __init__(self, models):
+        self.client = OpenAI()
+        self.planner_model = models["planner"]
+        self.solver_model = models["solver"]
+
+    def run(self, input_data):
+        plan = self.client.chat.completions.create(
+            model=self.planner_model,
+            messages=[{"role": "user", "content": f"Plan: {input_data}"}],
+        ).choices[0].message.content
+
+        answer = self.client.chat.completions.create(
+            model=self.solver_model,
+            messages=[
+                {"role": "system", "content": f"Follow this plan:\n{plan}"},
+                {"role": "user", "content": input_data},
+            ],
+        ).choices[0].message.content
+        return answer
+```
+
+**Dataset** — a list of `(input_data, expected_output)` pairs:
+
+```python
+dataset = [
+    ("What is the capital of France?", "Paris"),
+    ("What is 2 + 2?", "4"),
+    ("What color is the sky?", "blue"),
+    # We recommend at least 100 samples for production decisions,
+    # but even 10-20 samples can surface clear winners during development.
+]
+```
+
+**Eval function** — compares the agent output against the expected answer, returns a score:
+
+```python
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+```
+
+LLM-as-judge is also supported — just call your judge LLM inside `eval_fn`.
+
+**Models** — a dict mapping each step name to a list of candidate models to try. AgentOpt picks one from each list, constructs the agent, and evaluates it.
 
 ## Framework Compatibility
 

@@ -1,5 +1,7 @@
 <p align="center">
-<img width="400" height="1024" alt="logowtext" src="https://github.com/user-attachments/assets/3425a135-8d59-4f05-a1bb-a7bbfdbb6ceb" />
+ <img width="200" height="200" alt="logo copy" src="https://github.com/user-attachments/assets/44348d79-d4d8-4087-b790-6d42225bb419" />
+  <br/>
+  <h1 align="center">AgentOpt</h1>
 </p>
 
 <p align="center">

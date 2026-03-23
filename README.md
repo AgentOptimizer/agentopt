@@ -1,7 +1,5 @@
 <p align="center">
- <img width="200" height="200" alt="logo copy" src="https://github.com/user-attachments/assets/44348d79-d4d8-4087-b790-6d42225bb419" />
-  <br/>
-  <h1 align="center">AgentOpt</h1>
+  <img width="360" alt="AgentOpt" src="docs/assets/logo.png" />
 </p>
 
 <p align="center">
@@ -43,7 +41,7 @@ Same accuracy band, 20–100x cost difference — just by picking the right mode
 | HotpotQA | Opus + Opus | ~73% | $2.71 | Qwen3 Next + gpt-oss-120b | 71.3% | $0.13 | **21x** |
 | MathQA | Opus + Opus | ~98.5% | $5.89 | Ministral + C3 Haiku | 94.0% | $0.05 | **118x** |
 
-Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-optimizer-not-just-a-model/).
+Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-combo-optimizer-not-just-a-model/).
 
 ## Installation
 

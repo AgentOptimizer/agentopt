@@ -1,0 +1,5 @@
+benchmark,tuple_type,num_samples,num_combos,best_combo,best_accuracy,best_cost,total_bf_cost,arm_elim_find_rate,arm_elim_savings
+GPQA,1-tuple,198,9,Claude Opus 4.6,0.8030,2.43,4.13,98%,49%
+BFCL,1-tuple,200,9,Claude Opus 4.6,0.7200,60.78,85.42,100%,11%
+HOTPOTQA,2-tuple,199,81,planner=Ministral 3 8B + solver=Claude Opus 4.6,0.7478,2.71,51.48,90%,64%
+MATHQA,2-tuple,200,81,answer=Claude Opus 4.6 + critic=Qwen3 Next 80B A3B,0.9883,5.89,113.01,96%,46%

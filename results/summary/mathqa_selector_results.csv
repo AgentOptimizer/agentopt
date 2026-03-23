@@ -1,0 +1,10 @@
+selector,find_rate,mean_accuracy,evaluations,cost,savings_pct
+Brute Force,100%,98.83%,14855,113.01,--
+Arm Elimination,96%,98.80%,3632,61.22,46%
+Random Search,28%,98.04%,3850,28.83,74%
+Hill Climbing (3),72%,97.81%,4058,45.72,60%
+Epsilon LUCB,0%,97.46%,443,5.55,95%
+LM Proposal,0%,96.87%,149,5.15,95%
+Bayesian Opt,4%,95.39%,3608,31.05,73%
+Hill Climbing (1),28%,93.53%,1610,18.26,84%
+Threshold SE,0%,77.23%,369,1.95,98%

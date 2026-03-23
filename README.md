@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="360" alt="AgentOpt" src="https://raw.githubusercontent.com/AgentOptimizer/agentopt/main/docs/assets/logo.png" />
+  <img width="360" alt="AgentOpt" src="docs/assets/logo.png" />
 </p>
 
 <p align="center">

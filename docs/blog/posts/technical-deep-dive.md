@@ -19,7 +19,7 @@ categories:
 
 *\* Equal contribution*
 
-Most teams pick a model, usually the latest frontier release, and run every step of their agent on it. Planner? GPT-4o. Solver? GPT-4o. Critic? GPT-4o. It works, so nobody questions it.
+Most teams pick a model, usually the latest frontier release, and run every step of their agent on it. Planner? GPT-5.4. Solver? GPT-5.4. Critic? GPT-5.4. It works, so nobody questions it.
 
 But "it works" is not "it's optimal." What if the same accuracy costs 20x less with a different combination? What if a *weaker* model actually performs *better* at one of those steps? These aren't hypotheticals. We ran the experiments.
 
@@ -67,7 +67,7 @@ These are real numbers from real benchmarks. Same accuracy band, 20-100x cost di
 
 ## Agent Routing Is Not LLM Routing
 
-If you've seen LLM routing systems (the ones that pick GPT-4 for hard questions and GPT-3.5 for easy ones), you might think: "Can't I just do that for each step of my agent?"
+If you've seen LLM routing systems (the ones that pick GPT-5.4 for hard questions and GPT-4o for easy ones), you might think: "Can't I just do that for each step of my agent?"
 
 No. And here's why.
 

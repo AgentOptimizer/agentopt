@@ -96,6 +96,10 @@
   letter-spacing: -0.3px;
 }
 
+[data-md-color-scheme="slate"] .md-source {
+  color: var(--ao-text-secondary);
+}
+
 [data-md-color-scheme="default"] .md-header {
   background: rgba(255, 255, 255, 0.9);
   border-bottom: 0.5px solid #e5e5e5;

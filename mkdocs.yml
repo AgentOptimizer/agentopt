@@ -8,23 +8,21 @@ theme:
   name: material
   custom_dir: docs/overrides
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      accent: amber
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: deep purple
-      accent: amber
+    - scheme: slate
+      primary: custom
+      accent: indigo
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
+    - scheme: default
+      primary: white
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
   font:
-    text: Inter
-    code: JetBrains Mono
+    text: DM Sans
+    code: DM Mono
   features:
     - navigation.tabs
     - navigation.tabs.sticky
@@ -40,9 +38,10 @@ theme:
     - search.suggest
     - search.highlight
     - toc.follow
+  logo: assets/logo.png
+  favicon: assets/logo.png
   icon:
     repo: fontawesome/brands/github
-    logo: material/robot-outline
 
 nav:
   - Home: index.md
@@ -63,6 +62,7 @@ nav:
     - Selectors: api/selectors.md
     - Results: api/results.md
     - Tracker: api/tracker.md
+  - Blog: blog/index.md
 
 extra:
   social:
@@ -72,6 +72,9 @@ extra:
 
 extra_css:
   - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/hero.js
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -106,6 +109,8 @@ markdown_extensions:
 
 plugins:
   - search
+  - blog:
+      blog_dir: blog
   - mkdocstrings:
       handlers:
         python:

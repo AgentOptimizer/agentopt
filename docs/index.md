@@ -2,24 +2,55 @@
 hide:
   - navigation
   - toc
+  - footer
 ---
 
-<div class="hero" markdown>
+<section class="ao-hero" markdown>
+<canvas id="ao-hero-canvas"></canvas>
 
-# AgentOpt
+<div class="ao-hero-inner" markdown>
 
-<p class="tagline">
-Stop guessing which LLM to use. AgentOpt evaluates model combinations for your AI agents and shows you the Pareto curve of accuracy, cost, and latency tradeoffs.
+<p class="ao-eyebrow">
+<span class="ao-eyebrow-rule"></span>
+Client-side agent optimization
+<span class="ao-eyebrow-rule"></span>
 </p>
 
-<div class="actions" markdown>
+# Choosing the right model for your agents can save <span class="ao-accent">100x money and time</span>
 
-[Get Started](getting-started/quickstart.md){ .md-button .md-button--primary }
-[View on GitHub :fontawesome-brands-github:](https://github.com/AgentOptimizer/agentopt){ .md-button }
+<p class="ao-sub">
+AgentOpt evaluates model combinations across your full agent pipeline and converges on the Pareto frontier of accuracy, cost, and latency.
+</p>
+
+<div class="ao-ctas" markdown>
+
+[Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
+[:fontawesome-brands-github: View on GitHub](https://github.com/AgentOptimizer/agentopt){ .md-button }
 
 </div>
 
 </div>
+
+<div class="ao-stats">
+<div class="ao-stat">
+<div class="ao-stat-num"><span class="ao-accent">Exponential</span></div>
+<div class="ao-stat-label">combo space</div>
+</div>
+<div class="ao-stat">
+<div class="ao-stat-num">Smart search</div>
+<div class="ao-stat-label">on best model combination</div>
+</div>
+<div class="ao-stat">
+<div class="ao-stat-num">0</div>
+<div class="ao-stat-label">code changes</div>
+</div>
+<div class="ao-stat">
+<div class="ao-stat-num">any</div>
+<div class="ao-stat-label">agent framework</div>
+</div>
+</div>
+
+</section>
 
 ---
 
@@ -35,7 +66,7 @@ Give AgentOpt your agent and a small evaluation dataset (~100 samples). It effic
 from agentopt import BruteForceModelSelector
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
         "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
@@ -71,7 +102,7 @@ results.print_summary()
 
     ---
 
-    Wrap your agent in a factory function. No framework adapters, no SDK wrappers, no code changes to your agent internals.
+    Define your agent as a class. No framework adapters, no SDK wrappers, no code changes to your agent internals.
 
 -   :material-puzzle-outline:{ .lg .middle } **Framework-Agnostic**
 

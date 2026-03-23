@@ -31,7 +31,15 @@ AgentOpt works with **almost any agent implementation** and requires **minimal w
 
 ## Use Cases
 
-*Coming soon — model selection is a first-order problem: in many cases, a simple model swap can cut costs by 10x without sacrificing performance.*
+Same accuracy band, 20–100x cost difference — just by picking the right model combination:
+
+| Benchmark | Expensive Combo | Acc | Cost | Budget Combo | Acc | Cost | Savings |
+|-----------|----------------|-----|------|-------------|-----|------|---------|
+| BFCL | Opus | 72% | $60.78 | Qwen3 Next | 71% | $1.87 | **32x** |
+| HotpotQA | Opus + Opus | ~73% | $2.71 | Qwen3 Next + gpt-oss-120b | 71.3% | $0.13 | **21x** |
+| MathQA | Opus + Opus | ~98.5% | $5.89 | Ministral + C3 Haiku | 94.0% | $0.05 | **118x** |
+
+Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-optimizer-not-just-a-model/).
 
 ## Installation
 

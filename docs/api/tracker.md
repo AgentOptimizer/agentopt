@@ -12,8 +12,8 @@ from agentopt.proxy import LLMTracker
 
 ```python
 tracker = LLMTracker(
-    cache=True,              # Enable response caching (default: True)
-    cache_dir="./llm_cache", # Persist cache to disk (default: None, memory-only)
+    cache=True,                      # Enable response caching (default: True)
+    cache_dir=".agentopt_cache",     # Persist cache to disk (default: ".agentopt_cache")
 )
 ```
 

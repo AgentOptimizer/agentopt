@@ -13,7 +13,7 @@ categories:
   - Model Selection
 ---
 
-# Why Your Agent Needs a Model Optimizer, Not Just a Model
+# Why Your Agent Needs a Model Combo Optimizer, Not Just a Model
 
 *Wenyue Hua\*, Qian Xie, Sripad Karne, Armaan Agrawal, Nikos Pagonas, Kostis Kaffes, Tianyi Peng\**
 
@@ -183,13 +183,7 @@ Arm Elimination is the consistent winner: it achieves near-brute-force accuracy 
 
 ### Budget Alternatives
 
-For every benchmark, there exists a combination within 3-5% of the best accuracy that costs 10-100x less:
-
-| Benchmark | Best | Accuracy | Cost | Budget Pick | Accuracy | Cost | Ratio |
-|-----------|------|---------|------|------------|---------|------|-------|
-| HotpotQA | Ministral + Opus | 74.8% | $2.71 | Qwen3 Next + gpt-oss-120b | 71.3% | $0.13 | 21x |
-| MathQA | Opus + Qwen3 Next | 98.8% | $5.89 | Ministral + C3 Haiku | 94.0% | $0.05 | 118x |
-| BFCL | Opus | 72.0% | $60.78 | Qwen3 Next | 71.0% | $1.87 | 32x |
+As shown in the cost-savings table above, for every benchmark there exists a combination within 3-5% of the best accuracy that costs 10-100x less. You don't need the most expensive model to get near-optimal results.
 
 ## Get Started
 

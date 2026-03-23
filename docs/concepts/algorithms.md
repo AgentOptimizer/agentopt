@@ -121,7 +121,6 @@ selector = ArmEliminationModelSelector(
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
-    n_initial=10,
     growth_factor=2.0,
     confidence=1.0,
 )
@@ -129,7 +128,7 @@ selector = ArmEliminationModelSelector(
 
 | Parameter | Default | Description |
 |:----------|:--------|:------------|
-| `n_initial` | `10` | Initial batch size (datapoints) |
+| `n_initial` | `None` | Initial batch size. Default: 10% of dataset (`max(1, len(dataset)//10)`) |
 | `growth_factor` | `2.0` | Batch size multiplier per round |
 | `confidence` | `1.0` | Elimination confidence threshold |
 
@@ -205,15 +204,18 @@ selector = LMProposalModelSelector(
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
-    proposer_model="gpt-4o-mini",
-    max_combinations=12,
+    proposer_model="gpt-4.1",
+    objective="maximize accuracy and then minimize latency and cost",
+    dataset_preview_size=10,
 )
 ```
 
 | Parameter | Default | Description |
 |:----------|:--------|:------------|
-| `proposer_model` | `"gpt-4o-mini"` | Model used for proposal generation |
-| `max_combinations` | `12` | Max combinations to shortlist |
+| `proposer_model` | `"gpt-4.1"` | Model used for proposal generation |
+| `proposer_client` | `None` | Custom OpenAI-compatible client; auto-creates `OpenAI()` if omitted |
+| `objective` | `"maximize accuracy and then minimize latency and cost"` | Natural-language objective passed to the proposer |
+| `dataset_preview_size` | `10` | Number of dataset examples shown to the proposer |
 
 !!! success "When to use"
     When you want to leverage an LLM's knowledge about model capabilities to skip obviously bad combinations.

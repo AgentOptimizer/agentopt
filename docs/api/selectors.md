@@ -66,3 +66,8 @@ Returns a [`SelectionResults`](results.md) object.
     options:
       members: false
       show_bases: false
+
+::: agentopt.model_selection.bayesian_optimization.BayesianOptimizationModelSelector
+    options:
+      members: false
+      show_bases: false

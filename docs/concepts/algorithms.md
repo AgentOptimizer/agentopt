@@ -1,6 +1,6 @@
 # Selection Algorithms
 
-AgentOpt provides 6 selection algorithms. Choose based on your search space size and evaluation budget.
+AgentOpt provides 8 selection algorithms. Choose based on your search space size and evaluation budget.
 
 ## At a Glance
 
@@ -10,6 +10,8 @@ AgentOpt provides 6 selection algorithms. Choose based on your search space size
 | [Random Search](#random-search) | Sampling | Configurable fraction | Quick baselines |
 | [Hill Climbing](#hill-climbing) | Greedy + restarts | Guided neighbors | Medium spaces |
 | [Arm Elimination](#arm-elimination) | Progressive pruning | Adaptive | Statistical early stopping |
+| [Epsilon LUCB](#epsilon-lucb) | ε-optimal LUCB | Adaptive | Cost savings when ε-optimal is enough |
+| [Threshold SE](#threshold-successive-elimination) | Threshold classification | Adaptive | Filtering above/below a performance target |
 | [LM Proposal](#lm-proposal) | LLM-guided | Shortlist | Leveraging model knowledge |
 | [Bayesian Optimization](#bayesian-optimization) | GP surrogate | Sequential | Expensive evaluations |
 
@@ -136,6 +138,61 @@ selector = ArmEliminationModelSelector(
 
 ---
 
+## Epsilon LUCB
+
+Identifies an ε-optimal best arm using Lower and Upper Confidence Bounds. Each round, it compares the current leader's lower confidence bound against the best challenger's upper bound. When the gap closes below epsilon, the algorithm stops with statistical confidence that the selected arm is within epsilon of optimal.
+
+```python
+from agentopt import EpsilonLUCBModelSelector
+
+selector = EpsilonLUCBModelSelector(
+    agent=MyAgent,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    epsilon=0.01,
+    confidence=1.0,
+)
+```
+
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `epsilon` | `0.01` | Acceptable gap from the true best |
+| `n_initial` | `1` | Initial datapoints per combination |
+| `confidence` | `1.0` | Confidence level for bound computation |
+
+!!! success "When to use"
+    When finding the *exact* best combo isn't necessary and you can tolerate a small accuracy gap (epsilon) in exchange for significant cost savings. Particularly effective when many combos are close in performance.
+
+---
+
+## Threshold Successive Elimination
+
+Instead of finding the single best combination, Threshold SE classifies each combination as above or below a user-defined performance threshold. Each round, it evaluates all surviving combos on one more datapoint and checks their confidence intervals. Once a combo's interval no longer straddles the threshold (entirely above or entirely below), it's classified and removed from the active set.
+
+```python
+from agentopt import ThresholdBanditSEModelSelector
+
+selector = ThresholdBanditSEModelSelector(
+    agent=MyAgent,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    threshold=0.75,
+    confidence=1.0,
+)
+```
+
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `threshold` | `0.75` | Performance threshold to classify against |
+| `confidence` | `1.0` | Confidence level for bound computation |
+
+!!! success "When to use"
+    When you have a minimum acceptable accuracy in mind (e.g., "I need at least 75%") and want to quickly identify which combinations meet it. Useful for filtering rather than ranking.
+
+---
+
 ## LM Proposal
 
 Uses a proposer LLM to shortlist promising combinations before evaluation. The proposer sees the candidate models and a dataset preview, then suggests which combinations to try.
@@ -175,15 +232,15 @@ selector = BayesianOptimizationModelSelector(
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
-    n_initial_random=5,
-    n_iterations=20,
+    batch_size=1,
+    sample_fraction=0.25,
 )
 ```
 
 | Parameter | Default | Description |
 |:----------|:--------|:------------|
-| `n_initial_random` | `5` | Random combinations to seed the GP |
-| `n_iterations` | `20` | GP-guided iterations after seeding |
+| `batch_size` | `1` | Combinations to evaluate per GP iteration |
+| `sample_fraction` | `0.25` | Fraction of dataset to use per evaluation |
 
 !!! note "Extra dependency"
     Requires PyTorch and BoTorch:

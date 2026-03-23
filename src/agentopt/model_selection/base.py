@@ -504,6 +504,194 @@ class SelectionResults(BaseModel):
         """Print the formatted summary table of all results."""
         print(self)
 
+    # ------------------------------------------------------------------
+    # Pareto frontier visualisation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pareto_mask(
+        xs: List[float], ys: List[float], x_minimize: bool, y_minimize: bool,
+    ) -> List[bool]:
+        """Return a boolean mask marking Pareto-optimal points.
+
+        A point is Pareto-optimal if no other point is strictly better on both
+        objectives.
+        """
+        n = len(xs)
+        mask = [True] * n
+        for i in range(n):
+            if not mask[i]:
+                continue
+            for j in range(n):
+                if i == j or not mask[j]:
+                    continue
+                xi, yi, xj, yj = xs[i], ys[i], xs[j], ys[j]
+                # Is j at least as good as i on both, and strictly better on one?
+                x_ok = (xj <= xi) if x_minimize else (xj >= xi)
+                y_ok = (yj <= yi) if y_minimize else (yj >= yi)
+                x_strict = (xj < xi) if x_minimize else (xj > xi)
+                y_strict = (yj < yi) if y_minimize else (yj > yi)
+                if x_ok and y_ok and (x_strict or y_strict):
+                    mask[i] = False
+                    break
+        return mask
+
+    def plot_pareto(self, path: Optional[str] = None) -> None:
+        """Generate two pairwise Pareto frontier plots.
+
+        Subplots: Accuracy vs Latency, Accuracy vs Price.
+
+        Requires ``matplotlib`` (install with ``pip install agentopt[plot]``).
+        If *path* is given the figure is saved to that file, otherwise
+        ``plt.show()`` is called.
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError(
+                "matplotlib is required for plot_pareto. "
+                "Install it with: pip install agentopt[plot]"
+            )
+
+        # Deduplicate (same logic as __str__).
+        seen: Dict[str, "ModelResult"] = {}
+        for r in self.results:
+            if r.model_name not in seen or (
+                r.is_best and not seen[r.model_name].is_best
+            ):
+                seen[r.model_name] = r
+        all_unique = [r for r in seen.values() if r.price is not None]
+
+        # For bandit algorithms, only plot the final layer (combos with the
+        # most datapoints) so all plotted combos are directly comparable.
+        if all_unique:
+            max_samples = max(r.num_samples for r in all_unique)
+            unique = [r for r in all_unique if r.num_samples == max_samples]
+        else:
+            unique = all_unique
+
+        # Sort so numbering matches the final results table rank order.
+        unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+
+        if len(unique) < 2:
+            print("Not enough results with pricing data to plot.")
+            return
+
+        names = [r.model_name for r in unique]
+        accs = [r.accuracy for r in unique]
+        lats = [r.latency_seconds for r in unique]
+        prices = [r.price for r in unique]  # type: ignore[misc]
+        is_best = [r.is_best for r in unique]
+
+        # Build numbered labels: (1), (2), ...
+        num_labels = [f"({i})" for i in range(1, len(unique) + 1)]
+
+        pairs = [
+            (lats, accs, "Latency (s)", "Accuracy", True, False),
+            (prices, accs, "Price ($)", "Accuracy", True, False),
+        ]
+
+        fig = plt.figure(figsize=(14, 5))
+        # Reserve right margin for the legend.
+        gs = fig.add_gridspec(1, 2, left=0.06, right=0.68, wspace=0.3)
+        axes = [fig.add_subplot(gs[0, i]) for i in range(2)]
+        fig.suptitle("Pareto Frontiers", fontsize=14, fontweight="bold")
+
+        for ax, (xs, ys, xlabel, ylabel, x_min, y_min) in zip(axes, pairs):
+            mask = self._pareto_mask(xs, ys, x_min, y_min)
+
+            # Non-Pareto points.
+            np_x = [x for x, m in zip(xs, mask) if not m]
+            np_y = [y for y, m in zip(ys, mask) if not m]
+            ax.scatter(
+                np_x,
+                np_y,
+                c="lightgray",
+                edgecolors="gray",
+                s=60,
+                zorder=2,
+                label="Dominated",
+            )
+
+            # Pareto-optimal points.
+            p_x = [x for x, m in zip(xs, mask) if m]
+            p_y = [y for y, m in zip(ys, mask) if m]
+            ax.scatter(
+                p_x,
+                p_y,
+                c="steelblue",
+                edgecolors="navy",
+                s=80,
+                zorder=3,
+                label="Pareto-optimal",
+            )
+
+            # Connect frontier with a line (sorted by x).
+            if p_x:
+                order = sorted(range(len(p_x)), key=lambda i: p_x[i])
+                ax.plot(
+                    [p_x[i] for i in order],
+                    [p_y[i] for i in order],
+                    c="steelblue",
+                    linewidth=1.5,
+                    alpha=0.6,
+                    zorder=2,
+                )
+
+            # Highlight best combo.
+            for x, y, b in zip(xs, ys, is_best):
+                if b:
+                    ax.scatter(
+                        [x],
+                        [y],
+                        c="gold",
+                        edgecolors="darkorange",
+                        s=140,
+                        zorder=4,
+                        marker="*",
+                        label="Best",
+                    )
+
+            # Number labels on points.
+            for x, y, lbl in zip(xs, ys, num_labels):
+                ax.annotate(
+                    lbl,
+                    (x, y),
+                    textcoords="offset points",
+                    xytext=(5, 5),
+                    fontsize=7,
+                    fontweight="bold",
+                )
+
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            ax.legend(fontsize=7, loc="best")
+            ax.grid(True, alpha=0.3)
+
+        # External legend mapping numbers to combo names.
+        legend_lines = [f"({i}) {name}" for i, name in enumerate(names, 1)]
+        fig.text(
+            0.72,
+            0.5,
+            "\n".join(legend_lines),
+            fontsize=8,
+            verticalalignment="center",
+            fontfamily="monospace",
+            bbox=dict(
+                boxstyle="round,pad=0.5",
+                facecolor="lightyellow",
+                edgecolor="gray",
+                alpha=0.9,
+            ),
+        )
+
+        if path:
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+            print(f"Pareto plot saved to {path}")
+        else:
+            plt.show()
+        plt.close(fig)
+
 
 class BaseModelSelector(ABC):
     """Abstract base class for model selectors.

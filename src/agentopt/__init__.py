@@ -45,12 +45,7 @@ _METHODS = {
 
 
 def ModelSelector(
-    agent=None,
-    models=None,
-    eval_fn=None,
-    dataset=None,
-    method="auto",
-    **kwargs,
+    agent=None, models=None, eval_fn=None, dataset=None, method="auto", **kwargs,
 ):
     """Create a model selector.
 
@@ -82,8 +77,7 @@ def ModelSelector(
                 'install with `pip install "agentopt[bayesian]"`'
             )
         raise ValueError(
-            f"Unknown method {method!r}. "
-            f"Choose from: {', '.join(_METHODS)}"
+            f"Unknown method {method!r}. " f"Choose from: {', '.join(_METHODS)}"
         )
     return cls(agent=agent, models=models, eval_fn=eval_fn, dataset=dataset, **kwargs)
 

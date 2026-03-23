@@ -24,6 +24,7 @@ from agentopt import ModelSelector
 # Agent, dataset, and eval_fn (same as custom_agent_example.py)
 # ---------------------------------------------------------------------------
 
+
 class MyAgent:
     def __init__(self, models):
         self.client = OpenAI()
@@ -31,21 +32,35 @@ class MyAgent:
         self.solver_model = models["solver"]
 
     def run(self, input_data):
-        plan = self.client.chat.completions.create(
-            model=self.planner_model,
-            messages=[
-                {"role": "system", "content": "Create a brief plan to answer the question."},
-                {"role": "user", "content": input_data},
-            ],
-        ).choices[0].message.content
+        plan = (
+            self.client.chat.completions.create(
+                model=self.planner_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Create a brief plan to answer the question.",
+                    },
+                    {"role": "user", "content": input_data},
+                ],
+            )
+            .choices[0]
+            .message.content
+        )
 
-        answer = self.client.chat.completions.create(
-            model=self.solver_model,
-            messages=[
-                {"role": "system", "content": f"Follow this plan and answer concisely:\n{plan}"},
-                {"role": "user", "content": input_data},
-            ],
-        ).choices[0].message.content
+        answer = (
+            self.client.chat.completions.create(
+                model=self.solver_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"Follow this plan and answer concisely:\n{plan}",
+                    },
+                    {"role": "user", "content": input_data},
+                ],
+            )
+            .choices[0]
+            .message.content
+        )
         return answer
 
 
@@ -71,11 +86,11 @@ models = {
 # Selection algorithms
 # ---------------------------------------------------------------------------
 
+
 def run_auto():
     """method="auto" — automatically picks the best algorithm (default)."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
-        method="auto",
+        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset, method="auto",
     )
     return selector.select_best(parallel=True)
 
@@ -83,7 +98,10 @@ def run_auto():
 def run_random():
     """method="random" — evaluate a random subset of combinations."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         method="random",
         sample_fraction=0.5,  # evaluate 50% of all combinations
     )
@@ -93,7 +111,10 @@ def run_random():
 def run_hill_climbing():
     """method="hill_climbing" — greedy search using model quality/speed rankings."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         method="hill_climbing",
         batch_size=4,  # number of neighbors to evaluate per step
     )
@@ -103,7 +124,10 @@ def run_hill_climbing():
 def run_arm_elimination():
     """method="arm_elimination" — eliminates statistically dominated combinations early."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         method="arm_elimination",
     )
     return selector.select_best(parallel=True)
@@ -112,7 +136,10 @@ def run_arm_elimination():
 def run_epsilon_lucb():
     """method="epsilon_lucb" — stops when the best arm is identified within epsilon."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         method="epsilon_lucb",
         epsilon=0.05,  # acceptable gap from the true best
     )
@@ -122,7 +149,10 @@ def run_epsilon_lucb():
 def run_threshold():
     """method="threshold" — classify combinations as above/below a quality threshold."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         method="threshold",
         threshold=0.8,  # minimum acceptable accuracy
     )
@@ -132,7 +162,10 @@ def run_threshold():
 def run_lm_proposal():
     """method="lm_proposal" — use a proposer LLM to shortlist promising combinations."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         method="lm_proposal",
     )
     return selector.select_best(parallel=True)
@@ -141,7 +174,10 @@ def run_lm_proposal():
 def run_bayesian():
     """method="bayesian" — GP-based Bayesian optimization (requires agentopt[bayesian])."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
         method="bayesian",
         batch_size=4,
     )

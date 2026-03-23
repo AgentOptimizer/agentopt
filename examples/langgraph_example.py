@@ -31,6 +31,7 @@ class AgentState(TypedDict):
 # run(input_data) runs the agent on a single datapoint and returns the output.
 # ---------------------------------------------------------------------------
 
+
 class MyAgent:
     """LangGraph planner+solver agent."""
 
@@ -40,7 +41,12 @@ class MyAgent:
 
         def planner_node(state: AgentState) -> dict:
             response = planner_llm.invoke(
-                [{"role": "system", "content": "Create a brief plan to answer the question."}]
+                [
+                    {
+                        "role": "system",
+                        "content": "Create a brief plan to answer the question.",
+                    }
+                ]
                 + state["messages"]
             )
             return {"plan": response.content}
@@ -48,7 +54,10 @@ class MyAgent:
         def solver_node(state: AgentState) -> dict:
             response = solver_llm.invoke(
                 [
-                    {"role": "system", "content": f"Follow this plan and answer concisely:\n{state['plan']}"},
+                    {
+                        "role": "system",
+                        "content": f"Follow this plan and answer concisely:\n{state['plan']}",
+                    },
                     state["messages"][-1],
                 ]
             )
@@ -63,7 +72,9 @@ class MyAgent:
         self._app = graph.compile()
 
     def run(self, input_data):
-        result = self._app.invoke({"messages": [{"role": "user", "content": input_data}]})
+        result = self._app.invoke(
+            {"messages": [{"role": "user", "content": input_data}]}
+        )
         return result["answer"]
 
 
@@ -81,6 +92,7 @@ dataset = [
 # ---------------------------------------------------------------------------
 # Step 3: Evaluation function — score agent output against expected answer.
 # ---------------------------------------------------------------------------
+
 
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
@@ -105,6 +117,7 @@ if __name__ == "__main__":
 
     results = selector.select_best(parallel=True)
     results.print_summary()
+    results.plot_pareto()
 
     best = results.get_best_combo()
     if best:

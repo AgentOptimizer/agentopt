@@ -1,7 +1,5 @@
 <p align="center">
- <img width="200" height="200" alt="logo copy" src="https://github.com/user-attachments/assets/44348d79-d4d8-4087-b790-6d42225bb419" />
-  <br/>
-  <h1 align="center">AgentOpt</h1>
+  <img width="360" alt="AgentOpt" src="https://raw.githubusercontent.com/AgentOptimizer/agentopt/main/docs/assets/logo.png" />
 </p>
 
 <p align="center">

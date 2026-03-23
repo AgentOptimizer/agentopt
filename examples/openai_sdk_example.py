@@ -2,7 +2,7 @@
 Example: OpenAI Agents SDK agent with agentopt.
 
 Prerequisites:
-    1. pip install openai-agents agentopt
+    1. pip install openai-agents agentopt-py
     2. Set OPENAI_API_KEY environment variable
 """
 

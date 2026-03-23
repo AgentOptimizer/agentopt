@@ -76,7 +76,7 @@ def ModelSelector(
         if method == "bayesian":
             raise ImportError(
                 "Bayesian optimization requires optional dependencies: "
-                'install with `pip install "agentopt[bayesian]"`'
+                'install with `pip install "agentopt-py[bayesian]"`'
             )
         raise ValueError(
             f"Unknown method {method!r}. " f"Choose from: {', '.join(_METHODS)}"

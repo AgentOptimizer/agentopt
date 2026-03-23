@@ -5,7 +5,7 @@ This example shows how to use agentopt with a plain Python agent
 that makes OpenAI SDK calls directly. No framework needed.
 
 Prerequisites:
-    1. pip install openai agentopt
+    1. pip install openai agentopt-py
     2. Set OPENAI_API_KEY environment variable
 """
 

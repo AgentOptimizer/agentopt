@@ -8,9 +8,9 @@ method="auto" automatically finds the best combination (wired to arm_elimination
 strong best-arm identification with lower evaluation cost than brute_force).
 
 Prerequisites:
-    1. pip install openai agentopt
+    1. pip install openai agentopt-py
     2. Set OPENAI_API_KEY environment variable
-    3. For Bayesian optimization: pip install "agentopt[bayesian]"
+    3. For Bayesian optimization: pip install "agentopt-py[bayesian]"
 """
 
 from dotenv import load_dotenv

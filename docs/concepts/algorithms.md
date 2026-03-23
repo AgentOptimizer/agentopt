@@ -188,7 +188,7 @@ selector = BayesianOptimizationModelSelector(
 !!! note "Extra dependency"
     Requires PyTorch and BoTorch:
     ```bash
-    pip install "agentopt[bayesian]"
+    pip install "agentopt-py[bayesian]"
     ```
 
 !!! success "When to use"

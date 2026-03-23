@@ -194,7 +194,7 @@ For every benchmark, there exists a combination within 3-5% of the best accuracy
 ## Get Started
 
 ```bash
-pip install agentopt
+pip install agentopt-py
 ```
 
 ```python

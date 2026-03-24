@@ -1,6 +1,6 @@
 # Selection Algorithms
 
-AgentOpt provides 8 selection algorithms. Choose based on your search space size and evaluation budget.
+AgentOpt provides 9 selection algorithms. Choose based on your search space size and evaluation budget.
 
 ## At a Glance
 
@@ -8,6 +8,7 @@ AgentOpt provides 8 selection algorithms. Choose based on your search space size
 |:----------|:---------|:------------|:---------|
 | [Brute Force](#brute-force) | Exhaustive | All | Small spaces (< 50 combos) |
 | [Random Search](#random-search) | Sampling | Configurable fraction | Quick baselines |
+| [Streaming Random Search](#streaming-random-search) | Streaming sampling | Incremental | Online / incoming batches |
 | [Hill Climbing](#hill-climbing) | Greedy + restarts | Guided neighbors | Medium spaces |
 | [Arm Elimination](#arm-elimination) | Progressive pruning | Adaptive | Statistical early stopping |
 | [Epsilon LUCB](#epsilon-lucb) | ε-optimal LUCB | Adaptive | Cost savings when ε-optimal is enough |
@@ -77,6 +78,38 @@ selector = RandomSearchModelSelector(
 
 !!! success "When to use"
     Quick exploration to establish a baseline before committing to a thorough search.
+
+---
+
+## Streaming Random Search
+
+Samples a random subset once, then incrementally updates those sampled combinations as new batches arrive.
+
+```python
+from agentopt import StreamingRandomSearchModelSelector
+
+selector = StreamingRandomSearchModelSelector(
+    agent=MyAgent,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=warm_start_dataset,  # seed batch
+    sample_fraction=0.25,
+    seed=42,
+)
+
+selector.select_best()           # evaluate warm start once
+selector.update(stream_batch_1)  # keep updating online
+selector.update(stream_batch_2)
+best_combo = selector.best_combo()
+```
+
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `sample_fraction` | `0.25` | Fraction of combinations sampled once and reused |
+| `seed` | `None` | Random seed for reproducible sampling |
+
+!!! success "When to use"
+    Streaming / online settings where data arrives over time and you want incremental updates instead of full reselection each round.
 
 ---
 

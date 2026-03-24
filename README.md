@@ -174,6 +174,7 @@ If you do not need the strict best model combination and want **more evaluation 
 | `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower evaluation cost than `brute_force`) |
 | `"brute_force"` | Small search spaces | Evaluates all combinations |
 | `"random"` | Quick exploration | Samples a random fraction |
+| `"streaming_random"` | Streaming / online updates | Samples once, then incrementally updates the sampled combos on new batches |
 | `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
 | `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
 | `"epsilon_lucb"` | Extra cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |

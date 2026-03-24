@@ -41,6 +41,11 @@ Returns a [`SelectionResults`](results.md) object.
       members: false
       show_bases: false
 
+::: agentopt.model_selection.streaming_random_search.StreamingRandomSearchModelSelector
+    options:
+      members: false
+      show_bases: false
+
 ::: agentopt.model_selection.hill_climbing.HillClimbingModelSelector
     options:
       members: false

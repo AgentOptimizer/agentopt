@@ -21,6 +21,7 @@ from .model_selection import (
     DatapointResult,
     ModelResult,
     RandomSearchModelSelector,
+    StreamingRandomSearchModelSelector,
     SelectionResults,
     StreamingBruteForceModelSelector,
     ThresholdBanditSEModelSelector,
@@ -36,6 +37,7 @@ _METHODS = {
     "auto": ArmEliminationModelSelector,
     "brute_force": BruteForceModelSelector,
     "random": RandomSearchModelSelector,
+    "streaming_random": StreamingRandomSearchModelSelector,
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "epsilon_lucb": EpsilonLUCBModelSelector,
@@ -65,6 +67,7 @@ def ModelSelector(
             ``"brute_force"``). Other options: ``"brute_force"``,
             ``"random"``, ``"hill_climbing"``, ``"arm_elimination"``,
             ``"epsilon_lucb"``, ``"threshold"``, ``"lm_proposal"``,
+            ``"streaming_random"``,
             ``"bayesian"``.
         **kwargs: Additional arguments passed to the selector
             (e.g. ``epsilon``, ``threshold``, ``sample_fraction``).
@@ -96,6 +99,7 @@ __all__ = [
     # Selectors
     "BruteForceModelSelector",
     "RandomSearchModelSelector",
+    "StreamingRandomSearchModelSelector",
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
     "EpsilonLUCBModelSelector",

@@ -8,6 +8,7 @@ from .hill_climbing import HillClimbingModelSelector
 from .lm_proposal import LMProposalModelSelector
 from .random_search import RandomSearchModelSelector
 from .streaming_brute_force import StreamingBruteForceModelSelector
+from .streaming_random_search import StreamingRandomSearchModelSelector
 from .threshold_successive_elimination import ThresholdBanditSEModelSelector
 
 # Bayesian is optional (requires torch/botorch)
@@ -26,6 +27,7 @@ __all__ = [
     "ThresholdBanditSEModelSelector",
     "LMProposalModelSelector",
     "StreamingBruteForceModelSelector",
+    "StreamingRandomSearchModelSelector",
     "BayesianOptimizationModelSelector",
     "DatapointResult",
     "ModelResult",

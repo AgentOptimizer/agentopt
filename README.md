@@ -1,88 +1,72 @@
-# AgentOpt
+<p align="center">
+  <img width="360" alt="AgentOpt" src="docs/assets/logo.png" />
+</p>
 
-**Find the right LLM models for your AI agents.**
+<p align="center">
+  <strong>Find the right LLM models for your AI agents.</strong>
+</p>
 
-Choosing the right LLM model is hard. Different models have different cost, performance, and latency tradeoffs. Should you use a thinking model? What effort level? What about different models for different steps of your agent pipeline? The combinatorial space explodes quickly — if your agent has 3 steps and you're considering 5 models per step, that's 125 combinations to evaluate.
+<p align="center">
+  <em>A simple model swap can cut your agent's costs by 10–100x without sacrificing performance.</em>
+</p>
 
-AgentOpt solves this automatically. Give it your agent and a small evaluation dataset (~100 samples), and it will efficiently search the model combination space to present you with the **Pareto curve of accuracy/cost/latency tradeoffs** — so you can make an informed choice.
+<p align="center">
+  <a href="https://pypi.org/project/agentopt-py/"><img src="https://img.shields.io/pypi/v/agentopt-py?logo=python&logoColor=white&color=3776ab" alt="PyPI"></a>
+  <!-- <a href="https://pepy.tech/projects/agentopt-py"><img src="https://static.pepy.tech/badge/agentopt-py" alt="Downloads"></a> -->
+  <!-- <a href="https://github.com/AgentOptimizer/agentopt"><img src="https://img.shields.io/github/stars/AgentOptimizer/agentopt?style=flat&logo=github&color=181717" alt="GitHub stars"></a> -->
+  <a href="https://github.com/AgentOptimizer/agentopt/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat" alt="License"></a>
+  <a href="https://agentoptimizer.github.io/agentopt/"><img src="https://img.shields.io/badge/docs-website-blue?style=flat&logo=materialformkdocs&logoColor=white" alt="Docs"></a>
+</p>
 
-## Key Features
+<p align="center">
+  AgentOpt is supported by <a href="https://daplab.cs.columbia.edu/">DAPLab</a> at Columbia University.
+</p>
 
-- **Non-intrusive**: Wrap your agent in a simple factory function — we take care of the rest. No framework adapters, no code changes to your agent internals.
-- **Framework-agnostic**: Works with OpenAI SDK, LangChain, LangGraph, CrewAI, LlamaIndex, AG2, or any framework that uses `httpx` for LLM calls.
-- **Smart search algorithms**: selection algorithms from brute force to advanced methods like Bayesian optimization, so you don't have to evaluate every combination.
-- **Automatic tracking**: Transparently intercepts all LLM calls to measure token usage, latency, and cost — no manual instrumentation.
-- **Response caching**: Identical LLM calls are cached (in-memory + SQLite on disk), so re-running experiments is instant and free.
+---
+
+## Why AgentOpt
+Choosing models for your agent is surprisingly hard. Which family? Small or big? Thinking or non-thinking? And different steps may need different models. The combinatorial space explodes fast — 3 steps × 8 models = **512 combinations** to evaluate.
+
+AgentOpt solves this automatically. Give it your agent and a small evaluation dataset, and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice. 
+
+AgentOpt works with **almost any agent implementation** and requires **minimal wrappers** to your existing agents.
+
+## Use Cases
+
+Same accuracy band, 20–100x cost difference — just by picking the right model combination:
+
+| Benchmark | Expensive Combo | Acc | Cost | Budget Combo | Acc | Cost | Savings |
+|-----------|----------------|-----|------|-------------|-----|------|---------|
+| BFCL | Opus | 72% | $60.78 | Qwen3 Next | 71% | $1.87 | **32x** |
+| HotpotQA | Opus + Opus | ~73% | $2.71 | Qwen3 Next + gpt-oss-120b | 71.3% | $0.13 | **21x** |
+| MathQA | Opus + Opus | ~98.5% | $5.89 | Ministral + C3 Haiku | 94.0% | $0.05 | **118x** |
+
+Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-combo-optimizer-not-just-a-model/).
 
 ## Installation
 
 ```bash
-pip install agentopt
-
-# With Bayesian optimization support
-pip install "agentopt[bayesian]"
+pip install agentopt-py
 ```
-
 ## Quick Start
 
-**Step 1**: Wrap your agent in a factory function that accepts a model configuration:
+Say you have an agent with two LLM steps (a planner and a solver) and you want to find the best model for each:
 
 ```python
-from openai import OpenAI
+from agentopt import ModelSelector
 
-client = OpenAI()
-
-def agent_maker(models):
-    """Build an agent for a given model combination."""
-    def run(input_data):
-        # Step 1: Plan
-        plan = client.chat.completions.create(
-            model=models["planner"],
-            messages=[{"role": "user", "content": f"Plan: {input_data}"}],
-        ).choices[0].message.content
-
-        # Step 2: Solve
-        answer = client.chat.completions.create(
-            model=models["solver"],
-            messages=[
-                {"role": "system", "content": f"Follow this plan:\n{plan}"},
-                {"role": "user", "content": input_data},
-            ],
-        ).choices[0].message.content
-        return answer
-    return run
-```
-
-**Step 2**: Define your evaluation dataset and scoring function:
-
-```python
-dataset = [
-    ("What is the capital of France?", "Paris"),
-    ("What is 2 + 2?", "4"),
-    ("What color is the sky?", "blue"),
-    # ... ideally ~100 samples
-]
-
-def eval_fn(expected, actual):
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
-```
-
-**Step 3**: Run model selection:
-
-```python
-from agentopt import BruteForceModelSelector
-
-selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+selector = ModelSelector(
+    agent=MyAgent,
     models={
-        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-    },
+        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],  # 3 options
+        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],  # 3 options
+    },  # → 3 × 3 = 9 combinations to evaluate
     eval_fn=eval_fn,
     dataset=dataset,
+    method="brute_force",  # or "auto" for smarter selection algorithms
 )
 
-results = selector.select_best(parallel=True)
+results = selector.select_best(parallel=True, max_concurrent=50)
 results.print_summary()
 ```
 
@@ -98,130 +82,113 @@ Output:
     ...
 ```
 
-## Selection Algorithms
-
-AgentOpt provides advanced selection algorithms — you don't always need to evaluate every combination:
-
-| Algorithm | Best for | How it works |
-|-----------|----------|-------------|
-| `BruteForceModelSelector` | Small search spaces | Evaluates all combinations |
-| `RandomSearchModelSelector` | Quick exploration | Samples a random fraction |
-| `HillClimbingModelSelector` | Topology-aware search | Greedy search using model quality/speed rankings |
-| `ArmEliminationModelSelector` | Early pruning | Eliminates statistically dominated combinations |
-| `EpsilonLUCBModelSelector` | Best-arm identification | Stops when LUCB confidence gap is within user `epsilon` |
-| `ThresholdBanditSEModelSelector` | Thresholding objectives | Classifies combinations above/below user `threshold` |
-| `StreamingBruteForceModelSelector` | Incoming data streams | Updates brute-force metrics incrementally as new batches arrive |
-| `LMProposalModelSelector` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
-| `BayesianOptimizationModelSelector` | Expensive evaluations | GP-based optimization (requires `torch`, `botorch`) |
-
-All selectors share the same interface:
+Conceptually, this is what happens under the hood:
 
 ```python
-results = selector.select_best(parallel=True, max_concurrent=20)
+for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
+    agent = MyAgent(combo)                   # build agent with this model combo
+    for input_data, expected in dataset:
+        actual = agent.run(input_data)       # run on each datapoint
+        score = eval_fn(expected, actual)    # score the output
+# rank combos by quality score, latency & cost
 ```
 
-## Streaming Model Selection (Detailed)
+But AgentOpt does this efficiently with **smart algorithms, parallelization, cost & latency tracking, and caching**. With `method="auto"` (the default), it **automatically** homes in on the best combination (wired to `arm_elimination` — strong best-arm identification with far fewer evaluations than `brute_force`), eliminating clearly worse combinations after just a few datapoints.
 
-`StreamingBruteForceModelSelector` is the online version of brute force for incoming labeled data.
+You just provide four things:
 
-### When to use it
+**Agent** — wrap your agent into a class with `__init__(self, models)` and `run(self, input_data)`:
 
-Use it when:
-- new `(input, expected)` samples arrive continuously (or in periodic batches),
-- you want to keep re-ranking model combinations over time,
-- you want the current best combo at any point without re-running full offline experiments.
-
-### What it optimizes
-
-The current best is chosen with the same tie-break logic as other selectors:
-1. highest accuracy,
-2. then lowest latency,
-3. then lowest cost (if pricing is available).
-
-### Data contract
-
-Each batch must be:
+- `__init__(self, models)` — receive a model configuration and do your agent creation. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
+- `run(self, input_data)` — run your agent on a single datapoint and return the output.
 
 ```python
-Sequence[Tuple[input_data, expected_answer]]
+from openai import OpenAI
+
+class MyAgent:
+    def __init__(self, models):
+        self.client = OpenAI()
+        self.planner_model = models["planner"]
+        self.solver_model = models["solver"]
+
+    def run(self, input_data):
+        plan = self.client.chat.completions.create(
+            model=self.planner_model,
+            messages=[{"role": "user", "content": f"Plan: {input_data}"}],
+        ).choices[0].message.content
+
+        answer = self.client.chat.completions.create(
+            model=self.solver_model,
+            messages=[
+                {"role": "system", "content": f"Follow this plan:\n{plan}"},
+                {"role": "user", "content": input_data},
+            ],
+        ).choices[0].message.content
+        return answer
 ```
 
-Example:
+**Dataset** — a list of `(input_data, expected_output)` pairs:
 
 ```python
-batch = [
-    ({"question": "What is 3+5?"}, "8"),
-    ({"question": "Capital of France?"}, "Paris"),
+dataset = [
+    ("What is the capital of France?", "Paris"),
+    ("What is 2 + 2?", "4"),
+    ("What color is the sky?", "blue"),
+    # We recommend at least 100 samples for production decisions,
+    # but even 10-20 samples can surface clear winners during development.
 ]
 ```
 
-### API
+**Eval function** — compares the agent output against the expected answer, returns a score:
 
 ```python
-from agentopt import StreamingBruteForceModelSelector
-
-selector = StreamingBruteForceModelSelector(
-    agent_fn=agent_maker,
-    models=models,
-    eval_fn=eval_fn,
-    dataset=warm_start_dataset,  # seed batch used by select_best()
-)
-
-# 1) Evaluate warm-start dataset once
-selector.select_best(parallel=True, max_concurrent=20)
-
-# 2) Update incrementally as new data arrives
-selector.update(batch, parallel=True, max_concurrent=20)
-
-# 3) Inspect current ranking / best combo
-results = selector.results()
-best_combo = selector.best_combo()
+def eval_fn(expected, actual):
+    return 1.0 if expected.lower() in str(actual).lower() else 0.0
 ```
 
-Methods:
-- `select_best(...)`: evaluates the initial seed dataset once.
-- `update(batch, ...)`: evaluates all combos on the new batch and appends metrics.
-- `update_one(input_data, expected_answer, ...)`: single-sample convenience method.
-- `results()`: cumulative leaderboard over all streamed batches seen so far.
-- `best_combo()`: current best `{"node": "model"}` mapping.
+LLM-as-judge is also supported — just call your judge LLM inside `eval_fn`.
 
-### Internal update loop
-
-For each incoming batch:
-1. validate batch format,
-2. evaluate every combo on that batch (sequential or async),
-3. append new scores/latencies/tokens to cumulative per-combo state,
-4. recompute ranking and mark the current best combo.
-
-### Minimal online loop
-
-```python
-for batch in stream_of_labeled_batches:
-    selector.update(batch, parallel=True, max_concurrent=20)
-    best = selector.best_combo()
-    print("best now:", best)
-```
-
-### Notes / caveats
-
-- This is still **brute force per batch**: every combo is evaluated on each update.
-- It is simple and stable, but can be expensive with large combo spaces.
-- For large spaces, start with smaller candidate sets or move to pruning selectors
-  (`ArmEliminationModelSelector`, `EpsilonLUCBModelSelector`, etc.) for offline filtering first.
+**Models** — a dict mapping each step name to a list of candidate models to try. AgentOpt picks one from each list, constructs the agent, and evaluates it.
 
 ## Framework Compatibility
 
-AgentOpt works with any LLM framework that uses `httpx` under the hood — which is virtually all of them:
+AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we provide examples for a few popular frameworks, but it literally works with any custom implementation:
 
 | Framework | Status | Example |
 |-----------|--------|---------|
-| OpenAI SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
 | OpenAI Agents SDK | Supported | [openai_sdk_example.py](examples/openai_sdk_example.py) |
 | LangChain / LangGraph | Supported | [langchain_example.py](examples/langchain_example.py), [langgraph_example.py](examples/langgraph_example.py) |
 | CrewAI | Supported | [crewai_example.py](examples/crewai_example.py) |
 | LlamaIndex | Supported | [llamaindex_example.py](examples/llamaindex_example.py) |
 | AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
-| Anthropic SDK | Supported | Uses httpx |
+| OpenAI-Compatible API SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
+
+## Selection Algorithms
+
+AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_selection_example.py](examples/advanced_selection_example.py) for details.
+
+If you do not need the strict best model combination and want **more evaluation savings**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
+
+| `method=` | Best for | How it works |
+|-----------|----------|-------------|
+| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower evaluation cost than `brute_force`) |
+| `"brute_force"` | Small search spaces | Evaluates all combinations |
+| `"random"` | Quick exploration | Samples a random fraction |
+| `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
+| `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
+| `"epsilon_lucb"` | Extra cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
+| `"threshold"` | Thresholding objectives | Bandit; determines whether each combination is above/below a user-defined `threshold` on the performance metric (e.g., mean accuracy) |
+| `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
+| `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt-py[bayesian]"`) |
+
+```python
+selector = ModelSelector(
+    agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+    method="epsilon_lucb",
+    epsilon=0.01
+)
+results = selector.select_best(parallel=True)
+```
 
 ## How It Works
 
@@ -235,13 +202,13 @@ your_agent(input)
 ```
 
 For each model combination, AgentOpt:
-1. Builds your agent with the candidate models
-2. Runs it on every datapoint in your evaluation set
+1. Instantiates your agent class with the candidate models
+2. Calls `run()` on every datapoint in your evaluation set
 3. Tracks token usage, latency, and cost automatically
 4. Scores the output using your evaluation function
 5. Reports the Pareto-optimal combinations
 
-Response caching ensures that identical LLM calls (same model + same prompt) are never repeated — making iterative experimentation fast and cheap.
+Response caching (in-memory + SQLite on disk) is enabled by default — identical LLM calls are never repeated, making iterative experimentation fast and cheap.
 
 ## Results API
 
@@ -257,10 +224,10 @@ results.export_config("config.yaml")  # export best combo as YAML
 
 ## Advanced Usage
 
-### Custom model pricing
+**Custom model pricing** — define pricing for self-hosted or custom models:
 
 ```python
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     ...,
     model_prices={
         "my-custom-model": {"input_price": 2.50, "output_price": 10.00},
@@ -268,27 +235,23 @@ selector = BruteForceModelSelector(
 )
 ```
 
-### Persistent disk cache
-
-Cache LLM responses to disk so they survive process restarts:
+**Custom cache directory** — LLM response caching is enabled by default (`.agentopt_cache/`). To customize:
 
 ```python
-from agentopt.proxy import LLMTracker
+from agentopt import LLMTracker
 
-tracker = LLMTracker(cache_dir="./llm_cache")
-selector = BruteForceModelSelector(..., tracker=tracker)
+tracker = LLMTracker(cache_dir="./my_cache")
+selector = ModelSelector(..., tracker=tracker)
 results = selector.select_best()  # cache flushed automatically
 ```
 
-### Using prebuilt LLM instances
-
-Pass framework-specific LLM objects instead of model name strings:
+**Using prebuilt LLM instances** — pass framework-specific LLM objects instead of model name strings:
 
 ```python
 from langchain_openai import ChatOpenAI
 
-selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+selector = ModelSelector(
+    agent=MyAgent,
     models={
         "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
         "solver":  [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],
@@ -298,7 +261,7 @@ selector = BruteForceModelSelector(
 )
 ```
 
-### Streaming incoming data
+**Streaming incoming data** — use `StreamingBruteForceModelSelector` to update rankings incrementally as labeled batches arrive:
 
 ```python
 from agentopt import StreamingBruteForceModelSelector
@@ -315,15 +278,10 @@ for batch in stream_of_labeled_batches:
     print("Current best:", selector.best_combo())
 ```
 
-## Development
+## Documentation
 
-```bash
-git clone https://github.com/AgentOptimizer/agentopt.git
-cd agentopt
-uv sync --extra dev
-uv run pytest
-```
+Full documentation at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)** — including detailed guides on the [Results API](https://agentoptimizer.github.io/agentopt/api/results/), [response caching](https://agentoptimizer.github.io/agentopt/concepts/caching/), and [custom model pricing](https://agentoptimizer.github.io/agentopt/api/selectors/).
 
 ## License
 
-MIT
+Apache 2.0

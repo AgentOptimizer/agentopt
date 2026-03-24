@@ -1,4 +1,4 @@
-"""Tests for agentproxy API-level response cache."""
+"""Tests for agentopt.proxy API-level response cache."""
 
 import asyncio
 import json

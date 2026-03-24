@@ -38,24 +38,22 @@ class LMProposalModelSelector(BaseModelSelector):
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
-        models: Dict[str, List[ModelCandidate]],
-        eval_fn: EvalFn,
-        dataset: Dataset,
-        invoke_fn: Optional[Callable] = None,
+        agent: Any = None,
+        models: Dict[str, List[ModelCandidate]] = None,
+        eval_fn: EvalFn = None,
+        dataset: Dataset = None,
         proposer_model: str = "gpt-4.1",
         proposer_client: Any = None,
-        objective: str = "maximize accuracy and then minimize atency and cost",
+        objective: str = "maximize accuracy and then minimize latency and cost",
         dataset_preview_size: int = 10,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
     ) -> None:
         super().__init__(
-            agent_fn=agent_fn,
+            agent=agent,
             models=models,
             eval_fn=eval_fn,
             dataset=dataset,
-            invoke_fn=invoke_fn,
             model_prices=model_prices,
             node_descriptions=node_descriptions,
         )

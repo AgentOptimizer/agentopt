@@ -42,7 +42,7 @@ Each evaluated combination produces a `ModelResult`:
 | `latency_seconds` | `float` | Mean latency per datapoint |
 | `input_tokens` | `Dict[str, int]` | Input tokens by model |
 | `output_tokens` | `Dict[str, int]` | Output tokens by model |
-| `estimated_price` | `float` | Estimated cost in USD |
+| `price` | `float` (property) | Per-sample cost in USD, or `None` if pricing unavailable |
 | `is_best` | `bool` | Whether this is the top-ranked combination |
 | `datapoint_results` | `List[DatapointResult]` | Per-datapoint breakdown |
 
@@ -55,6 +55,7 @@ Per-datapoint evaluation detail:
 | Field | Type | Description |
 |:------|:-----|:------------|
 | `datapoint_index` | `int` | Index in the dataset |
-| `datapoint_id` | `str` | Unique identifier |
 | `score` | `float` | Eval score for this datapoint |
 | `latency_seconds` | `float` | Latency for this datapoint |
+| `input_tokens` | `Dict[str, int]` | Input tokens by model |
+| `output_tokens` | `Dict[str, int]` | Output tokens by model |

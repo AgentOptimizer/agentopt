@@ -5,7 +5,7 @@
 === "pip"
 
     ```bash
-    pip install agentopt
+    pip install agentopt-py
     ```
 
 === "uv"
@@ -21,13 +21,13 @@
     Requires PyTorch and BoTorch:
 
     ```bash
-    pip install "agentopt[bayesian]"
+    pip install "agentopt-py[bayesian]"
     ```
 
 === "All Extras"
 
     ```bash
-    pip install "agentopt[bayesian]"
+    pip install "agentopt-py[bayesian]"
     ```
 
 ## Development Setup

@@ -6,11 +6,10 @@ All selectors share a common constructor interface and the `select_best()` metho
 
 | Parameter | Type | Description |
 |:----------|:-----|:------------|
-| `agent_fn` | `Callable` | Factory: `(models_dict) -> callable_agent` |
+| `agent` | `type` | Agent class with `__init__(self, models)` and `run(self, input_data)` methods |
 | `models` | `Dict[str, List]` | Maps node names to candidate model lists |
 | `eval_fn` | `Callable` | `(expected, actual) -> float` score in `[0, 1]` |
 | `dataset` | `List[Tuple]` | `[(input_data, expected_answer), ...]` |
-| `invoke_fn` | `Callable`, optional | Custom `(agent, input) -> result`. Default: `agent(input)` |
 | `model_prices` | `Dict`, optional | Custom pricing: `{"model": {"input_price": x, "output_price": y}}` |
 | `tracker` | `LLMTracker`, optional | Custom tracker instance (e.g., with disk cache) |
 
@@ -63,6 +62,11 @@ Returns a [`SelectionResults`](results.md) object.
       show_bases: false
 
 ::: agentopt.model_selection.lm_proposal.LMProposalModelSelector
+    options:
+      members: false
+      show_bases: false
+
+::: agentopt.model_selection.bayesian_optimization.BayesianOptimizationModelSelector
     options:
       members: false
       show_bases: false

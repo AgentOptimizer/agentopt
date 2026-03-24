@@ -1,6 +1,6 @@
 # Benchmark Results
 
-We evaluated **9 models on AWS Bedrock** across **4 benchmarks** using LangGraph-based agents, then ran 8 model selection algorithms to measure how efficiently each finds the best model without exhaustive search. All results use 198–200 samples per benchmark with brute force ground truth. Selector comparisons were run with 50 random seeds.
+We evaluated **9 models** across **4 benchmarks** using LangGraph-based agents, then ran 8 model selection algorithms to measure how efficiently each finds the best model without exhaustive search. All results use 198–200 samples per benchmark with brute force ground truth. Selector comparisons were run with 50 random seeds.
 
 ## Models
 

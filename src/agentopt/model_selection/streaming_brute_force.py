@@ -47,15 +47,15 @@ class StreamingBruteForceModelSelector(BaseModelSelector):
             model_prices=model_prices,
             tracker=tracker,
         )
-        self._all_combos: List[Dict[str, ModelCandidate]] = self._all_combos()
+        self._combos: List[Dict[str, ModelCandidate]] = self._all_combos()
         self._combo_scores: Dict[int, List[float]] = {
-            i: [] for i in range(len(self._all_combos))
+            i: [] for i in range(len(self._combos))
         }
         self._combo_latencies: Dict[int, List[float]] = {
-            i: [] for i in range(len(self._all_combos))
+            i: [] for i in range(len(self._combos))
         }
         self._combo_dp_ids: Dict[int, List[str]] = {
-            i: [] for i in range(len(self._all_combos))
+            i: [] for i in range(len(self._combos))
         }
         self._seen_samples = 0
         self._seed_consumed = False

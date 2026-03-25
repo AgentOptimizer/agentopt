@@ -1,5 +1,9 @@
 <p align="center">
-  <img width="360" alt="AgentOpt" src="docs/assets/logo.png" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-full-text-transparent-dark-v2.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-full-text-transparent-light-v2.png">
+    <img width="420" alt="AgentOpt" src="docs/assets/logo-full-text-transparent-light-v2.png" />
+  </picture>
 </p>
 
 <p align="center">

@@ -38,7 +38,7 @@ theme:
     - search.suggest
     - search.highlight
     - toc.follow
-  logo: assets/logo-icon-transparent.png
+  logo: assets/logo-full-text-transparent-dark-v2.png
   favicon: assets/logo-icon-transparent.png
   icon:
     repo: fontawesome/brands/github

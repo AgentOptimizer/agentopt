@@ -48,21 +48,28 @@
 .md-header__button.md-logo img {
   height: 40px;
   width: auto;
-  max-width: 56px;
+  max-width: 220px;
   object-fit: contain;
   filter: none !important;
 }
 
-/* Keep site title visible beside icon; tighten spacing */
-.md-header__button.md-logo {
-  margin-right: 0.2rem;
+/* Swap full-wordmark text color by theme (dark=white, light=black) */
+[data-md-color-scheme="slate"] .md-header__button.md-logo img {
+  content: url("../assets/logo-full-text-transparent-dark-v2.png");
 }
 
-.md-header__title {
-  margin-left: 0 !important;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
+[data-md-color-scheme="default"] .md-header__button.md-logo img {
+  content: url("../assets/logo-full-text-transparent-light-v2.png");
+}
+
+/* Wordmark already includes text; keep only image in header */
+.md-header__button.md-logo {
+  margin-right: 0.7rem;
+}
+
+.md-header__title .md-header__topic,
+.md-header__title .md-header__topic + .md-header__topic {
+  display: none;
 }
 
 /* ── Palette toggle visibility ── */

@@ -38,8 +38,8 @@ theme:
     - search.suggest
     - search.highlight
     - toc.follow
-  logo: assets/logo-full-text-transparent-dark-v2.png
-  favicon: assets/logo-icon-transparent.png
+  logo: assets/logo.png
+  favicon: assets/logo.png
   icon:
     repo: fontawesome/brands/github
 

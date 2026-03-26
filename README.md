@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-full-text-transparent-dark-v2.png">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-full-text-transparent-light-v2.png">
-    <img width="420" alt="AgentOpt" src="docs/assets/logo-full-text-transparent-light-v2.png" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-full-text-gradient-dark-v1.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-full-text-gradient-light-v1.png">
+    <img width="420" alt="AgentOpt" src="docs/assets/logo-full-text-gradient-light-v1.png" />
   </picture>
 </p>
 

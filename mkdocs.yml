@@ -38,8 +38,8 @@ theme:
     - search.suggest
     - search.highlight
     - toc.follow
-  logo: assets/logo.png
-  favicon: assets/logo.png
+  logo: assets/logo-full-text-transparent-dark-v2.png
+  favicon: assets/logo-icon-transparent.png
   icon:
     repo: fontawesome/brands/github
 
@@ -58,8 +58,6 @@ nav:
     - LangChain: examples/langchain.md
     - CrewAI: examples/crewai.md
     - LlamaIndex: examples/llamaindex.md
-  - Benchmark Results:
-      - benchmark-results/index.md
   - API Reference:
     - Selectors: api/selectors.md
     - Results: api/results.md

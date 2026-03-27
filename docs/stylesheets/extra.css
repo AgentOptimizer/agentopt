@@ -46,15 +46,30 @@
    ════════════════════════════════════════════ */
 
 .md-header__button.md-logo img {
-  height: 28px;
-  width: 28px;
+  height: 40px;
+  width: auto;
+  max-width: 220px;
   object-fit: contain;
-  border-radius: 6px;
+  filter: none !important;
 }
 
-/* Light mode: invert the dark-bg logo to a light variant */
+/* Swap full-wordmark text color by theme (dark=white, light=black) */
+[data-md-color-scheme="slate"] .md-header__button.md-logo img {
+  content: url("../assets/logo-full-text-transparent-dark-v2.png");
+}
+
 [data-md-color-scheme="default"] .md-header__button.md-logo img {
-  filter: invert(0.88) hue-rotate(180deg) brightness(1.3) contrast(0.95);
+  content: url("../assets/logo-full-text-transparent-light-v2.png");
+}
+
+/* Wordmark already includes text; keep only image in header */
+.md-header__button.md-logo {
+  margin-right: 0.7rem;
+}
+
+.md-header__title .md-header__topic,
+.md-header__title .md-header__topic + .md-header__topic {
+  display: none;
 }
 
 /* ── Palette toggle visibility ── */
@@ -91,9 +106,6 @@
 
 [data-md-color-scheme="slate"] .md-header__title {
   color: var(--ao-text);
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: -0.3px;
 }
 
 [data-md-color-scheme="slate"] .md-source {
@@ -127,6 +139,11 @@
   font-size: 13px;
   font-weight: 400;
   letter-spacing: 0;
+}
+
+/* Center top navigation row */
+.md-tabs__list {
+  justify-content: center;
 }
 
 [data-md-color-scheme="slate"] .md-tabs__link {
@@ -481,6 +498,63 @@
 
 [data-md-color-scheme="default"] .md-search__input {
   background-color: #f5f3f0;
+}
+
+/* Header controls: match nav typography + alignment */
+.md-search__input,
+.md-source__repository,
+.md-source__facts,
+.md-tabs__link {
+  font-family: "DM Sans", sans-serif;
+}
+
+.md-search__input {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.md-source__repository,
+.md-source__facts {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.md-search,
+.md-header__source {
+  align-self: center;
+}
+
+/* Make magnifier icon color match search text exactly */
+.md-search__icon,
+.md-search__icon .md-icon,
+.md-search__icon svg {
+  color: inherit !important;
+  fill: currentColor !important;
+}
+
+[data-md-color-scheme="slate"] .md-search__input,
+[data-md-color-scheme="slate"] .md-search__icon,
+[data-md-color-scheme="slate"] .md-header__source {
+  color: var(--ao-text-secondary);
+}
+
+[data-md-color-scheme="slate"] .md-search__input:focus,
+[data-md-color-scheme="slate"] .md-search:hover,
+[data-md-color-scheme="slate"] .md-header__source:hover {
+  color: var(--ao-text);
+}
+
+[data-md-color-scheme="default"] .md-search__input,
+[data-md-color-scheme="default"] .md-search__icon,
+[data-md-color-scheme="default"] .md-header__source {
+  color: #64748b;
+}
+
+[data-md-color-scheme="default"] .md-search__input:focus,
+[data-md-color-scheme="default"] .md-search:hover,
+[data-md-color-scheme="default"] .md-header__source:hover {
+  color: #1e1e2e;
 }
 
 /* Sidebar */

@@ -126,6 +126,12 @@ def train(config: RouterConfig):
     print(f"\nLoading model: {config.model_name}", flush=True)
     model = BERTRouter(config.model_name, config.n_models)
     model.encoder.resize_token_embeddings(len(tokenizer))
+
+    # Optionally freeze encoder — only train the linear heads
+    if config.freeze_encoder:
+        model.encoder.requires_grad_(False)
+        print("Encoder FROZEN — only training linear heads")
+
     model = model.to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -258,7 +264,14 @@ def main():
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--output-dir", type=str, default="router/checkpoints_hierarchical")
     parser.add_argument("--scores-path", type=str, default="router/scores.json")
+    parser.add_argument("--freeze-encoder", action="store_true",
+                        help="Freeze BERT encoder, only train linear heads")
     args = parser.parse_args()
+
+    # Default output dir changes if frozen
+    output_dir = args.output_dir
+    if args.freeze_encoder and output_dir == "router/checkpoints_hierarchical":
+        output_dir = "router/checkpoints_frozen"
 
     config = RouterConfig(
         epochs=args.epochs,
@@ -268,8 +281,9 @@ def main():
         max_length=args.max_length,
         seed=args.seed,
         test_size=args.test_size,
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         scores_path=args.scores_path,
+        freeze_encoder=args.freeze_encoder,
     )
     train(config)
 

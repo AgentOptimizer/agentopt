@@ -81,6 +81,7 @@ class RouterConfig:
     n_models: int = 9    # number of candidate models per role
 
     # Training
+    freeze_encoder: bool = False  # if True, only train linear heads
     epochs: int = 5
     batch_size: int = 16       # effective batch size
     micro_batch: int = 2       # actual batch per forward pass (gradient accumulation)

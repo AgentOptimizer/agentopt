@@ -79,6 +79,7 @@ class RouterConfig:
 
     # Heads (hierarchical: all heads output n_models dimensions)
     n_models: int = 9    # number of candidate models per role
+    agg: str = "max"     # 2-tuple marginal aggregation: "max" or "mean"
 
     # Training
     freeze_encoder: bool = False  # if True, only train linear heads

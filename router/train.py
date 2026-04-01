@@ -266,12 +266,17 @@ def main():
     parser.add_argument("--scores-path", type=str, default="router/scores.json")
     parser.add_argument("--freeze-encoder", action="store_true",
                         help="Freeze BERT encoder, only train linear heads")
+    parser.add_argument("--agg", type=str, default="max", choices=["max", "mean"],
+                        help="2-tuple marginal aggregation: max (sharper) or mean (smoother)")
     args = parser.parse_args()
 
-    # Default output dir changes if frozen
+    # Default output dir changes based on config
     output_dir = args.output_dir
-    if args.freeze_encoder and output_dir == "router/checkpoints_hierarchical":
-        output_dir = "router/checkpoints_frozen"
+    if output_dir == "router/checkpoints_hierarchical":
+        if args.freeze_encoder:
+            output_dir = "router/checkpoints_frozen"
+        elif args.agg == "max":
+            output_dir = "router/checkpoints_max"
 
     config = RouterConfig(
         epochs=args.epochs,
@@ -284,6 +289,7 @@ def main():
         output_dir=output_dir,
         scores_path=args.scores_path,
         freeze_encoder=args.freeze_encoder,
+        agg=args.agg,
     )
     train(config)
 

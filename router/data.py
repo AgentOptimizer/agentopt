@@ -163,19 +163,24 @@ def _decompose_2tuple_scores(
     combo_scores: torch.Tensor,
     combo_mask: torch.Tensor,
     n_models: int = 9,
+    agg: str = "max",
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Decompose 81-dim combo scores into two 9-dim role marginals.
 
-    For role1 (planner/answer), role1_score[i] = mean of combo_score[i*9+j]
-    across all valid j. This captures "how good is model i for role 1."
+    For role1 (planner/answer), role1_score[i] = agg of combo_score[i*9+j]
+    across all valid j.
 
-    For role2 (solver/critic), role2_score[j] = mean of combo_score[i*9+j]
+    For role2 (solver/critic), role2_score[j] = agg of combo_score[i*9+j]
     across all valid i.
+
+    agg="max": best-case score (sharper signal, captures strong pairings)
+    agg="mean": average-case score (blurrier, dilutes strong pairings)
 
     Args:
         combo_scores: (81,) float tensor
         combo_mask: (81,) bool tensor
         n_models: number of models per role (9)
+        agg: "max" or "mean"
 
     Returns:
         role1_scores: (9,) float
@@ -192,18 +197,20 @@ def _decompose_2tuple_scores(
     scores_2d = combo_scores[:n_models * n_models].view(n_models, n_models)
     mask_2d = combo_mask[:n_models * n_models].view(n_models, n_models)
 
-    # Role 1 marginals (average across role2 dimension)
+    # Role 1 marginals (aggregate across role2 dimension)
     for i in range(n_models):
         valid = mask_2d[i]  # which role2 models have scores for this role1
         if valid.any():
-            role1_scores[i] = scores_2d[i][valid].mean()
+            vals = scores_2d[i][valid]
+            role1_scores[i] = vals.max().item() if agg == "max" else vals.mean().item()
             role1_mask[i] = True
 
-    # Role 2 marginals (average across role1 dimension)
+    # Role 2 marginals (aggregate across role1 dimension)
     for j in range(n_models):
         valid = mask_2d[:, j]  # which role1 models have scores for this role2
         if valid.any():
-            role2_scores[j] = scores_2d[:, j][valid].mean()
+            vals = scores_2d[:, j][valid]
+            role2_scores[j] = vals.max().item() if agg == "max" else vals.mean().item()
             role2_mask[j] = True
 
     return role1_scores, role1_mask, role2_scores, role2_mask
@@ -355,7 +362,7 @@ def load_samples(
             else:
                 # 2-tuple: decompose 81 → 9+9 marginals
                 r1_scores, r1_mask, r2_scores, r2_mask = _decompose_2tuple_scores(
-                    combo_scores_vec, combo_mask_vec, n_models
+                    combo_scores_vec, combo_mask_vec, n_models, agg=config.agg
                 )
                 train_scores[:n_models] = r1_scores
                 train_scores[n_models:] = r2_scores

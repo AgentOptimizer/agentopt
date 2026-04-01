@@ -48,9 +48,10 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         if parallel:
-            return asyncio.run(self._select_async(max_concurrent))
+            return asyncio.run(self._select_async(max_concurrent, per_combo))
         return self._select_sequential()
 
     def _select_sequential(self) -> SelectionResults:
@@ -155,7 +156,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
             all_combos, combo_scores, combo_latencies, combo_dp_ids
         )
 
-    async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
+    async def _select_async(self, max_concurrent: int = 20, per_combo: bool = False) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
         n_total = len(dataset_list)
@@ -180,7 +181,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
         assert init_batch_size > 0
         init_batch = dataset_list[offset : offset + init_batch_size]
         n_combo_init, dp_concurrent_init = self._compute_concurrency(
-            max_concurrent, init_batch_size
+            max_concurrent, init_batch_size, per_combo
         )
         init_combo_sem = asyncio.Semaphore(n_combo_init)
         print(
@@ -226,7 +227,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
         round_num = 1
         # Per-round batch_size is always 1, so compute once
         n_combo_round, dp_concurrent_round = self._compute_concurrency(
-            max_concurrent, 1
+            max_concurrent, 1, per_combo
         )
         round_combo_sem = asyncio.Semaphore(n_combo_round)
 

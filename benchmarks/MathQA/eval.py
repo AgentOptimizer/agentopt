@@ -52,6 +52,7 @@ from benchmarks.common import (
     add_common_cli_args,
     build_selector_kwargs,
     display_name,
+    extract_text_content,
     get_selectors,
     make_llm,
     resolve_models,
@@ -150,15 +151,15 @@ def _is_system_message(message: Any) -> bool:
 def _extract_text(result: Any) -> str:
     if isinstance(result, dict):
         if "final" in result:
-            return str(result["final"])
+            return extract_text_content(result["final"])
         if "messages" in result and result["messages"]:
             last = result["messages"][-1]
             if isinstance(last, dict):
-                return str(last.get("content", ""))
+                return extract_text_content(last.get("content", ""))
             if hasattr(last, "content"):
-                return str(last.content)
-            return str(last)
-    return str(result)
+                return extract_text_content(last.content)
+            return extract_text_content(last)
+    return extract_text_content(result)
 
 
 def eval_fn(expected: str, actual: Any) -> bool:
@@ -251,19 +252,20 @@ def _mathqa_agent_fn_raw(models: Dict[str, Any], max_iterations: int = 3):
             critic_response = critic_llm.invoke(critic_messages)
             messages.append(critic_response)
 
-            content = getattr(critic_response, "content", str(critic_response))
+            content = extract_text_content(getattr(critic_response, "content", str(critic_response)))
             if "CORRECT" in content.upper() and "INCORRECT" not in content.upper():
                 break
 
         # Extract final answer
         for msg in reversed(messages):
-            content = getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", "")
+            raw = getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", "")
+            content = extract_text_content(raw)
             if re.search(r"answer:\s*[a-e]", content.lower()):
                 final = content
                 break
         if not final and messages:
             last = messages[-1]
-            final = getattr(last, "content", str(last))
+            final = extract_text_content(getattr(last, "content", str(last)))
 
         return {"messages": messages, "final": final.strip(), "iteration": iteration + 1}
 
@@ -337,7 +339,8 @@ def _mathqa_agent_fn_langgraph(models: Dict[str, Any], max_iterations: int = 3):
             iteration = state.get("iteration", 0)
             if messages:
                 last = messages[-1]
-                content = getattr(last, "content", str(last)) if not isinstance(last, dict) else last.get("content", "")
+                raw = getattr(last, "content", str(last)) if not isinstance(last, dict) else last.get("content", "")
+                content = extract_text_content(raw)
                 if "CORRECT" in content.upper() and "INCORRECT" not in content.upper():
                     return "finalize"
             if iteration >= max_iter:
@@ -348,13 +351,15 @@ def _mathqa_agent_fn_langgraph(models: Dict[str, Any], max_iterations: int = 3):
             messages = list(state.get("messages", []))
             final = ""
             for msg in reversed(messages):
-                content = getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", "")
+                raw = getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", "")
+                content = extract_text_content(raw)
                 if re.search(r"answer:\s*[a-e]", content.lower()):
                     final = content
                     break
             if not final and messages:
                 last = messages[-1]
-                final = getattr(last, "content", str(last)) if not isinstance(last, dict) else last.get("content", "")
+                raw = getattr(last, "content", str(last)) if not isinstance(last, dict) else last.get("content", "")
+                final = extract_text_content(raw)
             return {"messages": messages, "final": final.strip(), "iteration": state.get("iteration", 0)}
 
         graph = StateGraph(ReflectionState)
@@ -481,7 +486,7 @@ def main():
 
     SelectorCls = SELECTORS[args.selector]
     selector = SelectorCls(
-        agent_fn=agent_fn,
+        agent=agent_fn,
         models={"answer": models, "critic": models},
         eval_fn=eval_fn,
         dataset=train_data,
@@ -496,7 +501,10 @@ def main():
         tracker.start()
 
     start = time.time()
-    results = selector.select_best(parallel=args.parallel)
+    results = selector.select_best(
+        parallel=args.parallel,
+        per_combo=getattr(args, 'per_combo', False),
+    )
     elapsed = time.time() - start
 
     # Results

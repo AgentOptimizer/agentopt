@@ -255,9 +255,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         if parallel:
-            return asyncio.run(self._run_selection_async(max_concurrent))
+            return asyncio.run(self._run_selection_async(max_concurrent, per_combo))
         return self._run_selection_sequential()
 
     # ------------------------------------------------------------------
@@ -395,7 +396,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
     # Async path
     # ------------------------------------------------------------------
 
-    async def _run_selection_async(self, max_concurrent: int = 20,) -> SelectionResults:
+    async def _run_selection_async(self, max_concurrent: int = 20, per_combo: bool = False,) -> SelectionResults:
         (
             torch_mod,
             LogExpectedImprovement,
@@ -547,7 +548,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
             dp_batch_size = len(self.dataset)
             n_combo_bo, dp_concurrent_bo = self._compute_concurrency(
-                max_concurrent, dp_batch_size
+                max_concurrent, dp_batch_size, per_combo
             )
             bo_combo_sem = asyncio.Semaphore(n_combo_bo)
 

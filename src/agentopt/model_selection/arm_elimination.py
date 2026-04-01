@@ -48,9 +48,10 @@ class ArmEliminationModelSelector(BaseModelSelector):
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         if parallel:
-            return asyncio.run(self._select_async(max_concurrent))
+            return asyncio.run(self._select_async(max_concurrent, per_combo))
         return self._select_sequential()
 
     def _select_sequential(self) -> SelectionResults:
@@ -173,7 +174,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         results = SelectionResults(results=all_results)
         return results
 
-    async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
+    async def _select_async(self, max_concurrent: int = 20, per_combo: bool = False) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
         n_total = len(dataset_list)
@@ -201,7 +202,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
             batch = dataset_list[offset:batch_end]
             current_batch_size = len(batch)
             n_combo_round, dp_concurrent_round = self._compute_concurrency(
-                max_concurrent, current_batch_size
+                max_concurrent, current_batch_size, per_combo
             )
             round_sem = asyncio.Semaphore(n_combo_round)
 

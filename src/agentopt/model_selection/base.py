@@ -35,6 +35,7 @@ class DatapointResult(BaseModel):
     latency_seconds: float
     input_tokens: Dict[str, int] = Field(default_factory=dict)
     output_tokens: Dict[str, int] = Field(default_factory=dict)
+    server_latency_ms: Optional[float] = Field(default=None, description="Sum of Bedrock metrics.latencyMs for all API calls in this sample")
 
 
 class ModelResult(BaseModel):
@@ -48,6 +49,7 @@ class ModelResult(BaseModel):
     attribute: str
     is_best: bool = False
     datapoint_results: List[DatapointResult] = Field(default_factory=list)
+    server_latency_ms: Optional[float] = Field(default=None, description="Mean server-side latency (ms) per sample from Bedrock metrics.latencyMs")
     _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
 
     @property
@@ -759,9 +761,12 @@ class BaseModelSelector(ABC):
         self.model_prices = model_prices
         self.node_descriptions = node_descriptions
 
-        # Detect whether agent.run() is async
+        # Detect whether agent.run() / agent.__call__() is async
         run_method = getattr(agent, "run", None)
-        self._is_async_run = inspect.iscoroutinefunction(run_method)
+        if run_method is None and callable(agent):
+            # agent is a factory returning callables, not .run() objects
+            run_method = None
+        self._is_async_run = inspect.iscoroutinefunction(run_method) if run_method else False
 
         if tracker is not None:
             self._tracker = tracker
@@ -813,8 +818,10 @@ class BaseModelSelector(ABC):
     # ------------------------------------------------------------------
 
     def _invoke_agent(self, agent: Any, input_data: Any) -> Any:
-        """Call agent.run(input_data)."""
-        return agent.run(input_data)
+        """Call agent.run(input_data), or agent(input_data) if callable."""
+        if hasattr(agent, "run"):
+            return agent.run(input_data)
+        return agent(input_data)
 
     def _evaluate_combo(
         self,
@@ -982,6 +989,7 @@ class BaseModelSelector(ABC):
         results: List[DatapointResult] = []
         for j, dp_id in enumerate(datapoint_ids):
             inp_tok, out_tok = dp_tokens.get(dp_id, ({}, {}))
+            server_lat = self._tracker.get_server_latency(data_id=dp_id)
             results.append(
                 DatapointResult(
                     datapoint_index=j,
@@ -989,6 +997,7 @@ class BaseModelSelector(ABC):
                     latency_seconds=latencies[j],
                     input_tokens=inp_tok,
                     output_tokens=out_tok,
+                    server_latency_ms=server_lat,
                 )
             )
         return results
@@ -1052,37 +1061,34 @@ class BaseModelSelector(ABC):
         return mean, math.sqrt(variance)
 
     @staticmethod
-    def _compute_concurrency(max_concurrent: int, batch_size: int,) -> Tuple[int, int]:
+    def _compute_concurrency(
+        max_concurrent: int, batch_size: int, per_combo: bool = False,
+    ) -> Tuple[int, int]:
         """Compute combo-level and datapoint-level concurrency limits.
 
-        Splits ``max_concurrent`` into two tiers so the total number of
-        in-flight API calls never exceeds the budget:
+        **Global mode** (default): Splits ``max_concurrent`` into two tiers
+        so the total number of in-flight API calls never exceeds the budget.
 
-        * **Datapoint concurrency** (inner): how many datapoints within a
-          single combo evaluate concurrently.  Set to
-          ``min(max_concurrent, batch_size)`` — saturate the batch first.
-        * **Combo concurrency** (outer): how many combos run in parallel.
-          Set to ``max_concurrent // dp_concurrent`` — use remaining slots.
-
-        The product ``n_combo * dp_concurrent <= max_concurrent`` always holds.
+        **Per-combo mode** (``per_combo=True``): All combos run
+        simultaneously, each with up to ``max_concurrent`` concurrent
+        samples. Useful for independent model endpoints (e.g. Bedrock)
+        where each model has its own throughput capacity.
 
         Args:
-            max_concurrent: Total concurrent API call budget across all
-                combos and datapoints.
+            max_concurrent: Concurrent API call budget. Global total
+                when ``per_combo=False``, per-combo budget when ``True``.
             batch_size: Number of datapoints to evaluate per combo in
                 the current round.
+            per_combo: If True, treat max_concurrent as a per-combo
+                budget and run all combos simultaneously.
 
         Returns:
             Tuple of ``(n_combo_parallel, dp_concurrent_per_combo)``.
-
-        Examples:
-            >>> BaseModelSelector._compute_concurrency(20, 5)
-            (4, 5)   # 4 combos x 5 datapoints = 20 slots
-            >>> BaseModelSelector._compute_concurrency(20, 100)
-            (1, 20)  # batch is large, cap dp at 20, 1 combo at a time
-            >>> BaseModelSelector._compute_concurrency(20, 1)
-            (20, 1)  # 1 dp per combo, run 20 combos in parallel
         """
+        if per_combo:
+            dp_concurrent = min(max(max_concurrent, 1), batch_size) if batch_size > 0 else 1
+            return 999999, dp_concurrent
+
         if batch_size <= 0:
             return max(max_concurrent, 1), 1
         dp_concurrent = min(max(max_concurrent, 1), batch_size)
@@ -1091,6 +1097,7 @@ class BaseModelSelector(ABC):
 
     def select_best(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         """
         Select the best model combination.
@@ -1102,7 +1109,11 @@ class BaseModelSelector(ABC):
         Args:
             parallel: If True, evaluate combinations concurrently.
             max_concurrent: Max total concurrent API calls across all
-                combinations and datapoints.
+                combinations and datapoints (global mode), or per combo
+                (when ``per_combo=True``).
+            per_combo: If True, treat ``max_concurrent`` as a per-combo
+                budget and run all combos simultaneously. Useful for
+                independent model endpoints (e.g. Bedrock).
 
         Returns:
             SelectionResults containing all model evaluation results.
@@ -1110,7 +1121,7 @@ class BaseModelSelector(ABC):
         record_offset = len(self._tracker.get_records())
         t0 = time.time()
         try:
-            result = self._run_selection(parallel, max_concurrent)
+            result = self._run_selection(parallel, max_concurrent, per_combo)
         finally:
             self._tracker.stop()
 
@@ -1133,6 +1144,7 @@ class BaseModelSelector(ABC):
     @abstractmethod
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         """Subclass hook — implement the actual selection algorithm."""
         ...

@@ -89,6 +89,7 @@ class LMProposalModelSelector(BaseModelSelector):
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         if parallel:
             logger.warning(

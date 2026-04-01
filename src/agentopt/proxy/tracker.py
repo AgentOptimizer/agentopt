@@ -163,6 +163,27 @@ class LLMTracker:
         )
         return sum(r.latency_seconds for r in records if r.cached)
 
+    def get_server_latency(
+        self,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Optional[float]:
+        """Return total server-side latency (ms) from Bedrock metrics.latencyMs.
+
+        Returns None if no records have server_latency_ms.
+        """
+        records = self.get_records(
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id
+        )
+        total = 0.0
+        found = False
+        for r in records:
+            if r.server_latency_ms is not None:
+                total += r.server_latency_ms
+                found = True
+        return total if found else None
+
     def clear(self) -> None:
         """Clear all recorded data."""
         with self._lock:

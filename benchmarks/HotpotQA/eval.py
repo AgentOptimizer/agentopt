@@ -47,6 +47,7 @@ from benchmarks.common import (
     add_common_cli_args,
     build_selector_kwargs,
     display_name,
+    extract_text_content,
     get_selectors,
     make_llm,
     resolve_models,
@@ -222,16 +223,16 @@ def _extract_text(result: Any) -> str:
     if isinstance(result, dict):
         for key in ("output", "final_output", "text", "answer", "final"):
             if key in result:
-                return str(result[key])
+                return extract_text_content(result[key])
         if "messages" in result and result["messages"]:
             last = result["messages"][-1]
             if isinstance(last, dict):
-                return str(last.get("content", ""))
+                return extract_text_content(last.get("content", ""))
             if hasattr(last, "content"):
-                return str(last.content)
+                return extract_text_content(last.content)
     if hasattr(result, "final_output"):
-        return str(result.final_output)
-    return str(result)
+        return extract_text_content(result.final_output)
+    return extract_text_content(result)
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +314,7 @@ def _invoke_with_tools(llm, new_messages, prior_messages=None, use_tools=True):
         response = llm.invoke(messages)
         messages.append(response)
 
-    return str(getattr(response, "content", response)), messages
+    return extract_text_content(getattr(response, "content", response)), messages
 
 
 def _run_reflection_loop(
@@ -408,7 +409,7 @@ def _hotpotqa_agent_fn_raw(
                     HumanMessage(content=prompt[:12000]),
                 ]
             )
-            return str(getattr(response, "content", response))
+            return extract_text_content(getattr(response, "content", response))
 
         def solver_call(prompt, prior_messages=None):
             return _invoke_with_tools(
@@ -490,7 +491,7 @@ def _hotpotqa_agent_fn_langgraph(
                     HumanMessage(content=prompt[:12000]),
                 ]
             )
-            return str(getattr(response, "content", response))
+            return extract_text_content(getattr(response, "content", response))
 
         def solver_call(prompt, prior_messages=None):
             return _invoke_with_tools(
@@ -667,7 +668,7 @@ def main():
 
     SelectorCls = SELECTORS[args.selector]
     selector = SelectorCls(
-        agent_fn=agent_fn,
+        agent=agent_fn,
         models=models_config,
         eval_fn=eval_fn,
         dataset=selection_set,
@@ -682,7 +683,10 @@ def main():
         tracker.start()
 
     start = time.time()
-    selection_results = selector.select_best(parallel=args.parallel)
+    selection_results = selector.select_best(
+        parallel=args.parallel,
+        per_combo=getattr(args, 'per_combo', False),
+    )
     elapsed = time.time() - start
 
     # Results

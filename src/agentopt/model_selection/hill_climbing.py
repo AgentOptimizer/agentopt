@@ -327,7 +327,7 @@ class HillClimbingModelSelector(BaseModelSelector):
     # ------------------------------------------------------------------
 
     async def _hill_climb_once_async(
-        self, seen: Set[str], max_concurrent: int
+        self, seen: Set[str], max_concurrent: int, per_combo: bool = False
     ) -> Optional[Tuple[Dict[str, ModelCandidate], float, float, List[ModelResult]]]:
         combo = self._random_combination(seen)
         if combo is None:
@@ -393,7 +393,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             batch_size = len(self.dataset)
             n_combo_nb, dp_concurrent_nb = self._compute_concurrency(
-                max_concurrent, batch_size
+                max_concurrent, batch_size, per_combo
             )
             neighbor_sem = asyncio.Semaphore(n_combo_nb)
 
@@ -428,9 +428,10 @@ class HillClimbingModelSelector(BaseModelSelector):
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         if parallel:
-            return asyncio.run(self._run_selection_async(max_concurrent))
+            return asyncio.run(self._run_selection_async(max_concurrent, per_combo))
         return self._run_selection_sequential()
 
     def _run_selection_sequential(self) -> SelectionResults:
@@ -471,7 +472,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
         return self._hc_finalize(all_results, global_best_combo, global_best_accuracy)
 
-    async def _run_selection_async(self, max_concurrent: int = 20,) -> SelectionResults:
+    async def _run_selection_async(self, max_concurrent: int = 20, per_combo: bool = False,) -> SelectionResults:
         all_results: List[ModelResult] = []
         global_best_combo: Optional[Dict[str, ModelCandidate]] = None
         global_best_accuracy = float("-inf")
@@ -489,7 +490,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         for restart in range(self.num_restarts):
             print(f"--- Restart {restart + 1}/{self.num_restarts} ---")
             result = await self._hill_climb_once_async(
-                seen, max_concurrent=max_concurrent
+                seen, max_concurrent=max_concurrent, per_combo=per_combo
             )
             if result is None:
                 print("  All combinations exhausted. Stopping.\n")

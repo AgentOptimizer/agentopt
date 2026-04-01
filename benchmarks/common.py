@@ -9,6 +9,15 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import botocore.config
+
+# Increase default read timeout to 10 minutes so slow models (e.g. gpt-oss-20b)
+# don't get dropped as timeouts — that would be an artificial confound.
+botocore.config.Config.OPTION_DEFAULTS = {
+    **botocore.config.Config.OPTION_DEFAULTS,
+    "read_timeout": 600,
+}
+
 
 # ---------------------------------------------------------------------------
 # Application inference profile mappings
@@ -50,7 +59,6 @@ DEFAULT_MODELS = [
     "Claude 3 Haiku",
     "Claude Haiku 4.5",
     "Claude Opus 4.6",
-    "DeepSeek R1",
     "gpt-oss-20b",
     "gpt-oss-120b",
     "Kimi K2.5",
@@ -89,6 +97,39 @@ for _pid, _display in _PROFILE_DISPLAY_NAMES.items():
     if _display in _BASE_PRICES:
         _arn = f"arn:aws:bedrock:us-east-1:920736616554:application-inference-profile/{_pid}"
         BEDROCK_PRICES[_arn] = _BASE_PRICES[_display]
+
+
+# ---------------------------------------------------------------------------
+# Content extraction helper
+# ---------------------------------------------------------------------------
+
+def extract_text_content(content: Any) -> str:
+    """Extract only the final text from a model response's content.
+
+    LangChain's ChatBedrockConverse returns ``content`` as:
+    - A plain string (most models), OR
+    - A list of dicts with ``{'type': 'text', 'text': '...'}`` and
+      ``{'type': 'reasoning_content', ...}`` blocks (gpt-oss, DeepSeek).
+
+    This function strips reasoning/thinking blocks and returns only
+    the text blocks joined together.  If there are no text blocks,
+    returns an empty string (the model gave no final answer).
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                text_parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text" and "text" in block:
+                    text_parts.append(block["text"])
+                elif "text" in block and "type" not in block:
+                    text_parts.append(block["text"])
+                # Explicitly skip 'reasoning_content', 'thinking', etc.
+        return "\n".join(text_parts)
+    return str(content)
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +238,9 @@ def get_selectors() -> dict[str, Any]:
         BruteForceModelSelector,
         HillClimbingModelSelector,
         ArmEliminationModelSelector,
-        HyperbandModelSelector,
         RandomSearchModelSelector,
+        EpsilonLUCBModelSelector,
+        ThresholdBanditSEModelSelector,
     )
     try:
         from agentopt import BayesianOptimizationModelSelector
@@ -210,7 +252,8 @@ def get_selectors() -> dict[str, Any]:
         "hill_climbing": HillClimbingModelSelector,
         "arm_elimination": ArmEliminationModelSelector,
         "random_search": RandomSearchModelSelector,
-        "hyperband": HyperbandModelSelector,
+        "epsilon_lucb": EpsilonLUCBModelSelector,
+        "threshold_se": ThresholdBanditSEModelSelector,
     }
     if BayesianOptimizationModelSelector:
         selectors["bayesian_optimization"] = BayesianOptimizationModelSelector
@@ -240,6 +283,8 @@ def add_common_cli_args(parser) -> None:
         help="Execution mode (default: langgraph)",
     )
     parser.add_argument("--parallel", action="store_true", help="Parallel evaluation")
+    parser.add_argument("--per-combo", action="store_true",
+                        help="Treat max-concurrent as per-combo budget (for independent endpoints like Bedrock)")
     parser.add_argument("--no-cache", action="store_true", help="Disable caching")
     parser.add_argument("--csv", type=str, default=None, help="Save results to CSV")
     parser.add_argument("--plot", type=str, default=None, help="Save plot to file")

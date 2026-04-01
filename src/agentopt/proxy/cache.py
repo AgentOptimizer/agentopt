@@ -50,14 +50,18 @@ class CacheEntry:
     response_bytes: bytes
     response_headers: Dict[str, str] = field(default_factory=dict)
     latency_seconds: float = 0.0
+    request_body: Optional[Dict] = field(default_factory=lambda: None)
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dict."""
-        return {
+        d = {
             "response_bytes_b64": base64.b64encode(self.response_bytes).decode("ascii"),
             "response_headers": self.response_headers,
             "latency_seconds": self.latency_seconds,
         }
+        if self.request_body is not None:
+            d["request_body"] = self.request_body
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "CacheEntry":
@@ -66,6 +70,7 @@ class CacheEntry:
             response_bytes=base64.b64decode(data["response_bytes_b64"]),
             response_headers=data.get("response_headers", {}),
             latency_seconds=data.get("latency_seconds", 0.0),
+            request_body=data.get("request_body"),
         )
 
 

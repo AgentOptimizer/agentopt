@@ -48,6 +48,7 @@ from benchmarks.common import (
     add_common_cli_args,
     build_selector_kwargs,
     display_name,
+    extract_text_content,
     get_selectors,
     make_llm,
     resolve_models,
@@ -234,7 +235,7 @@ def extract_answer_letter(response: str) -> str | None:
 
 def gpqa_eval_fn(expected: str, actual: Any) -> float:
     """Return 1.0 if the extracted answer matches *expected*, else 0.0."""
-    actual_str = str(actual)
+    actual_str = extract_text_content(actual)
     extracted = extract_answer_letter(actual_str)
 
     if extracted is None:
@@ -296,7 +297,8 @@ def _gpqa_agent_fn_raw(models: Dict[str, Any], agent_type: str = "direct", max_i
 
         if agent_type == "direct":
             response = llm.invoke(prompt)
-            return response.content if hasattr(response, "content") else str(response)
+            content = response.content if hasattr(response, "content") else str(response)
+            return extract_text_content(content)
 
         elif agent_type == "cot":
             messages = [
@@ -304,7 +306,8 @@ def _gpqa_agent_fn_raw(models: Dict[str, Any], agent_type: str = "direct", max_i
                 HumanMessage(content=prompt),
             ]
             response = llm.invoke(messages)
-            return response.content if hasattr(response, "content") else str(response)
+            content = response.content if hasattr(response, "content") else str(response)
+            return extract_text_content(content)
 
         else:  # self_reflect
             messages = [
@@ -318,11 +321,14 @@ def _gpqa_agent_fn_raw(models: Dict[str, Any], agent_type: str = "direct", max_i
                 messages.append(HumanMessage(content=SELF_REFLECT_CRITIQUE_PROMPT))
                 response = llm.invoke(messages)
                 messages.append(response)
-                content = response.content if hasattr(response, "content") else str(response)
+                content = extract_text_content(
+                    response.content if hasattr(response, "content") else str(response)
+                )
                 if "CONFIRMED" in content.upper():
                     return content
 
-            return response.content if hasattr(response, "content") else str(response)
+            content = response.content if hasattr(response, "content") else str(response)
+            return extract_text_content(content)
 
     return run
 
@@ -364,7 +370,8 @@ def _gpqa_agent_fn_langgraph(models: Dict[str, Any], agent_type: str = "direct",
             messages.append(HumanMessage(content=input_data["input"]))
             result = compiled.invoke({"messages": messages})
             last = result["messages"][-1]
-            return last.content if hasattr(last, "content") else str(last)
+            content = last.content if hasattr(last, "content") else str(last)
+            return extract_text_content(content)
 
         return run
 
@@ -401,7 +408,9 @@ def _gpqa_agent_fn_langgraph(models: Dict[str, Any], agent_type: str = "direct",
                 response = llm.invoke(messages)
                 messages.append(response)
                 iteration = state["iteration"] + 1
-                content = response.content if hasattr(response, "content") else str(response)
+                content = extract_text_content(
+                    response.content if hasattr(response, "content") else str(response)
+                )
                 final = content if "CONFIRMED" in content.upper() else ""
                 return {"messages": messages, "final": final, "iteration": iteration}
 
@@ -417,7 +426,8 @@ def _gpqa_agent_fn_langgraph(models: Dict[str, Any], agent_type: str = "direct",
                 final = state.get("final", "")
                 if not final and messages:
                     last = messages[-1]
-                    final = last.content if hasattr(last, "content") else str(last)
+                    content = last.content if hasattr(last, "content") else str(last)
+                    final = extract_text_content(content)
                 return {"messages": messages, "final": final, "iteration": state["iteration"]}
 
             graph = StateGraph(ReflectState)
@@ -557,7 +567,7 @@ def main():
 
     SelectorCls = SELECTORS[args.selector]
     selector = SelectorCls(
-        agent_fn=agent_fn,
+        agent=agent_fn,
         models={"agent": models},
         eval_fn=gpqa_eval_fn,
         dataset=dataset,
@@ -572,7 +582,10 @@ def main():
         tracker.start()
 
     start = time.time()
-    results = selector.select_best(parallel=args.parallel)
+    results = selector.select_best(
+        parallel=args.parallel,
+        per_combo=getattr(args, 'per_combo', False),
+    )
     elapsed = time.time() - start
 
     # Results

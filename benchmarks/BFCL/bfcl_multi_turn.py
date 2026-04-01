@@ -63,10 +63,11 @@ from agentopt import (
     BruteForceModelSelector,
     HillClimbingModelSelector,
     ArmEliminationModelSelector,
-    HyperbandModelSelector,
-    HyperbandV2ModelSelector,
     RandomSearchModelSelector,
+    EpsilonLUCBModelSelector,
+    ThresholdBanditSEModelSelector,
 )
+from benchmarks.common import extract_text_content
 
 try:
     from agentopt import BayesianOptimizationModelSelector
@@ -80,8 +81,8 @@ SELECTORS: dict[str, Any] = {
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "random_search": RandomSearchModelSelector,
-    "hyperband": HyperbandModelSelector,
-    "hyperband_v2": HyperbandV2ModelSelector,
+    "epsilon_lucb": EpsilonLUCBModelSelector,
+    "threshold_se": ThresholdBanditSEModelSelector,
 }
 if BayesianOptimizationModelSelector:
     SELECTORS["bayesian_optimization"] = BayesianOptimizationModelSelector
@@ -115,7 +116,10 @@ SYSTEM_MESSAGE = (
     "Always use the provided tools to complete tasks. "
     "Do not refuse to call a tool based on assumptions about file formats. "
     "Operations like mkdir, mv, cp, and touch only work on items in the "
-    "current directory — use cd to navigate first before operating on files."
+    "current directory — use cd to navigate first before operating on files. "
+    "At each turn, you should try your best to complete the tasks requested "
+    "by the user within the current turn. Continue to output functions to call "
+    "until you have fulfilled the user's request to the best of your ability."
 )
 
 # ---------------------------------------------------------------------------
@@ -283,7 +287,13 @@ def _make_args_schema(fn_name: str, parameters: dict):
     return create_model(safe_name, **fields)
 
 
-def load_func_docs(involved_classes: List[str]) -> List[dict]:
+def load_func_docs(involved_classes: List[str], path: List[str] | None = None) -> List[dict]:
+    # NOTE: The `path` field is the ground truth call sequence used for
+    # response-based evaluation — NOT a tool filter.  The model must see ALL
+    # tools from `involved_classes` so it can call helpers like `cd`, `mkdir`,
+    # `ls`, etc. that are needed to complete the task but may not appear in
+    # `path`.  The `path` parameter is kept for API compatibility but ignored.
+
     all_funcs = []
     for class_name in involved_classes:
         module_name = CLASS_FILE_MAPPING.get(class_name)
@@ -296,7 +306,8 @@ def load_func_docs(involved_classes: List[str]) -> List[dict]:
             for line in f:
                 line = line.strip()
                 if line:
-                    all_funcs.append(json.loads(line))
+                    func = json.loads(line)
+                    all_funcs.append(func)
     return all_funcs
 
 
@@ -626,7 +637,7 @@ def run_sample_prompting(
     turns = test_entry["question"]
 
     instances = create_backend_instances(initial_config, involved_classes)
-    func_docs = load_func_docs(involved_classes)
+    func_docs = load_func_docs(involved_classes, path=test_entry.get("path"))
     method_map = _build_method_map(instances)
 
     tool_prompt = _func_docs_to_prompt(func_docs)
@@ -649,26 +660,8 @@ def run_sample_prompting(
             try:
                 response = llm.invoke(messages)
                 raw_content = response.content if hasattr(response, "content") else str(response)
-                # Some models (DeepSeek-R1) return content as a list of blocks
-                if isinstance(raw_content, list):
-                    text_parts = []
-                    for block in raw_content:
-                        if isinstance(block, str):
-                            text_parts.append(block)
-                        elif isinstance(block, dict):
-                            if "text" in block:
-                                text_parts.append(block["text"])
-                            elif "reasoningContent" in block:
-                                rc = block["reasoningContent"]
-                                if isinstance(rc, dict) and "reasoningText" in rc:
-                                    rt = rc["reasoningText"]
-                                    if isinstance(rt, dict) and "text" in rt:
-                                        text_parts.append(rt["text"])
-                                    elif isinstance(rt, str):
-                                        text_parts.append(rt)
-                    text = "\n".join(text_parts)
-                else:
-                    text = str(raw_content)
+                # Strip reasoning/thinking blocks — only keep final text
+                text = extract_text_content(raw_content)
                 messages.append(AIMessage(content=text))
             except Exception as e:
                 return instances, time.time() - t0, f"Turn {turn_idx} step {step} error: {e}", all_tool_calls
@@ -713,12 +706,10 @@ def run_sample_prompting(
 # ---------------------------------------------------------------------------
 # Models known to not support tool calling on Bedrock
 _NON_FC_MODELS = {
-    # Bedrock model IDs (for direct model ID usage)
-    "us.deepseek.r1-v1:0", "deepseek.r1-v1:0",
     # Display names (for inference profile usage)
-    "DeepSeek R1",                                  # Bedrock returns "model doesn't support tool use"
     "Qwen3 32B",                                    # Qwen 32B — FC broken on Bedrock Converse
     "Kimi K2.5",                                    # Moonshot — FC broken on Bedrock Converse
+    "Ministral 3 8B",                               # Mistral — FC broken on Bedrock Converse
 }
 
 
@@ -747,7 +738,7 @@ def run_sample(
     turns = test_entry["question"]
 
     instances = create_backend_instances(initial_config, involved_classes)
-    func_docs = load_func_docs(involved_classes)
+    func_docs = load_func_docs(involved_classes, path=test_entry.get("path"))
     tools = build_tools(func_docs, instances)
 
     try:
@@ -830,7 +821,7 @@ def run_sample_raw(
     turns = test_entry["question"]
 
     instances = create_backend_instances(initial_config, involved_classes)
-    func_docs = load_func_docs(involved_classes)
+    func_docs = load_func_docs(involved_classes, path=test_entry.get("path"))
     tools = build_tools(func_docs, instances)
 
     try:
@@ -916,11 +907,10 @@ def evaluate_sample(
     model_instances: Dict[str, Any],
     model_calls_per_turn: Optional[List[List[Tuple[str, dict]]]] = None,
 ) -> Tuple[bool, str]:
-    """Evaluate with BOTH state-based AND response-based checks.
+    """Evaluate using state-based check only (matches official BFCL eval).
 
-    A sample passes only if:
-    1. State-based: final backend state matches ground truth state.
-    2. Response-based: GT function calls appear as subsequence of model calls.
+    State-based: final backend state matches ground truth state.
+    Response-based check removed — official BFCL uses state-only.
     """
     involved_classes = test_entry["involved_classes"]
     initial_config = test_entry["initial_config"]
@@ -962,11 +952,8 @@ def evaluate_sample(
                     f"gt={_truncate(str(gt_val), 100)}"
                 )
 
-    # --- Response-based check ---
-    if model_calls_per_turn is not None:
-        resp_ok, resp_reason = evaluate_response(ground_truth, model_calls_per_turn)
-        if not resp_ok:
-            return False, f"Response check failed: {resp_reason}"
+    # Response-based check removed — official BFCL uses state-based only.
+    # See: https://gorilla.cs.berkeley.edu/blogs/13_bfcl_v3_multi_turn.html
 
     return True, ""
 
@@ -1239,11 +1226,11 @@ def run_direct_benchmark(
     no_cache: bool = False,
 ):
     """Run benchmark via BruteForceModelSelector using agent_fn factory."""
-    from agentproxy import LLMTracker
+    from agentopt.proxy import LLMTracker
 
     agent_fn = _get_agent_fn(mode)
     selector = BruteForceModelSelector(
-        agent_fn=agent_fn,
+        agent=agent_fn,
         models={"agent": models},
         eval_fn=bfcl_eval_fn,
         dataset=dataset,
@@ -1255,7 +1242,8 @@ def run_direct_benchmark(
         tracker = LLMTracker(cache=False)
         selector._tracker = tracker
         tracker.start()
-    results = selector.select_best(parallel=parallel, max_concurrent=max_concurrent)
+    results = selector.select_best(parallel=parallel, max_concurrent=max_concurrent,
+                                   per_combo=True)
     return results
 
 
@@ -1270,12 +1258,12 @@ def run_model_selection(
     no_cache: bool = False,
 ):
     """Run AgentOpt model selection on the dataset."""
-    from agentproxy import LLMTracker
+    from agentopt.proxy import LLMTracker
 
     agent_fn = _get_agent_fn(mode)
     SelectorCls = SELECTORS[selector_name]
     base_kwargs = {
-        "agent_fn": agent_fn,
+        "agent": agent_fn,
         "models": {"agent": models},
         "eval_fn": bfcl_eval_fn,
         "dataset": dataset,
@@ -1290,7 +1278,8 @@ def run_model_selection(
         tracker = LLMTracker(cache=False)
         selector._tracker = tracker
         tracker.start()
-    results = selector.select_best(parallel=parallel, max_concurrent=max_concurrent)
+    results = selector.select_best(parallel=parallel, max_concurrent=max_concurrent,
+                                   per_combo=True)
     print(f"\nBest: {results.get_best()}")
     return results
 

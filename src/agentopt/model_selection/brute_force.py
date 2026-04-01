@@ -37,9 +37,10 @@ class BruteForceModelSelector(BaseModelSelector):
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         if parallel:
-            return asyncio.run(self._select_async(max_concurrent))
+            return asyncio.run(self._select_async(max_concurrent, per_combo))
         return self._select_sequential()
 
     def _select_sequential(self) -> SelectionResults:
@@ -67,6 +68,8 @@ class BruteForceModelSelector(BaseModelSelector):
                 accuracy, _ = self._compute_stats(scores)
                 latency = sum(latencies) / len(latencies) if latencies else 0.0
                 dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
+                server_lats = [dp.server_latency_ms for dp in dp_results if dp.server_latency_ms is not None]
+                mean_server_lat = sum(server_lats) / len(server_lats) if server_lats else None
 
                 result = self._make_result(
                     model_name=combo_name,
@@ -77,6 +80,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     attribute="combination",
                     is_best=False,
                     datapoint_results=dp_results,
+                    server_latency_ms=mean_server_lat,
                 )
                 print(f"  {result}")
                 all_results.append(result)
@@ -113,11 +117,11 @@ class BruteForceModelSelector(BaseModelSelector):
         results = SelectionResults(results=all_results)
         return results
 
-    async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
+    async def _select_async(self, max_concurrent: int = 20, per_combo: bool = False) -> SelectionResults:
         all_combos = self._all_combos()
 
         batch_size = len(self.dataset)
-        n_combo, dp_concurrent = self._compute_concurrency(max_concurrent, batch_size)
+        n_combo, dp_concurrent = self._compute_concurrency(max_concurrent, batch_size, per_combo)
         combo_sem = asyncio.Semaphore(n_combo)
 
         print(f"\n{'='*60}")
@@ -141,6 +145,8 @@ class BruteForceModelSelector(BaseModelSelector):
                 accuracy, _ = self._compute_stats(scores)
                 latency = sum(latencies) / len(latencies) if latencies else 0.0
                 dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
+                server_lats = [dp.server_latency_ms for dp in dp_results if dp.server_latency_ms is not None]
+                mean_server_lat = sum(server_lats) / len(server_lats) if server_lats else None
 
                 result = self._make_result(
                     model_name=combo_name,
@@ -151,6 +157,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     attribute="combination",
                     is_best=False,
                     datapoint_results=dp_results,
+                    server_latency_ms=mean_server_lat,
                 )
                 print(f"  {result}")
                 return combo_name, result

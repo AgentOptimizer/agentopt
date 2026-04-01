@@ -46,9 +46,10 @@ class RandomSearchModelSelector(BaseModelSelector):
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
+        per_combo: bool = False,
     ) -> SelectionResults:
         if parallel:
-            return asyncio.run(self._select_async(max_concurrent))
+            return asyncio.run(self._select_async(max_concurrent, per_combo))
         return self._select_sequential()
 
     def _get_sampled_combinations(
@@ -143,11 +144,11 @@ class RandomSearchModelSelector(BaseModelSelector):
         results = SelectionResults(results=all_results)
         return results
 
-    async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
+    async def _select_async(self, max_concurrent: int = 20, per_combo: bool = False) -> SelectionResults:
         all_combos, sampled = self._get_sampled_combinations()
 
         batch_size = len(self.dataset)
-        n_combo, dp_concurrent = self._compute_concurrency(max_concurrent, batch_size)
+        n_combo, dp_concurrent = self._compute_concurrency(max_concurrent, batch_size, per_combo)
         combo_sem = asyncio.Semaphore(n_combo)
 
         print(f"\n{'='*60}")

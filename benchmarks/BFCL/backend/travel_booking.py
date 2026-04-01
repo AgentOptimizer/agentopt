@@ -470,6 +470,7 @@ class TravelAPI:
         travel_from: str,
         travel_to: str,
         travel_class: str,
+        travel_cost: float = 0.0,
     ) -> Dict[str, Union[str, bool, Dict]]:
         """
         Book a flight given the travel information. From and To should be the airport codes in the IATA format.

@@ -25,3 +25,6 @@ class CallRecord:
     response_body: Dict[str, Any] = field(default_factory=dict)
     timestamp: str = ""
     cached: bool = False
+
+    # Server-side latency (Bedrock metrics.latencyMs), None for non-Bedrock calls
+    server_latency_ms: Optional[float] = None

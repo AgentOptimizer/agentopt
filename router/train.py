@@ -95,16 +95,23 @@ def train(config: RouterConfig):
     train_dataset = RouterDataset(train_samples, tokenizer, config.max_length)
     test_dataset = RouterDataset(test_samples, tokenizer, config.max_length)
 
+    # Gradient accumulation: use micro_batch that fits in VRAM,
+    # accumulate gradients to simulate the full batch_size.
+    micro_batch = config.micro_batch
+    accum_steps = max(1, config.batch_size // micro_batch)
+    print(f"Micro batch: {micro_batch}, accumulation steps: {accum_steps}, "
+          f"effective batch: {micro_batch * accum_steps}")
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=config.batch_size,
+        batch_size=micro_batch,
         shuffle=True,
         collate_fn=_collate_fn,
         num_workers=0,
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=config.batch_size,
+        batch_size=micro_batch,
         shuffle=False,
         collate_fn=_collate_fn,
         num_workers=0,
@@ -128,7 +135,8 @@ def train(config: RouterConfig):
         weight_decay=config.weight_decay,
     )
 
-    total_steps = len(train_loader) * config.epochs
+    optimizer_steps_per_epoch = math.ceil(len(train_loader) / accum_steps)
+    total_steps = optimizer_steps_per_epoch * config.epochs
     warmup_steps = int(total_steps * config.warmup_ratio)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
@@ -136,8 +144,9 @@ def train(config: RouterConfig):
         num_training_steps=total_steps,
     )
 
-    print(f"\nTraining: {config.epochs} epochs, {len(train_loader)} steps/epoch, "
-          f"{total_steps} total steps, {warmup_steps} warmup steps",
+    print(f"\nTraining: {config.epochs} epochs, {len(train_loader)} micro-batches/epoch, "
+          f"{optimizer_steps_per_epoch} optimizer steps/epoch, "
+          f"{total_steps} total steps, {warmup_steps} warmup",
           flush=True)
 
     # Training loop
@@ -150,8 +159,9 @@ def train(config: RouterConfig):
         epoch_loss = 0.0
         n_batches = 0
         t0 = time.time()
+        optimizer.zero_grad()
 
-        for batch in train_loader:
+        for step, batch in enumerate(train_loader):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             scores = batch["scores"].to(device)
@@ -160,15 +170,18 @@ def train(config: RouterConfig):
 
             predictions = model(input_ids, attention_mask, head)
             loss = masked_mse_loss(predictions, scores, mask)
-
-            optimizer.zero_grad()
+            loss = loss / accum_steps  # scale loss for accumulation
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
 
-            epoch_loss += loss.item()
+            epoch_loss += loss.item() * accum_steps
             n_batches += 1
+
+            # Update weights every accum_steps, or at end of epoch
+            if (step + 1) % accum_steps == 0 or (step + 1) == len(train_loader):
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
 
         avg_loss = epoch_loss / max(n_batches, 1)
         elapsed = time.time() - t0
@@ -232,9 +245,12 @@ def _print_metrics(metrics: dict):
 def main():
     parser = argparse.ArgumentParser(description="Train the BERT router")
     parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--batch-size", type=int, default=16,
+                        help="Effective batch size (via gradient accumulation)")
+    parser.add_argument("--micro-batch", type=int, default=2,
+                        help="Actual batch size per forward pass")
     parser.add_argument("--lr", type=float, default=2e-5)
-    parser.add_argument("--max-length", type=int, default=8192)
+    parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--output-dir", type=str, default="router/checkpoints")
@@ -244,6 +260,7 @@ def main():
     config = RouterConfig(
         epochs=args.epochs,
         batch_size=args.batch_size,
+        micro_batch=args.micro_batch,
         lr=args.lr,
         max_length=args.max_length,
         seed=args.seed,

@@ -83,7 +83,8 @@ class RouterConfig:
 
     # Training
     epochs: int = 5
-    batch_size: int = 16
+    batch_size: int = 16       # effective batch size
+    micro_batch: int = 2       # actual batch per forward pass (gradient accumulation)
     lr: float = 2e-5
     weight_decay: float = 0.01
     warmup_ratio: float = 0.1

@@ -1,0 +1,258 @@
+"""Training script for the BERT router.
+
+Usage:
+    cd agentopt/
+    python -m router.train
+    python -m router.train --epochs 3 --batch-size 8 --lr 1e-5
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import time
+
+import torch
+from torch.optim import AdamW
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer, get_linear_schedule_with_warmup
+
+from .config import BENCHMARK_TOKENS, RouterConfig
+from .data import RouterDataset, load_samples, train_test_split
+from .evaluate import evaluate
+from .model import BERTRouter, masked_mse_loss
+
+
+def _collate_fn(batch):
+    """Custom collate: pad scores/mask to max_combos (81)."""
+    max_combos = 81
+
+    input_ids = torch.stack([b["input_ids"] for b in batch])
+    attention_mask = torch.stack([b["attention_mask"] for b in batch])
+    heads = torch.tensor([b["head"] for b in batch], dtype=torch.long)
+
+    scores = torch.zeros(len(batch), max_combos)
+    masks = torch.zeros(len(batch), max_combos, dtype=torch.bool)
+
+    for i, b in enumerate(batch):
+        n = b["scores"].size(0)
+        scores[i, :n] = b["scores"]
+        masks[i, :n] = b["mask"]
+
+    benchmarks = [b["benchmark"] for b in batch]
+    sample_idxs = [b["sample_idx"] for b in batch]
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "scores": scores,
+        "mask": masks,
+        "head": heads,
+        "benchmark": benchmarks,
+        "sample_idx": sample_idxs,
+    }
+
+
+def train(config: RouterConfig):
+    """Train the BERT router."""
+    # MPS can be unstable with older PyTorch; prefer CUDA > CPU > MPS
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    print(f"Device: {device}", flush=True)
+
+    # Seed
+    torch.manual_seed(config.seed)
+
+    # Load tokenizer and add special tokens
+    print("Loading tokenizer...")
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+    special_tokens = list(BENCHMARK_TOKENS.values())
+    n_added = tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
+    print(f"Added {n_added} special tokens: {special_tokens}")
+
+    # Load data
+    print("Loading samples...")
+    samples = load_samples(config)
+    train_samples, test_samples = train_test_split(
+        samples, test_size=config.test_size, seed=config.seed
+    )
+
+    # Print split stats
+    from collections import Counter
+    train_counts = Counter(s["benchmark"] for s in train_samples)
+    test_counts = Counter(s["benchmark"] for s in test_samples)
+    print(f"\nTrain: {len(train_samples)} samples")
+    for b in sorted(train_counts):
+        print(f"  {b}: {train_counts[b]}")
+    print(f"Test: {len(test_samples)} samples")
+    for b in sorted(test_counts):
+        print(f"  {b}: {test_counts[b]}")
+
+    train_dataset = RouterDataset(train_samples, tokenizer, config.max_length)
+    test_dataset = RouterDataset(test_samples, tokenizer, config.max_length)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config.batch_size,
+        shuffle=True,
+        collate_fn=_collate_fn,
+        num_workers=0,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        collate_fn=_collate_fn,
+        num_workers=0,
+    )
+
+    # Model
+    print(f"\nLoading model: {config.model_name}", flush=True)
+    model = BERTRouter(config.model_name, config.n_1tuple, config.n_2tuple)
+    model.encoder.resize_token_embeddings(len(tokenizer))
+    model = model.to(device)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Parameters: {total_params:,} total, {trainable_params:,} trainable",
+          flush=True)
+
+    # Optimizer and scheduler
+    optimizer = AdamW(
+        model.parameters(),
+        lr=config.lr,
+        weight_decay=config.weight_decay,
+    )
+
+    total_steps = len(train_loader) * config.epochs
+    warmup_steps = int(total_steps * config.warmup_ratio)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=total_steps,
+    )
+
+    print(f"\nTraining: {config.epochs} epochs, {len(train_loader)} steps/epoch, "
+          f"{total_steps} total steps, {warmup_steps} warmup steps",
+          flush=True)
+
+    # Training loop
+    os.makedirs(config.output_dir, exist_ok=True)
+    best_metric = -1.0
+    best_epoch = -1
+
+    for epoch in range(config.epochs):
+        model.train()
+        epoch_loss = 0.0
+        n_batches = 0
+        t0 = time.time()
+
+        for batch in train_loader:
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            scores = batch["scores"].to(device)
+            mask = batch["mask"].to(device)
+            head = batch["head"].to(device)
+
+            predictions = model(input_ids, attention_mask, head)
+            loss = masked_mse_loss(predictions, scores, mask)
+
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            scheduler.step()
+
+            epoch_loss += loss.item()
+            n_batches += 1
+
+        avg_loss = epoch_loss / max(n_batches, 1)
+        elapsed = time.time() - t0
+        print(f"\nEpoch {epoch + 1}/{config.epochs} — "
+              f"loss: {avg_loss:.4f}, time: {elapsed:.1f}s, "
+              f"lr: {scheduler.get_last_lr()[0]:.2e}")
+
+        # Evaluate
+        metrics = evaluate(model, test_loader, device)
+        _print_metrics(metrics)
+
+        # Save best model (by overall selection accuracy)
+        overall_acc = metrics["overall"]["selection_accuracy"]
+        if overall_acc > best_metric:
+            best_metric = overall_acc
+            best_epoch = epoch + 1
+            save_path = os.path.join(config.output_dir, "best_model")
+            model.encoder.save_pretrained(save_path)
+            tokenizer.save_pretrained(save_path)
+            # Save heads separately
+            torch.save({
+                "head_1tuple": model.head_1tuple.state_dict(),
+                "head_2tuple": model.head_2tuple.state_dict(),
+                "config": {
+                    "model_name": config.model_name,
+                    "n_1tuple": config.n_1tuple,
+                    "n_2tuple": config.n_2tuple,
+                },
+            }, os.path.join(save_path, "heads.pt"))
+            print(f"  ** Saved best model (epoch {best_epoch}, "
+                  f"selection_acc={overall_acc:.1%})")
+
+        # Save metrics
+        metrics_path = os.path.join(config.output_dir, f"metrics_epoch{epoch + 1}.json")
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+
+    print(f"\nTraining complete. Best: epoch {best_epoch}, "
+          f"selection_acc={best_metric:.1%}")
+    print(f"Model saved to: {config.output_dir}/best_model/")
+
+
+def _print_metrics(metrics: dict):
+    """Print evaluation metrics in a readable format."""
+    for key in sorted(metrics.keys()):
+        if key == "overall":
+            continue
+        m = metrics[key]
+        print(f"  {key:>10}: sel_acc={m['selection_accuracy']:.1%}, "
+              f"top3={m['top3_accuracy']:.1%}, "
+              f"mean_score={m['mean_selected_score']:.3f}, "
+              f"oracle={m['oracle_score']:.3f}, "
+              f"regret={m['mean_regret']:.3f}")
+    m = metrics["overall"]
+    print(f"  {'OVERALL':>10}: sel_acc={m['selection_accuracy']:.1%}, "
+          f"top3={m['top3_accuracy']:.1%}, "
+          f"mean_score={m['mean_selected_score']:.3f}, "
+          f"regret={m['mean_regret']:.3f}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Train the BERT router")
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--max-length", type=int, default=8192)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--output-dir", type=str, default="router/checkpoints")
+    parser.add_argument("--scores-path", type=str, default="router/scores.json")
+    args = parser.parse_args()
+
+    config = RouterConfig(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        max_length=args.max_length,
+        seed=args.seed,
+        test_size=args.test_size,
+        output_dir=args.output_dir,
+        scores_path=args.scores_path,
+    )
+    train(config)
+
+
+if __name__ == "__main__":
+    main()

@@ -2,7 +2,12 @@
 
 Each sample is: (benchmark_token + query_text) → score vector.
 - 1-tuple benchmarks (GPQA, BFCL): 9-dim score vector
-- 2-tuple benchmarks (HotpotQA, MathQA): 81-dim score vector
+- 2-tuple benchmarks (HotpotQA, MathQA): decomposed into two 9-dim vectors
+  (role1 marginal scores, role2 marginal scores)
+
+For 2-tuple, the marginal scores are computed by averaging across the other
+role. E.g., role1_score[i] = mean of combo_score[i*9+j] for all valid j.
+This captures "how good is this model for role 1 on average."
 
 Missing scores (partial coverage, especially MathQA) are tracked via a
 boolean mask tensor. The loss function and evaluation metrics use this
@@ -154,6 +159,56 @@ def _get_combo_list(benchmark: str) -> List[str]:
         raise ValueError(f"Unknown benchmark: {benchmark}")
 
 
+def _decompose_2tuple_scores(
+    combo_scores: torch.Tensor,
+    combo_mask: torch.Tensor,
+    n_models: int = 9,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Decompose 81-dim combo scores into two 9-dim role marginals.
+
+    For role1 (planner/answer), role1_score[i] = mean of combo_score[i*9+j]
+    across all valid j. This captures "how good is model i for role 1."
+
+    For role2 (solver/critic), role2_score[j] = mean of combo_score[i*9+j]
+    across all valid i.
+
+    Args:
+        combo_scores: (81,) float tensor
+        combo_mask: (81,) bool tensor
+        n_models: number of models per role (9)
+
+    Returns:
+        role1_scores: (9,) float
+        role1_mask: (9,) bool — True if at least one combo with this role1 model has a score
+        role2_scores: (9,) float
+        role2_mask: (9,) bool
+    """
+    role1_scores = torch.zeros(n_models, dtype=torch.float32)
+    role1_mask = torch.zeros(n_models, dtype=torch.bool)
+    role2_scores = torch.zeros(n_models, dtype=torch.float32)
+    role2_mask = torch.zeros(n_models, dtype=torch.bool)
+
+    # Reshape to (9, 9) — row=role1, col=role2
+    scores_2d = combo_scores[:n_models * n_models].view(n_models, n_models)
+    mask_2d = combo_mask[:n_models * n_models].view(n_models, n_models)
+
+    # Role 1 marginals (average across role2 dimension)
+    for i in range(n_models):
+        valid = mask_2d[i]  # which role2 models have scores for this role1
+        if valid.any():
+            role1_scores[i] = scores_2d[i][valid].mean()
+            role1_mask[i] = True
+
+    # Role 2 marginals (average across role1 dimension)
+    for j in range(n_models):
+        valid = mask_2d[:, j]  # which role1 models have scores for this role2
+        if valid.any():
+            role2_scores[j] = scores_2d[:, j][valid].mean()
+            role2_mask[j] = True
+
+    return role1_scores, role1_mask, role2_scores, role2_mask
+
+
 # ---------------------------------------------------------------------------
 # Dataset class
 # ---------------------------------------------------------------------------
@@ -164,9 +219,13 @@ class RouterDataset(Dataset):
 
     Each item contains:
         - input_ids, attention_mask: tokenized "[BENCH] query_text"
-        - scores: float tensor of shape (n_combos,) — 0.0 for missing
-        - mask: bool tensor of shape (n_combos,) — True where score exists
-        - head: int — 0 for 1-tuple (9-dim), 1 for 2-tuple (81-dim)
+        - scores: float tensor of shape (18,) — [role1(9), role2(9)]
+          For 1-tuple: role1 = model scores, role2 = zeros
+          For 2-tuple: role1 = marginal role1 scores, role2 = marginal role2 scores
+        - mask: bool tensor of shape (18,)
+        - combo_scores: float tensor of shape (81,) — original combo scores for eval
+        - combo_mask: bool tensor of shape (81,) — original combo mask for eval
+        - head: int — 0 for 1-tuple, 1 for 2-tuple
         - benchmark: str
         - sample_idx: int
     """
@@ -201,6 +260,8 @@ class RouterDataset(Dataset):
             "attention_mask": enc["attention_mask"].squeeze(0),
             "scores": s["scores"],
             "mask": s["mask"],
+            "combo_scores": s["combo_scores"],
+            "combo_mask": s["combo_mask"],
             "head": s["head"],
             "benchmark": s["benchmark"],
             "sample_idx": s["sample_idx"],
@@ -220,8 +281,10 @@ def load_samples(
 
     Returns a list of dicts, each with:
         text: str — "[BENCH] query_text"
-        scores: Tensor of shape (n_combos,)
-        mask: Tensor of shape (n_combos,) — True where score exists
+        scores: Tensor of shape (18,) — decomposed [role1, role2]
+        mask: Tensor of shape (18,)
+        combo_scores: Tensor of shape (81,) — original combo scores
+        combo_mask: Tensor of shape (81,) — original combo mask
         head: int — 0 or 1
         benchmark: str
         sample_idx: int
@@ -237,6 +300,7 @@ def load_samples(
     with open(scores_file) as f:
         all_scores = json.load(f)
 
+    n_models = config.n_models
     samples = []
 
     for bench in config.benchmarks:
@@ -269,19 +333,41 @@ def load_samples(
             query = queries[idx]
             text = f"{token} {query}"
 
-            # Build score and mask vectors
-            scores_vec = torch.zeros(n_combos, dtype=torch.float32)
-            mask_vec = torch.zeros(n_combos, dtype=torch.bool)
+            # Build original combo score and mask vectors (81-dim max)
+            combo_scores_vec = torch.zeros(n_models * n_models, dtype=torch.float32)
+            combo_mask_vec = torch.zeros(n_models * n_models, dtype=torch.bool)
 
             for combo_idx, combo_name in enumerate(combo_list):
                 if combo_name in score_dict:
-                    scores_vec[combo_idx] = score_dict[combo_name]
-                    mask_vec[combo_idx] = True
+                    combo_scores_vec[combo_idx] = score_dict[combo_name]
+                    combo_mask_vec[combo_idx] = True
+
+            # Build training targets (18-dim: [role1(9), role2(9)])
+            train_scores = torch.zeros(n_models * 2, dtype=torch.float32)
+            train_mask = torch.zeros(n_models * 2, dtype=torch.bool)
+
+            if head == 0:
+                # 1-tuple: first 9 = model scores, last 9 = zeros
+                for combo_idx, combo_name in enumerate(combo_list):
+                    if combo_name in score_dict:
+                        train_scores[combo_idx] = score_dict[combo_name]
+                        train_mask[combo_idx] = True
+            else:
+                # 2-tuple: decompose 81 → 9+9 marginals
+                r1_scores, r1_mask, r2_scores, r2_mask = _decompose_2tuple_scores(
+                    combo_scores_vec, combo_mask_vec, n_models
+                )
+                train_scores[:n_models] = r1_scores
+                train_scores[n_models:] = r2_scores
+                train_mask[:n_models] = r1_mask
+                train_mask[n_models:] = r2_mask
 
             samples.append({
                 "text": text,
-                "scores": scores_vec,
-                "mask": mask_vec,
+                "scores": train_scores,
+                "mask": train_mask,
+                "combo_scores": combo_scores_vec,
+                "combo_mask": combo_mask_vec,
                 "head": head,
                 "benchmark": bench,
                 "sample_idx": idx,

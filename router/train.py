@@ -1,9 +1,9 @@
-"""Training script for the BERT router.
+"""Training script for the hierarchical BERT router.
 
 Usage:
     cd agentopt/
     python -m router.train
-    python -m router.train --epochs 3 --batch-size 8 --lr 1e-5
+    python -m router.train --epochs 5 --batch-size 16 --lr 2e-5
 """
 
 from __future__ import annotations
@@ -26,20 +26,26 @@ from .model import BERTRouter, masked_mse_loss
 
 
 def _collate_fn(batch):
-    """Custom collate: pad scores/mask to max_combos (81)."""
-    max_combos = 81
+    """Custom collate: pad scores/mask to 18 (9+9), combo_scores/mask to 81."""
+    n_train = 18   # role1(9) + role2(9)
+    n_combo = 81   # original combos for eval
 
     input_ids = torch.stack([b["input_ids"] for b in batch])
     attention_mask = torch.stack([b["attention_mask"] for b in batch])
     heads = torch.tensor([b["head"] for b in batch], dtype=torch.long)
 
-    scores = torch.zeros(len(batch), max_combos)
-    masks = torch.zeros(len(batch), max_combos, dtype=torch.bool)
+    scores = torch.zeros(len(batch), n_train)
+    masks = torch.zeros(len(batch), n_train, dtype=torch.bool)
+    combo_scores = torch.zeros(len(batch), n_combo)
+    combo_masks = torch.zeros(len(batch), n_combo, dtype=torch.bool)
 
     for i, b in enumerate(batch):
         n = b["scores"].size(0)
         scores[i, :n] = b["scores"]
         masks[i, :n] = b["mask"]
+        nc = b["combo_scores"].size(0)
+        combo_scores[i, :nc] = b["combo_scores"]
+        combo_masks[i, :nc] = b["combo_mask"]
 
     benchmarks = [b["benchmark"] for b in batch]
     sample_idxs = [b["sample_idx"] for b in batch]
@@ -49,6 +55,8 @@ def _collate_fn(batch):
         "attention_mask": attention_mask,
         "scores": scores,
         "mask": masks,
+        "combo_scores": combo_scores,
+        "combo_mask": combo_masks,
         "head": heads,
         "benchmark": benchmarks,
         "sample_idx": sample_idxs,
@@ -56,15 +64,13 @@ def _collate_fn(batch):
 
 
 def train(config: RouterConfig):
-    """Train the BERT router."""
-    # MPS can be unstable with older PyTorch; prefer CUDA > CPU > MPS
+    """Train the hierarchical BERT router."""
     if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
     print(f"Device: {device}", flush=True)
 
-    # Seed
     torch.manual_seed(config.seed)
 
     # Load tokenizer and add special tokens
@@ -95,8 +101,7 @@ def train(config: RouterConfig):
     train_dataset = RouterDataset(train_samples, tokenizer, config.max_length)
     test_dataset = RouterDataset(test_samples, tokenizer, config.max_length)
 
-    # Gradient accumulation: use micro_batch that fits in VRAM,
-    # accumulate gradients to simulate the full batch_size.
+    # Gradient accumulation
     micro_batch = config.micro_batch
     accum_steps = max(1, config.batch_size // micro_batch)
     print(f"Micro batch: {micro_batch}, accumulation steps: {accum_steps}, "
@@ -119,7 +124,7 @@ def train(config: RouterConfig):
 
     # Model
     print(f"\nLoading model: {config.model_name}", flush=True)
-    model = BERTRouter(config.model_name, config.n_1tuple, config.n_2tuple)
+    model = BERTRouter(config.model_name, config.n_models)
     model.encoder.resize_token_embeddings(len(tokenizer))
     model = model.to(device)
 
@@ -170,13 +175,12 @@ def train(config: RouterConfig):
 
             predictions = model(input_ids, attention_mask, head)
             loss = masked_mse_loss(predictions, scores, mask)
-            loss = loss / accum_steps  # scale loss for accumulation
+            loss = loss / accum_steps
             loss.backward()
 
             epoch_loss += loss.item() * accum_steps
             n_batches += 1
 
-            # Update weights every accum_steps, or at end of epoch
             if (step + 1) % accum_steps == 0 or (step + 1) == len(train_loader):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
@@ -190,29 +194,28 @@ def train(config: RouterConfig):
               f"lr: {scheduler.get_last_lr()[0]:.2e}")
 
         # Evaluate
-        metrics = evaluate(model, test_loader, device)
+        metrics = evaluate(model, test_loader, device, n_models=config.n_models)
         _print_metrics(metrics)
 
-        # Save best model (by overall selection accuracy)
-        overall_acc = metrics["overall"]["selection_accuracy"]
-        if overall_acc > best_metric:
-            best_metric = overall_acc
+        # Save best model (by overall mean_selected_score)
+        overall_score = metrics["overall"]["mean_selected_score"]
+        if overall_score > best_metric:
+            best_metric = overall_score
             best_epoch = epoch + 1
             save_path = os.path.join(config.output_dir, "best_model")
             model.encoder.save_pretrained(save_path)
             tokenizer.save_pretrained(save_path)
-            # Save heads separately
             torch.save({
                 "head_1tuple": model.head_1tuple.state_dict(),
-                "head_2tuple": model.head_2tuple.state_dict(),
+                "head_role1": model.head_role1.state_dict(),
+                "head_role2": model.head_role2.state_dict(),
                 "config": {
                     "model_name": config.model_name,
-                    "n_1tuple": config.n_1tuple,
-                    "n_2tuple": config.n_2tuple,
+                    "n_models": config.n_models,
                 },
             }, os.path.join(save_path, "heads.pt"))
             print(f"  ** Saved best model (epoch {best_epoch}, "
-                  f"selection_acc={overall_acc:.1%})")
+                  f"mean_score={overall_score:.3f})")
 
         # Save metrics
         metrics_path = os.path.join(config.output_dir, f"metrics_epoch{epoch + 1}.json")
@@ -220,7 +223,7 @@ def train(config: RouterConfig):
             json.dump(metrics, f, indent=2)
 
     print(f"\nTraining complete. Best: epoch {best_epoch}, "
-          f"selection_acc={best_metric:.1%}")
+          f"mean_score={best_metric:.3f}")
     print(f"Model saved to: {config.output_dir}/best_model/")
 
 
@@ -243,7 +246,7 @@ def _print_metrics(metrics: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train the BERT router")
+    parser = argparse.ArgumentParser(description="Train the hierarchical BERT router")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=16,
                         help="Effective batch size (via gradient accumulation)")
@@ -253,7 +256,7 @@ def main():
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test-size", type=float, default=0.2)
-    parser.add_argument("--output-dir", type=str, default="router/checkpoints")
+    parser.add_argument("--output-dir", type=str, default="router/checkpoints_hierarchical")
     parser.add_argument("--scores-path", type=str, default="router/scores.json")
     args = parser.parse_args()
 

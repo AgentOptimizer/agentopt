@@ -77,9 +77,8 @@ class RouterConfig:
     model_name: str = "answerdotai/ModernBERT-large"
     max_length: int = 8192
 
-    # Heads
-    n_1tuple: int = 9    # GPQA, BFCL
-    n_2tuple: int = 81   # HotpotQA, MathQA
+    # Heads (hierarchical: all heads output n_models dimensions)
+    n_models: int = 9    # number of candidate models per role
 
     # Training
     epochs: int = 5

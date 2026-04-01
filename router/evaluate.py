@@ -1,21 +1,23 @@
-"""Evaluation metrics for the BERT router.
+"""Evaluation metrics for the BERT router (hierarchical version).
+
+For 1-tuple benchmarks (GPQA, BFCL):
+    Router predicts 9 model scores → pick argmax → look up actual score.
+
+For 2-tuple benchmarks (HotpotQA, MathQA):
+    Router predicts role1 scores (9) + role2 scores (9) independently.
+    Pick role1 = argmax(pred[0:9]), role2 = argmax(pred[9:18]).
+    Combo index = role1 * 9 + role2.
+    Look up actual combo score from original 81-dim scores.
 
 Metrics per benchmark and overall:
-- Selection accuracy: does argmax(predicted) match argmax(actual)?
-- Top-3 accuracy: is the oracle best in the top 3 predicted?
+- Selection accuracy: does the router's combo match the oracle best?
+- Top-3 accuracy: is the oracle best reachable from top-3 role1 × top-3 role2?
 - Mean selected score: average actual score of the router's pick
 - Oracle score: average of the best available score per sample
 - Mean regret: oracle_score - mean_selected_score
-- Cost of selected: average cost of the router's pick (if cost data available)
 
 All metrics respect the mask — only combos with actual scores are
 considered when computing argmax, top-k, etc.
-
-Baselines:
-- Random: pick a random combo (among those with scores)
-- Most expensive: always pick the highest-cost combo
-- Cheapest: always pick the lowest-cost combo
-- Majority: always pick the combo with highest average score in train set
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ def evaluate(
     model,
     dataloader: DataLoader,
     device: torch.device,
+    n_models: int = 9,
     train_samples: Optional[List[dict]] = None,
 ) -> Dict:
     """Evaluate the model on a dataloader.
@@ -53,6 +56,7 @@ def evaluate(
         model: BERTRouter model
         dataloader: test DataLoader
         device: torch device
+        n_models: number of models per role
         train_samples: if provided, compute majority baseline from train data
 
     Returns:
@@ -61,36 +65,31 @@ def evaluate(
     model.eval()
 
     # Collect predictions and targets
-    records = []  # list of (benchmark, head, pred_vec, score_vec, mask_vec)
+    records = []
 
     for batch in dataloader:
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         head = batch["head"].to(device)
-        scores = batch["scores"]       # keep on CPU
-        mask = batch["mask"]           # keep on CPU
+        combo_scores = batch["combo_scores"]   # (batch, 81) — original scores
+        combo_mask = batch["combo_mask"]       # (batch, 81)
         benchmarks = batch["benchmark"]
 
-        predictions = model(input_ids, attention_mask, head).cpu()
+        predictions = model(input_ids, attention_mask, head).cpu()  # (batch, 18)
 
         for i in range(len(benchmarks)):
             records.append({
                 "benchmark": benchmarks[i],
                 "head": head[i].item(),
-                "pred": predictions[i],
-                "scores": scores[i],
-                "mask": mask[i],
+                "pred": predictions[i],           # (18,)
+                "combo_scores": combo_scores[i],  # (81,)
+                "combo_mask": combo_mask[i],      # (81,)
             })
 
     # Group by benchmark
     by_bench = defaultdict(list)
     for r in records:
         by_bench[r["benchmark"]].append(r)
-
-    # Compute majority baseline from training data
-    majority_combo = {}
-    if train_samples:
-        majority_combo = _compute_majority(train_samples)
 
     # Compute metrics per benchmark
     all_metrics = {}
@@ -101,7 +100,7 @@ def evaluate(
 
     for bench in sorted(by_bench.keys()):
         bench_records = by_bench[bench]
-        m = _compute_benchmark_metrics(bench, bench_records, majority_combo.get(bench))
+        m = _compute_benchmark_metrics(bench, bench_records, n_models)
         all_metrics[bench] = m
 
         all_sel_scores.extend(m["_selected_scores"])
@@ -136,7 +135,7 @@ def evaluate(
 def _compute_benchmark_metrics(
     benchmark: str,
     records: list,
-    majority_idx: Optional[int] = None,
+    n_models: int = 9,
 ) -> dict:
     """Compute metrics for a single benchmark."""
     correct = []
@@ -148,45 +147,123 @@ def _compute_benchmark_metrics(
     rng = random.Random(42)
 
     for r in records:
-        pred = r["pred"]
-        scores = r["scores"]
-        mask = r["mask"]
+        pred = r["pred"]           # (18,)
+        combo_scores = r["combo_scores"]  # (81,)
+        combo_mask = r["combo_mask"]      # (81,)
         head = r["head"]
 
-        n_combos = 9 if head == 0 else 81
+        if head == 0:
+            # 1-tuple: same as before — pick from 9 models
+            n_combos = n_models
+            valid_indices = torch.where(combo_mask[:n_combos])[0]
+            if len(valid_indices) == 0:
+                continue
 
-        # Only consider combos that have scores
-        valid_indices = torch.where(mask[:n_combos])[0]
-        if len(valid_indices) == 0:
+            valid_scores = combo_scores[valid_indices]
+            valid_preds = pred[valid_indices]  # pred[0:9] for 1-tuple
+
+            # Oracle
+            oracle_val = valid_scores.max().item()
+            oracle_idx_in_valid = valid_scores.argmax().item()
+            oracle_idx = valid_indices[oracle_idx_in_valid].item()
+
+            # Router's pick
+            selected_idx_in_valid = valid_preds.argmax().item()
+            selected_idx = valid_indices[selected_idx_in_valid].item()
+            selected_score = combo_scores[selected_idx].item()
+
+            # Top-3
+            k = min(3, len(valid_indices))
+            top_k_in_valid = valid_preds.topk(k).indices
+            top_k_indices = valid_indices[top_k_in_valid]
+            is_top3 = oracle_idx in top_k_indices.tolist()
+
+            # Random baseline
+            rand_idx = valid_indices[rng.randint(0, len(valid_indices) - 1)].item()
+            random_scores.append(combo_scores[rand_idx].item())
+
+        else:
+            # 2-tuple hierarchical: pick role1 and role2 independently
+            n_combos = n_models * n_models
+
+            # Find valid combos for oracle computation
+            valid_combo_indices = torch.where(combo_mask[:n_combos])[0]
+            if len(valid_combo_indices) == 0:
+                continue
+
+            # Oracle: best actual combo score
+            oracle_val = combo_scores[valid_combo_indices].max().item()
+            oracle_combo_idx = valid_combo_indices[
+                combo_scores[valid_combo_indices].argmax()
+            ].item()
+
+            # Determine which role1/role2 models have at least one valid combo
+            combo_mask_2d = combo_mask[:n_combos].view(n_models, n_models)
+
+            # Role 1: pick from models that have at least one valid combo
+            role1_valid = combo_mask_2d.any(dim=1)  # (9,) — True if row has any valid
+            role1_pred = pred[:n_models]
+            valid_r1 = torch.where(role1_valid)[0]
+
+            # Role 2: pick from models that have at least one valid combo
+            role2_valid = combo_mask_2d.any(dim=0)  # (9,) — True if col has any valid
+            role2_pred = pred[n_models:n_models * 2]
+            valid_r2 = torch.where(role2_valid)[0]
+
+            if len(valid_r1) == 0 or len(valid_r2) == 0:
+                continue
+
+            # Router picks
+            r1_pick = valid_r1[role1_pred[valid_r1].argmax()].item()
+            r2_pick = valid_r2[role2_pred[valid_r2].argmax()].item()
+            selected_idx = r1_pick * n_models + r2_pick
+
+            # If this specific combo doesn't have a score, fall back to
+            # the best available combo with this role1 pick
+            if combo_mask[selected_idx]:
+                selected_score = combo_scores[selected_idx].item()
+            else:
+                # Find best available combo with role1=r1_pick
+                row = combo_scores[r1_pick * n_models:(r1_pick + 1) * n_models]
+                row_mask = combo_mask[r1_pick * n_models:(r1_pick + 1) * n_models]
+                if row_mask.any():
+                    best_in_row = row_mask.float() * row + (~row_mask).float() * (-1e9)
+                    selected_idx = r1_pick * n_models + best_in_row.argmax().item()
+                    selected_score = combo_scores[selected_idx].item()
+                else:
+                    # Fallback: pick any valid combo
+                    selected_idx = valid_combo_indices[0].item()
+                    selected_score = combo_scores[selected_idx].item()
+
+            # Top-3 for hierarchical: can oracle be reached by any combo
+            # in top-3 role1 × top-3 role2?
+            k1 = min(3, len(valid_r1))
+            k2 = min(3, len(valid_r2))
+            top_r1 = valid_r1[role1_pred[valid_r1].topk(k1).indices]
+            top_r2 = valid_r2[role2_pred[valid_r2].topk(k2).indices]
+
+            # Check if oracle combo is reachable
+            oracle_r1 = oracle_combo_idx // n_models
+            oracle_r2 = oracle_combo_idx % n_models
+            is_top3 = (oracle_r1 in top_r1.tolist()) and (oracle_r2 in top_r2.tolist())
+
+            # Random baseline
+            rand_combo = valid_combo_indices[
+                rng.randint(0, len(valid_combo_indices) - 1)
+            ].item()
+            random_scores.append(combo_scores[rand_combo].item())
+
+            correct.append(1 if selected_idx == oracle_combo_idx else 0)
+            top3.append(1 if is_top3 else 0)
+            selected_scores.append(selected_score)
+            oracle_scores.append(oracle_val)
             continue
 
-        valid_scores = scores[valid_indices]
-        valid_preds = pred[valid_indices]
-
-        # Oracle: best actual score among valid combos
-        oracle_val = valid_scores.max().item()
-        oracle_idx_in_valid = valid_scores.argmax().item()
-        oracle_idx = valid_indices[oracle_idx_in_valid].item()
-
-        # Router's pick: highest predicted score among valid combos
-        selected_idx_in_valid = valid_preds.argmax().item()
-        selected_idx = valid_indices[selected_idx_in_valid].item()
-        selected_score = scores[selected_idx].item()
-
-        # Top-3: are any of the top 3 predicted the oracle best?
-        k = min(3, len(valid_indices))
-        top_k_in_valid = valid_preds.topk(k).indices
-        top_k_indices = valid_indices[top_k_in_valid]
-        is_top3 = oracle_idx in top_k_indices.tolist()
-
+        # 1-tuple appends (after the if head==0 block above)
         correct.append(1 if selected_idx == oracle_idx else 0)
         top3.append(1 if is_top3 else 0)
         selected_scores.append(selected_score)
         oracle_scores.append(oracle_val)
-
-        # Random baseline
-        rand_idx = valid_indices[rng.randint(0, len(valid_indices) - 1)].item()
-        random_scores.append(scores[rand_idx].item())
 
     n = len(correct)
     sel_acc = sum(correct) / n if n else 0
@@ -209,116 +286,3 @@ def _compute_benchmark_metrics(
         "_correct": correct,
         "_top3": top3,
     }
-
-
-def _compute_majority(train_samples: List[dict]) -> Dict[str, int]:
-    """Compute majority baseline: combo index with highest avg score in train.
-
-    Returns: {benchmark: combo_index}
-    """
-    # Accumulate scores per combo per benchmark
-    by_bench = defaultdict(lambda: defaultdict(list))
-    for s in train_samples:
-        bench = s["benchmark"]
-        scores = s["scores"]
-        mask = s["mask"]
-        n = 9 if s["head"] == 0 else 81
-        for i in range(n):
-            if mask[i]:
-                by_bench[bench][i].append(scores[i].item())
-
-    result = {}
-    for bench, combo_scores in by_bench.items():
-        best_idx = max(combo_scores, key=lambda i: sum(combo_scores[i]) / len(combo_scores[i]))
-        result[bench] = best_idx
-    return result
-
-
-def run_baselines(
-    test_samples: List[dict],
-    train_samples: Optional[List[dict]] = None,
-) -> Dict:
-    """Run baseline selection strategies on test samples.
-
-    Baselines:
-    - random: uniform random among valid combos
-    - cheapest: lowest cost combo (1-tuple only, needs COMBO_COSTS)
-    - most_expensive: highest cost combo (1-tuple only)
-    - majority: combo with highest avg score in train set
-    """
-    rng = random.Random(42)
-    majority_map = _compute_majority(train_samples) if train_samples else {}
-
-    by_bench = defaultdict(list)
-    for s in test_samples:
-        by_bench[s["benchmark"]].append(s)
-
-    results = {}
-    for bench in sorted(by_bench.keys()):
-        samples = by_bench[bench]
-        head = samples[0]["head"]
-        n_combos = 9 if head == 0 else 81
-        combo_list = _combo_list_for_head(head, bench)
-
-        baselines = {
-            "random": [],
-            "majority": [],
-        }
-        oracle_scores = []
-
-        # Cost-based baselines only for 1-tuple
-        if head == 0:
-            baselines["cheapest"] = []
-            baselines["most_expensive"] = []
-            # Find cheapest/most expensive indices
-            costs = [COMBO_COSTS.get(combo_list[i], 0) for i in range(n_combos)]
-            cheapest_idx = min(range(n_combos), key=lambda i: costs[i])
-            expensive_idx = max(range(n_combos), key=lambda i: costs[i])
-
-        maj_idx = majority_map.get(bench)
-
-        for s in samples:
-            scores = s["scores"]
-            mask = s["mask"]
-            valid = torch.where(mask[:n_combos])[0]
-            if len(valid) == 0:
-                continue
-
-            oracle = scores[valid].max().item()
-            oracle_scores.append(oracle)
-
-            # Random
-            r_idx = valid[rng.randint(0, len(valid) - 1)].item()
-            baselines["random"].append(scores[r_idx].item())
-
-            # Majority
-            if maj_idx is not None and mask[maj_idx]:
-                baselines["majority"].append(scores[maj_idx].item())
-            else:
-                baselines["majority"].append(scores[r_idx].item())
-
-            # Cost-based (1-tuple)
-            if head == 0:
-                if mask[cheapest_idx]:
-                    baselines["cheapest"].append(scores[cheapest_idx].item())
-                else:
-                    baselines["cheapest"].append(scores[r_idx].item())
-                if mask[expensive_idx]:
-                    baselines["most_expensive"].append(scores[expensive_idx].item())
-                else:
-                    baselines["most_expensive"].append(scores[r_idx].item())
-
-        n = len(oracle_scores)
-        mean_oracle = sum(oracle_scores) / n if n else 0
-        bench_results = {"oracle": mean_oracle, "n_samples": n}
-
-        for name, sel_scores in baselines.items():
-            mean_sel = sum(sel_scores) / n if n else 0
-            bench_results[name] = {
-                "mean_score": mean_sel,
-                "regret": mean_oracle - mean_sel,
-            }
-
-        results[bench] = bench_results
-
-    return results

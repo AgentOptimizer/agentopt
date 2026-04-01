@@ -259,6 +259,7 @@ def main():
     parser.add_argument("--micro-batch", type=int, default=2,
                         help="Actual batch size per forward pass")
     parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test-size", type=float, default=0.2)
@@ -283,6 +284,7 @@ def main():
         batch_size=args.batch_size,
         micro_batch=args.micro_batch,
         lr=args.lr,
+        weight_decay=args.weight_decay,
         max_length=args.max_length,
         seed=args.seed,
         test_size=args.test_size,

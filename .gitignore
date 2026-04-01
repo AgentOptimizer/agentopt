@@ -213,6 +213,21 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Benchmark intermediate/generated outputs (reconstructed from cache.db)
+results/cache_db_results/*.pkl
+results/figures/
+results/*_10sample*.jsonl
+results/*_40sample*.jsonl
+results/bfcl_200_bf.jsonl
+results/bfcl_200_bf_v2.jsonl
+results/bfcl_200_bf_v3.jsonl
+results/bfcl_200_bf_v3_agg.jsonl
+results/bfcl_200_bf_v4.jsonl
+results/bfcl_200_bf_v4_agg.jsonl
+results/bfcl_latency_decomposition.jsonl
+results/hotpotqa_200_bf.jsonl
+results/mathqa_200_bf.jsonl
+
 # Example outputs
 llm_cache/
 examples/optimized_config.yaml

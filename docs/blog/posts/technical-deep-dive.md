@@ -180,7 +180,9 @@ We validated AgentOpt across four diverse benchmarks using 9 models on Amazon Be
 
 *Format: obtained accuracy / cumulative evaluation cost savings vs brute force. Averaged over 50 seeds. <span class="ao-efficient">Green</span> = within 5% of brute force accuracy AND >50% savings on that metric.*
 
-Arm Elimination and Hill Climbing achieve comparable mean accuracy (within 1 percentage point of brute force across all four benchmarks), with Arm Elimination offering modestly higher cost savings on average (40% vs 37%). No single selector dominates all benchmarks. Hill Climbing excels when top models are tightly clustered (BFCL), while Arm Elimination performs best when there is clear separation between the best combo and the rest (HotpotQA, MathQA). LM Proposal (asking GPT-4.1 to predict the best combo) matches brute force on GPQA (where the answer is intuitive) but collapses to 34% on HotpotQA and 44% on BFCL. It cannot predict that Ministral outperforms Opus as a planner.
+Arm Elimination and Hill Climbing achieve comparable mean accuracy (within 1 percentage point of brute force across all four benchmarks), with Arm Elimination offering modestly higher cost savings on average (40% vs 37%). No single selector dominates all benchmarks. Hill Climbing excels when top models are tightly clustered (BFCL), while Arm Elimination performs best when there is clear separation between the best combo and the rest (HotpotQA, MathQA). However, Hill Climbing requires a hand-crafted topology ranking of the models upfront — you need prior knowledge about model quality and speed ordering for it to search effectively. Arm Elimination is fully assumption-free: it uses only the observed evaluation data to eliminate dominated combos, making it more practical when you don't have reliable priors about model capabilities.
+
+LM Proposal (asking GPT-4.1 to predict the best combo) matches brute force on GPQA (where the answer is intuitive) but collapses to 34% on HotpotQA and 44% on BFCL. It cannot predict that Ministral outperforms Opus as a planner.
 
 ## Get Started
 

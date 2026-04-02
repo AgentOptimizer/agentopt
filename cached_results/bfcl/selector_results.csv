@@ -1,0 +1,9 @@
+Selector,Found Best %,Mean Accuracy,Mean Evals,Mean Cost ($),Cost Savings
+brute_force (ref),100.0%,0.7000,1800,84.8049,0.0%
+hill_climbing,100.0%,0.7000,1664,72.1166,15.0%
+epsilon_lucb,28.0%,0.6990,399,40.0264,52.8%
+arm_elimination,88.0%,0.6937,912,74.3945,12.3%
+bayesian_optimization,44.0%,0.6927,1000,50.6446,40.3%
+random_search,36.0%,0.6713,600,31.3927,63.0%
+threshold_se,10.0%,0.5819,186,18.8240,77.8%
+lm_proposal,0.0%,0.4403,200,3.3887,96.0%

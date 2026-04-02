@@ -64,7 +64,7 @@ And the impact is enormous. Here's what we found across three benchmarks, compar
 | MathQA | Opus + Haiku 4.5 | 98.8% | $6.19 | gpt-oss-20b + Kimi | 94.6% | $0.26 | **24x** |
 | BFCL | Opus | 70% | $60.13 | Qwen3 Next | 70% | $1.90 | **32x** |
 
-These are real numbers from real benchmarks. Same accuracy band, 20-100x cost difference. No amount of caching or request batching can close a 32x gap. The model choice *is* the optimization.
+These are real numbers from real benchmarks. Same accuracy band, 13-32x cost difference. No amount of caching or request batching can close a 32x gap. The model choice *is* the optimization.
 
 ## Agent Routing Is Not LLM Routing
 

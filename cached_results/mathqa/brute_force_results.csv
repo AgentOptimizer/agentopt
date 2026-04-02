@@ -1,82 +1,82 @@
-Rank,Model,Accuracy,Server Latency/Sample (s),Wall Latency/Sample (s),Cost/Sample ($)
-1,answer=Claude Opus 4.6 + critic=Claude Haiku 4.5,0.9884,16.15,2903.38,0.0310
-2,answer=Claude Opus 4.6 + critic=Qwen3 Next 80B A3B,0.9882,14.30,2924.54,0.0288
-3,answer=Claude Opus 4.6 + critic=Ministral 3 8B,0.9872,14.03,2997.51,0.0263
-4,answer=Claude Opus 4.6 + critic=gpt-oss-20b,0.9828,16.50,2941.51,0.0296
-5,answer=Claude Opus 4.6 + critic=gpt-oss-120b,0.9777,15.40,2894.61,0.0315
-6,answer=Claude Opus 4.6 + critic=Qwen3 32B,0.9728,15.05,2919.00,0.0334
-7,answer=Claude Opus 4.6 + critic=Claude Opus 4.6,0.9724,15.94,2908.92,0.0348
-8,answer=Claude Opus 4.6 + critic=Kimi K2.5,0.9724,18.37,2910.33,0.0329
-9,answer=Claude Opus 4.6 + critic=Claude 3 Haiku,0.9595,14.85,2890.80,0.0269
-10,answer=gpt-oss-20b + critic=Claude Opus 4.6,0.9457,6.81,3012.44,0.0048
-11,answer=gpt-oss-20b + critic=Kimi K2.5,0.9457,12.45,3025.69,0.0013
-12,answer=gpt-oss-20b + critic=gpt-oss-20b,0.9454,4.04,2981.23,0.0004
-13,answer=Claude Haiku 4.5 + critic=Qwen3 32B,0.9450,12.68,2991.40,0.0126
-14,answer=gpt-oss-20b + critic=Claude Haiku 4.5,0.9405,6.19,3026.03,0.0018
-15,answer=gpt-oss-20b + critic=gpt-oss-120b,0.9402,4.94,3015.43,0.0006
-16,answer=gpt-oss-20b + critic=Qwen3 Next 80B A3B,0.9402,8.67,3026.91,0.0007
-17,answer=Claude Haiku 4.5 + critic=Claude Haiku 4.5,0.9400,14.31,2977.38,0.0130
-18,answer=gpt-oss-20b + critic=Ministral 3 8B,0.9399,8.27,2991.70,0.0005
-19,answer=gpt-oss-120b + critic=Claude Opus 4.6,0.9381,9.10,3065.96,0.0063
-20,answer=Claude Haiku 4.5 + critic=gpt-oss-20b,0.9350,12.51,2981.52,0.0110
-21,answer=Claude Haiku 4.5 + critic=Claude Opus 4.6,0.9350,15.82,2983.25,0.0188
-22,answer=Claude Haiku 4.5 + critic=Ministral 3 8B,0.9350,14.70,2990.88,0.0129
-23,answer=Claude Haiku 4.5 + critic=Kimi K2.5,0.9350,17.50,2992.41,0.0130
-24,answer=gpt-oss-20b + critic=Qwen3 32B,0.9348,4.30,3019.18,0.0005
-25,answer=gpt-oss-20b + critic=Claude 3 Haiku,0.9344,6.10,2985.85,0.0008
-26,answer=gpt-oss-120b + critic=Ministral 3 8B,0.9326,10.42,3063.84,0.0009
-27,answer=gpt-oss-120b + critic=Qwen3 32B,0.9326,5.53,3064.22,0.0008
-28,answer=Claude Haiku 4.5 + critic=gpt-oss-120b,0.9300,14.65,2988.76,0.0145
-29,answer=Claude Haiku 4.5 + critic=Qwen3 Next 80B A3B,0.9300,20.98,3001.53,0.0390
-30,answer=gpt-oss-120b + critic=Claude Haiku 4.5,0.9282,7.77,3055.45,0.0023
-31,answer=gpt-oss-120b + critic=gpt-oss-20b,0.9278,6.45,3065.22,0.0009
-32,answer=gpt-oss-120b + critic=gpt-oss-120b,0.9278,6.94,3067.32,0.0010
-33,answer=gpt-oss-120b + critic=Kimi K2.5,0.9278,12.09,3072.92,0.0016
-34,answer=gpt-oss-120b + critic=Qwen3 Next 80B A3B,0.9278,10.98,3079.87,0.0011
-35,answer=gpt-oss-120b + critic=Claude 3 Haiku,0.9275,6.42,3057.51,0.0010
-36,answer=Claude Haiku 4.5 + critic=Claude 3 Haiku,0.9250,13.43,2971.09,0.0123
-37,answer=Claude 3 Haiku + critic=Claude Opus 4.6,0.8966,13.32,2870.40,0.0113
-38,answer=Qwen3 32B + critic=Qwen3 Next 80B A3B,0.8883,8.02,3252.19,0.0012
-39,answer=Ministral 3 8B + critic=Claude 3 Haiku,0.8815,10.24,3008.89,0.0003
-40,answer=Qwen3 32B + critic=gpt-oss-120b,0.8783,7.11,3193.36,0.0024
-41,answer=Ministral 3 8B + critic=Qwen3 Next 80B A3B,0.8782,9.22,3071.58,0.0002
-42,answer=Qwen3 32B + critic=Claude Opus 4.6,0.8756,12.33,3177.79,0.0172
-43,answer=Ministral 3 8B + critic=Kimi K2.5,0.8704,14.43,3061.98,0.0005
-44,answer=Ministral 3 8B + critic=gpt-oss-120b,0.8663,10.58,2979.81,0.0004
-45,answer=Claude 3 Haiku + critic=Claude Haiku 4.5,0.8655,9.32,2796.48,0.0034
-46,answer=Ministral 3 8B + critic=Ministral 3 8B,0.8652,7.29,3040.37,0.0001
-47,answer=Ministral 3 8B + critic=Claude Opus 4.6,0.8647,11.46,2971.04,0.0047
-48,answer=Qwen3 32B + critic=Claude Haiku 4.5,0.8646,7.47,3176.18,0.0045
-49,answer=Ministral 3 8B + critic=Claude Haiku 4.5,0.8623,11.66,3058.29,0.0015
-50,answer=Ministral 3 8B + critic=gpt-oss-20b,0.8613,12.33,2971.71,0.0002
-51,answer=Qwen3 32B + critic=Ministral 3 8B,0.8610,17.57,3230.34,0.0011
-52,answer=Qwen3 32B + critic=Kimi K2.5,0.8594,13.50,3205.39,0.0039
-53,answer=Qwen3 32B + critic=gpt-oss-20b,0.8586,6.43,3205.04,0.0024
-54,answer=Ministral 3 8B + critic=Qwen3 32B,0.8580,9.41,3094.13,0.0002
-55,answer=Qwen3 32B + critic=Qwen3 32B,0.8482,5.98,3220.44,0.0031
-56,answer=Kimi K2.5 + critic=Claude 3 Haiku,0.8041,35.09,3170.68,0.0049
-57,answer=Qwen3 32B + critic=Claude 3 Haiku,0.8000,7.86,3171.25,0.0033
-58,answer=Qwen3 Next 80B A3B + critic=Claude 3 Haiku,0.8000,35.17,3290.82,0.0030
-59,answer=Qwen3 Next 80B A3B + critic=Claude Opus 4.6,0.7800,31.01,3315.04,0.0148
-60,answer=Kimi K2.5 + critic=Ministral 3 8B,0.7784,40.79,3135.66,0.0048
-61,answer=Kimi K2.5 + critic=Qwen3 Next 80B A3B,0.7720,37.64,3151.18,0.0050
-62,answer=Qwen3 Next 80B A3B + critic=Ministral 3 8B,0.7700,38.55,3356.12,0.0027
-63,answer=Qwen3 Next 80B A3B + critic=Claude Haiku 4.5,0.7650,32.33,3301.48,0.0060
-64,answer=Qwen3 Next 80B A3B + critic=gpt-oss-120b,0.7650,34.72,3338.17,0.0026
-65,answer=Qwen3 Next 80B A3B + critic=Qwen3 32B,0.7600,30.64,3352.05,0.0021
-66,answer=Qwen3 Next 80B A3B + critic=Qwen3 Next 80B A3B,0.7600,36.44,3364.74,0.0027
-67,answer=Qwen3 Next 80B A3B + critic=Kimi K2.5,0.7550,36.37,3345.91,0.0040
-68,answer=Qwen3 Next 80B A3B + critic=gpt-oss-20b,0.7500,32.70,3328.67,0.0024
-69,answer=Kimi K2.5 + critic=gpt-oss-120b,0.7449,32.23,3175.34,0.0047
-70,answer=Kimi K2.5 + critic=gpt-oss-20b,0.7409,25.65,3146.43,0.0039
-71,answer=Kimi K2.5 + critic=Kimi K2.5,0.7358,44.39,3150.30,0.0067
-72,answer=Kimi K2.5 + critic=Claude Opus 4.6,0.7333,28.62,3090.87,0.0140
-73,answer=Kimi K2.5 + critic=Claude Haiku 4.5,0.7320,26.98,3119.57,0.0068
-74,answer=Claude 3 Haiku + critic=gpt-oss-120b,0.7219,8.39,2786.09,0.0016
-75,answer=Kimi K2.5 + critic=Qwen3 32B,0.7216,30.32,3173.90,0.0046
-76,answer=Claude 3 Haiku + critic=gpt-oss-20b,0.7143,8.42,2761.46,0.0016
-77,answer=Claude 3 Haiku + critic=Qwen3 Next 80B A3B,0.7107,17.12,2843.37,0.0019
-78,answer=Claude 3 Haiku + critic=Kimi K2.5,0.7101,14.23,2996.79,0.0027
-79,answer=Claude 3 Haiku + critic=Ministral 3 8B,0.6928,12.40,2824.46,0.0016
-80,answer=Claude 3 Haiku + critic=Qwen3 32B,0.5930,6.29,2809.16,0.0014
-81,answer=Claude 3 Haiku + critic=Claude 3 Haiku,0.5437,7.28,2826.57,0.0015
+Rank,Model,Accuracy,Server Latency/Sample (s),Wall Latency/Sample (s),Cost/Sample ($),Total Cost ($)
+1,answer=Claude Opus 4.6 + critic=Claude Haiku 4.5,0.9884,16.15,2903.38,0.0310,6.20
+2,answer=Claude Opus 4.6 + critic=Qwen3 Next 80B A3B,0.9882,14.30,2924.54,0.0288,5.76
+3,answer=Claude Opus 4.6 + critic=Ministral 3 8B,0.9872,14.03,2997.51,0.0263,5.26
+4,answer=Claude Opus 4.6 + critic=gpt-oss-20b,0.9828,16.50,2941.51,0.0296,5.92
+5,answer=Claude Opus 4.6 + critic=gpt-oss-120b,0.9777,15.40,2894.61,0.0315,6.30
+6,answer=Claude Opus 4.6 + critic=Qwen3 32B,0.9728,15.05,2919.00,0.0334,6.68
+7,answer=Claude Opus 4.6 + critic=Claude Opus 4.6,0.9724,15.94,2908.92,0.0348,6.96
+8,answer=Claude Opus 4.6 + critic=Kimi K2.5,0.9724,18.37,2910.33,0.0329,6.58
+9,answer=Claude Opus 4.6 + critic=Claude 3 Haiku,0.9595,14.85,2890.80,0.0269,5.38
+10,answer=gpt-oss-20b + critic=Claude Opus 4.6,0.9457,6.81,3012.44,0.0048,0.96
+11,answer=gpt-oss-20b + critic=Kimi K2.5,0.9457,12.45,3025.69,0.0013,0.26
+12,answer=gpt-oss-20b + critic=gpt-oss-20b,0.9454,4.04,2981.23,0.0004,0.08
+13,answer=Claude Haiku 4.5 + critic=Qwen3 32B,0.9450,12.68,2991.40,0.0126,2.52
+14,answer=gpt-oss-20b + critic=Claude Haiku 4.5,0.9405,6.19,3026.03,0.0018,0.36
+15,answer=gpt-oss-20b + critic=gpt-oss-120b,0.9402,4.94,3015.43,0.0006,0.12
+16,answer=gpt-oss-20b + critic=Qwen3 Next 80B A3B,0.9402,8.67,3026.91,0.0007,0.14
+17,answer=Claude Haiku 4.5 + critic=Claude Haiku 4.5,0.9400,14.31,2977.38,0.0130,2.60
+18,answer=gpt-oss-20b + critic=Ministral 3 8B,0.9399,8.27,2991.70,0.0005,0.10
+19,answer=gpt-oss-120b + critic=Claude Opus 4.6,0.9381,9.10,3065.96,0.0063,1.26
+20,answer=Claude Haiku 4.5 + critic=gpt-oss-20b,0.9350,12.51,2981.52,0.0110,2.20
+21,answer=Claude Haiku 4.5 + critic=Claude Opus 4.6,0.9350,15.82,2983.25,0.0188,3.76
+22,answer=Claude Haiku 4.5 + critic=Ministral 3 8B,0.9350,14.70,2990.88,0.0129,2.58
+23,answer=Claude Haiku 4.5 + critic=Kimi K2.5,0.9350,17.50,2992.41,0.0130,2.60
+24,answer=gpt-oss-20b + critic=Qwen3 32B,0.9348,4.30,3019.18,0.0005,0.10
+25,answer=gpt-oss-20b + critic=Claude 3 Haiku,0.9344,6.10,2985.85,0.0008,0.16
+26,answer=gpt-oss-120b + critic=Ministral 3 8B,0.9326,10.42,3063.84,0.0009,0.18
+27,answer=gpt-oss-120b + critic=Qwen3 32B,0.9326,5.53,3064.22,0.0008,0.16
+28,answer=Claude Haiku 4.5 + critic=gpt-oss-120b,0.9300,14.65,2988.76,0.0145,2.90
+29,answer=Claude Haiku 4.5 + critic=Qwen3 Next 80B A3B,0.9300,20.98,3001.53,0.0390,7.80
+30,answer=gpt-oss-120b + critic=Claude Haiku 4.5,0.9282,7.77,3055.45,0.0023,0.46
+31,answer=gpt-oss-120b + critic=gpt-oss-20b,0.9278,6.45,3065.22,0.0009,0.18
+32,answer=gpt-oss-120b + critic=gpt-oss-120b,0.9278,6.94,3067.32,0.0010,0.20
+33,answer=gpt-oss-120b + critic=Kimi K2.5,0.9278,12.09,3072.92,0.0016,0.32
+34,answer=gpt-oss-120b + critic=Qwen3 Next 80B A3B,0.9278,10.98,3079.87,0.0011,0.22
+35,answer=gpt-oss-120b + critic=Claude 3 Haiku,0.9275,6.42,3057.51,0.0010,0.20
+36,answer=Claude Haiku 4.5 + critic=Claude 3 Haiku,0.9250,13.43,2971.09,0.0123,2.46
+37,answer=Claude 3 Haiku + critic=Claude Opus 4.6,0.8966,13.32,2870.40,0.0113,2.26
+38,answer=Qwen3 32B + critic=Qwen3 Next 80B A3B,0.8883,8.02,3252.19,0.0012,0.24
+39,answer=Ministral 3 8B + critic=Claude 3 Haiku,0.8815,10.24,3008.89,0.0003,0.06
+40,answer=Qwen3 32B + critic=gpt-oss-120b,0.8783,7.11,3193.36,0.0024,0.48
+41,answer=Ministral 3 8B + critic=Qwen3 Next 80B A3B,0.8782,9.22,3071.58,0.0002,0.04
+42,answer=Qwen3 32B + critic=Claude Opus 4.6,0.8756,12.33,3177.79,0.0172,3.44
+43,answer=Ministral 3 8B + critic=Kimi K2.5,0.8704,14.43,3061.98,0.0005,0.10
+44,answer=Ministral 3 8B + critic=gpt-oss-120b,0.8663,10.58,2979.81,0.0004,0.08
+45,answer=Claude 3 Haiku + critic=Claude Haiku 4.5,0.8655,9.32,2796.48,0.0034,0.68
+46,answer=Ministral 3 8B + critic=Ministral 3 8B,0.8652,7.29,3040.37,0.0001,0.02
+47,answer=Ministral 3 8B + critic=Claude Opus 4.6,0.8647,11.46,2971.04,0.0047,0.94
+48,answer=Qwen3 32B + critic=Claude Haiku 4.5,0.8646,7.47,3176.18,0.0045,0.90
+49,answer=Ministral 3 8B + critic=Claude Haiku 4.5,0.8623,11.66,3058.29,0.0015,0.30
+50,answer=Ministral 3 8B + critic=gpt-oss-20b,0.8613,12.33,2971.71,0.0002,0.04
+51,answer=Qwen3 32B + critic=Ministral 3 8B,0.8610,17.57,3230.34,0.0011,0.22
+52,answer=Qwen3 32B + critic=Kimi K2.5,0.8594,13.50,3205.39,0.0039,0.78
+53,answer=Qwen3 32B + critic=gpt-oss-20b,0.8586,6.43,3205.04,0.0024,0.48
+54,answer=Ministral 3 8B + critic=Qwen3 32B,0.8580,9.41,3094.13,0.0002,0.04
+55,answer=Qwen3 32B + critic=Qwen3 32B,0.8482,5.98,3220.44,0.0031,0.62
+56,answer=Kimi K2.5 + critic=Claude 3 Haiku,0.8041,35.09,3170.68,0.0049,0.98
+57,answer=Qwen3 32B + critic=Claude 3 Haiku,0.8000,7.86,3171.25,0.0033,0.66
+58,answer=Qwen3 Next 80B A3B + critic=Claude 3 Haiku,0.8000,35.17,3290.82,0.0030,0.60
+59,answer=Qwen3 Next 80B A3B + critic=Claude Opus 4.6,0.7800,31.01,3315.04,0.0148,2.96
+60,answer=Kimi K2.5 + critic=Ministral 3 8B,0.7784,40.79,3135.66,0.0048,0.96
+61,answer=Kimi K2.5 + critic=Qwen3 Next 80B A3B,0.7720,37.64,3151.18,0.0050,1.00
+62,answer=Qwen3 Next 80B A3B + critic=Ministral 3 8B,0.7700,38.55,3356.12,0.0027,0.54
+63,answer=Qwen3 Next 80B A3B + critic=Claude Haiku 4.5,0.7650,32.33,3301.48,0.0060,1.20
+64,answer=Qwen3 Next 80B A3B + critic=gpt-oss-120b,0.7650,34.72,3338.17,0.0026,0.52
+65,answer=Qwen3 Next 80B A3B + critic=Qwen3 32B,0.7600,30.64,3352.05,0.0021,0.42
+66,answer=Qwen3 Next 80B A3B + critic=Qwen3 Next 80B A3B,0.7600,36.44,3364.74,0.0027,0.54
+67,answer=Qwen3 Next 80B A3B + critic=Kimi K2.5,0.7550,36.37,3345.91,0.0040,0.80
+68,answer=Qwen3 Next 80B A3B + critic=gpt-oss-20b,0.7500,32.70,3328.67,0.0024,0.48
+69,answer=Kimi K2.5 + critic=gpt-oss-120b,0.7449,32.23,3175.34,0.0047,0.94
+70,answer=Kimi K2.5 + critic=gpt-oss-20b,0.7409,25.65,3146.43,0.0039,0.78
+71,answer=Kimi K2.5 + critic=Kimi K2.5,0.7358,44.39,3150.30,0.0067,1.34
+72,answer=Kimi K2.5 + critic=Claude Opus 4.6,0.7333,28.62,3090.87,0.0140,2.80
+73,answer=Kimi K2.5 + critic=Claude Haiku 4.5,0.7320,26.98,3119.57,0.0068,1.36
+74,answer=Claude 3 Haiku + critic=gpt-oss-120b,0.7219,8.39,2786.09,0.0016,0.32
+75,answer=Kimi K2.5 + critic=Qwen3 32B,0.7216,30.32,3173.90,0.0046,0.92
+76,answer=Claude 3 Haiku + critic=gpt-oss-20b,0.7143,8.42,2761.46,0.0016,0.32
+77,answer=Claude 3 Haiku + critic=Qwen3 Next 80B A3B,0.7107,17.12,2843.37,0.0019,0.38
+78,answer=Claude 3 Haiku + critic=Kimi K2.5,0.7101,14.23,2996.79,0.0027,0.54
+79,answer=Claude 3 Haiku + critic=Ministral 3 8B,0.6928,12.40,2824.46,0.0016,0.32
+80,answer=Claude 3 Haiku + critic=Qwen3 32B,0.5930,6.29,2809.16,0.0014,0.28
+81,answer=Claude 3 Haiku + critic=Claude 3 Haiku,0.5437,7.28,2826.57,0.0015,0.30

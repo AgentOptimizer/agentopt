@@ -1,82 +1,82 @@
-Rank,Model,Accuracy,Server Latency/Sample (s),Wall Latency/Sample (s),Cost/Sample ($)
-1,planner=Ministral 3 8B + solver=Claude Opus 4.6,74.27%,4.97,1112.86,0.0132
-2,planner=Claude 3 Haiku + solver=Claude Opus 4.6,73.25%,4.52,1029.76,0.0140
-3,planner=Qwen3 32B + solver=Claude Opus 4.6,73.02%,4.26,1125.32,0.0132
-4,planner=Qwen3 Next 80B A3B + solver=Claude Opus 4.6,72.10%,4.67,1138.96,0.0133
-5,planner=Qwen3 Next 80B A3B + solver=gpt-oss-120b,71.83%,3.07,1141.64,0.0006
-6,planner=Qwen3 32B + solver=gpt-oss-120b,70.04%,2.66,1127.18,0.0006
-7,planner=Kimi K2.5 + solver=Claude Opus 4.6,69.96%,4.49,1094.30,0.0121
-8,planner=Claude 3 Haiku + solver=gpt-oss-120b,69.86%,3.21,1032.38,0.0008
-9,planner=Ministral 3 8B + solver=gpt-oss-20b,69.34%,5.66,1117.03,0.0004
-10,planner=Claude 3 Haiku + solver=Qwen3 Next 80B A3B,69.27%,3.00,1037.75,0.0008
-11,planner=Qwen3 Next 80B A3B + solver=gpt-oss-20b,68.89%,2.82,1139.80,0.0005
-12,planner=Ministral 3 8B + solver=gpt-oss-120b,68.70%,3.65,1114.01,0.0006
-13,planner=Qwen3 Next 80B A3B + solver=Qwen3 Next 80B A3B,68.15%,2.69,1148.21,0.0006
-14,planner=Ministral 3 8B + solver=Qwen3 Next 80B A3B,67.98%,3.85,1119.75,0.0006
-15,planner=Qwen3 32B + solver=Qwen3 Next 80B A3B,67.53%,3.51,1132.84,0.0005
-16,planner=Qwen3 32B + solver=gpt-oss-20b,66.95%,2.48,1128.35,0.0004
-17,planner=Claude 3 Haiku + solver=Ministral 3 8B,65.98%,3.73,1036.66,0.0007
-18,planner=Ministral 3 8B + solver=Kimi K2.5,65.24%,3.27,1116.01,0.0013
-19,planner=gpt-oss-120b + solver=Qwen3 Next 80B A3B,64.93%,4.68,1092.52,0.0005
-20,planner=Ministral 3 8B + solver=Ministral 3 8B,64.89%,3.55,1116.77,0.0005
-21,planner=Claude 3 Haiku + solver=gpt-oss-20b,64.79%,2.90,1031.38,0.0007
-22,planner=Kimi K2.5 + solver=gpt-oss-120b,64.70%,4.16,1097.72,0.0015
-23,planner=gpt-oss-120b + solver=Claude Opus 4.6,64.59%,4.57,1083.64,0.0080
-24,planner=gpt-oss-120b + solver=Claude Haiku 4.5,64.11%,4.26,1081.98,0.0019
-25,planner=Kimi K2.5 + solver=Qwen3 Next 80B A3B,63.99%,4.39,1103.15,0.0015
-26,planner=Kimi K2.5 + solver=Ministral 3 8B,63.95%,6.42,1103.70,0.0014
-27,planner=Claude 3 Haiku + solver=Kimi K2.5,63.85%,2.89,1033.48,0.0015
-28,planner=gpt-oss-120b + solver=Ministral 3 8B,63.70%,7.37,1094.99,0.0004
-29,planner=Qwen3 Next 80B A3B + solver=Kimi K2.5,63.69%,2.89,1142.87,0.0013
-30,planner=Kimi K2.5 + solver=gpt-oss-20b,63.35%,6.80,1073.83,0.0013
-31,planner=Qwen3 32B + solver=Kimi K2.5,63.17%,3.26,1130.17,0.0014
-32,planner=gpt-oss-120b + solver=Claude 3 Haiku,62.72%,3.72,1079.85,0.0006
-33,planner=Kimi K2.5 + solver=Kimi K2.5,62.28%,4.56,1101.34,0.0022
-34,planner=gpt-oss-120b + solver=gpt-oss-120b,62.15%,4.59,1087.28,0.0005
-35,planner=Qwen3 Next 80B A3B + solver=Ministral 3 8B,62.11%,4.27,1146.08,0.0005
-36,planner=gpt-oss-120b + solver=gpt-oss-20b,61.51%,2.71,1060.18,0.0004
-37,planner=Qwen3 32B + solver=Ministral 3 8B,61.17%,2.89,1130.35,0.0005
-38,planner=gpt-oss-120b + solver=Kimi K2.5,60.85%,4.09,1088.40,0.0009
-39,planner=gpt-oss-120b + solver=Qwen3 32B,58.80%,4.06,1090.80,0.0005
-40,planner=Claude 3 Haiku + solver=Qwen3 32B,56.02%,2.87,1038.42,0.0008
-41,planner=Claude 3 Haiku + solver=Claude 3 Haiku,55.91%,2.41,1024.49,0.0010
-42,planner=gpt-oss-20b + solver=Claude Opus 4.6,55.86%,2.84,1071.53,0.0052
-43,planner=Ministral 3 8B + solver=Qwen3 32B,55.02%,3.63,1117.98,0.0005
-44,planner=Kimi K2.5 + solver=Claude 3 Haiku,54.90%,3.42,1093.61,0.0017
-45,planner=Qwen3 32B + solver=Qwen3 32B,54.82%,2.53,1131.12,0.0005
-46,planner=Kimi K2.5 + solver=Qwen3 32B,54.73%,4.57,1101.93,0.0015
-47,planner=gpt-oss-20b + solver=Claude Haiku 4.5,54.28%,2.19,1068.81,0.0013
-48,planner=gpt-oss-20b + solver=Ministral 3 8B,54.25%,4.35,1078.77,0.0003
-49,planner=Qwen3 Next 80B A3B + solver=Qwen3 32B,54.13%,2.83,1146.78,0.0006
-50,planner=gpt-oss-20b + solver=Qwen3 Next 80B A3B,53.89%,2.11,1078.99,0.0003
-51,planner=gpt-oss-20b + solver=Claude 3 Haiku,52.66%,2.04,1066.79,0.0004
-52,planner=gpt-oss-20b + solver=gpt-oss-120b,52.17%,2.11,1073.72,0.0003
-53,planner=Ministral 3 8B + solver=Claude 3 Haiku,51.33%,4.10,1106.77,0.0008
-54,planner=gpt-oss-20b + solver=Kimi K2.5,51.01%,1.96,1074.86,0.0006
-55,planner=gpt-oss-20b + solver=gpt-oss-20b,50.09%,2.12,1072.00,0.0003
-56,planner=Qwen3 Next 80B A3B + solver=Claude 3 Haiku,49.98%,2.56,1132.71,0.0008
-57,planner=gpt-oss-20b + solver=Qwen3 32B,49.16%,2.05,1077.81,0.0003
-58,planner=Qwen3 32B + solver=Claude 3 Haiku,48.77%,2.23,1119.72,0.0008
-59,planner=Claude 3 Haiku + solver=Claude Haiku 4.5,46.50%,3.35,1027.12,0.0035
-60,planner=Claude Haiku 4.5 + solver=Claude Opus 4.6,43.54%,4.06,1043.17,0.0090
-61,planner=Claude Haiku 4.5 + solver=gpt-oss-20b,41.49%,3.03,1043.55,0.0023
-62,planner=Claude Haiku 4.5 + solver=gpt-oss-120b,41.20%,3.14,1045.50,0.0024
-63,planner=Claude Haiku 4.5 + solver=Qwen3 Next 80B A3B,41.17%,2.95,1051.62,0.0023
-64,planner=Claude Haiku 4.5 + solver=Ministral 3 8B,41.09%,3.75,1049.09,0.0023
-65,planner=Claude Haiku 4.5 + solver=Kimi K2.5,41.00%,6.16,1052.39,0.0027
-66,planner=Kimi K2.5 + solver=Claude Haiku 4.5,37.19%,4.23,1092.94,0.0044
-67,planner=Claude Haiku 4.5 + solver=Qwen3 32B,36.13%,2.89,1050.56,0.0023
-68,planner=Claude Haiku 4.5 + solver=Claude 3 Haiku,34.34%,2.63,1038.07,0.0024
-69,planner=Ministral 3 8B + solver=Claude Haiku 4.5,32.42%,4.14,1110.11,0.0035
-70,planner=Qwen3 Next 80B A3B + solver=Claude Haiku 4.5,32.19%,3.92,1135.68,0.0036
-71,planner=Claude Opus 4.6 + solver=Kimi K2.5,31.96%,4.72,1063.00,0.0101
-72,planner=Claude Opus 4.6 + solver=Ministral 3 8B,31.96%,4.72,1064.89,0.0101
-73,planner=Claude Opus 4.6 + solver=Qwen3 32B,31.96%,4.72,1066.81,0.0101
-74,planner=Claude Opus 4.6 + solver=Qwen3 Next 80B A3B,31.96%,4.72,1068.36,0.0101
-75,planner=Claude Opus 4.6 + solver=gpt-oss-120b,31.95%,4.60,1060.75,0.0101
-76,planner=Claude Opus 4.6 + solver=gpt-oss-20b,31.88%,4.57,1058.51,0.0101
-77,planner=Claude Opus 4.6 + solver=Claude 3 Haiku,31.78%,4.22,1052.62,0.0101
-78,planner=Claude Opus 4.6 + solver=Claude Haiku 4.5,31.77%,4.16,1053.85,0.0102
-79,planner=Claude Opus 4.6 + solver=Claude Opus 4.6,31.71%,4.19,1056.07,0.0101
-80,planner=Qwen3 32B + solver=Claude Haiku 4.5,26.63%,3.47,1122.12,0.0035
-81,planner=Claude Haiku 4.5 + solver=Claude Haiku 4.5,26.49%,3.40,1040.48,0.0040
+Rank,Model,Accuracy,Server Latency/Sample (s),Wall Latency/Sample (s),Cost/Sample ($),Total Cost ($)
+1,planner=Ministral 3 8B + solver=Claude Opus 4.6,74.27%,4.97,1112.86,0.0132,2.64
+2,planner=Claude 3 Haiku + solver=Claude Opus 4.6,73.25%,4.52,1029.76,0.0140,2.80
+3,planner=Qwen3 32B + solver=Claude Opus 4.6,73.02%,4.26,1125.32,0.0132,2.64
+4,planner=Qwen3 Next 80B A3B + solver=Claude Opus 4.6,72.10%,4.67,1138.96,0.0133,2.66
+5,planner=Qwen3 Next 80B A3B + solver=gpt-oss-120b,71.83%,3.07,1141.64,0.0006,0.12
+6,planner=Qwen3 32B + solver=gpt-oss-120b,70.04%,2.66,1127.18,0.0006,0.12
+7,planner=Kimi K2.5 + solver=Claude Opus 4.6,69.96%,4.49,1094.30,0.0121,2.42
+8,planner=Claude 3 Haiku + solver=gpt-oss-120b,69.86%,3.21,1032.38,0.0008,0.16
+9,planner=Ministral 3 8B + solver=gpt-oss-20b,69.34%,5.66,1117.03,0.0004,0.08
+10,planner=Claude 3 Haiku + solver=Qwen3 Next 80B A3B,69.27%,3.00,1037.75,0.0008,0.16
+11,planner=Qwen3 Next 80B A3B + solver=gpt-oss-20b,68.89%,2.82,1139.80,0.0005,0.10
+12,planner=Ministral 3 8B + solver=gpt-oss-120b,68.70%,3.65,1114.01,0.0006,0.12
+13,planner=Qwen3 Next 80B A3B + solver=Qwen3 Next 80B A3B,68.15%,2.69,1148.21,0.0006,0.12
+14,planner=Ministral 3 8B + solver=Qwen3 Next 80B A3B,67.98%,3.85,1119.75,0.0006,0.12
+15,planner=Qwen3 32B + solver=Qwen3 Next 80B A3B,67.53%,3.51,1132.84,0.0005,0.10
+16,planner=Qwen3 32B + solver=gpt-oss-20b,66.95%,2.48,1128.35,0.0004,0.08
+17,planner=Claude 3 Haiku + solver=Ministral 3 8B,65.98%,3.73,1036.66,0.0007,0.14
+18,planner=Ministral 3 8B + solver=Kimi K2.5,65.24%,3.27,1116.01,0.0013,0.26
+19,planner=gpt-oss-120b + solver=Qwen3 Next 80B A3B,64.93%,4.68,1092.52,0.0005,0.10
+20,planner=Ministral 3 8B + solver=Ministral 3 8B,64.89%,3.55,1116.77,0.0005,0.10
+21,planner=Claude 3 Haiku + solver=gpt-oss-20b,64.79%,2.90,1031.38,0.0007,0.14
+22,planner=Kimi K2.5 + solver=gpt-oss-120b,64.70%,4.16,1097.72,0.0015,0.30
+23,planner=gpt-oss-120b + solver=Claude Opus 4.6,64.59%,4.57,1083.64,0.0080,1.60
+24,planner=gpt-oss-120b + solver=Claude Haiku 4.5,64.11%,4.26,1081.98,0.0019,0.38
+25,planner=Kimi K2.5 + solver=Qwen3 Next 80B A3B,63.99%,4.39,1103.15,0.0015,0.30
+26,planner=Kimi K2.5 + solver=Ministral 3 8B,63.95%,6.42,1103.70,0.0014,0.28
+27,planner=Claude 3 Haiku + solver=Kimi K2.5,63.85%,2.89,1033.48,0.0015,0.30
+28,planner=gpt-oss-120b + solver=Ministral 3 8B,63.70%,7.37,1094.99,0.0004,0.08
+29,planner=Qwen3 Next 80B A3B + solver=Kimi K2.5,63.69%,2.89,1142.87,0.0013,0.26
+30,planner=Kimi K2.5 + solver=gpt-oss-20b,63.35%,6.80,1073.83,0.0013,0.26
+31,planner=Qwen3 32B + solver=Kimi K2.5,63.17%,3.26,1130.17,0.0014,0.28
+32,planner=gpt-oss-120b + solver=Claude 3 Haiku,62.72%,3.72,1079.85,0.0006,0.12
+33,planner=Kimi K2.5 + solver=Kimi K2.5,62.28%,4.56,1101.34,0.0022,0.44
+34,planner=gpt-oss-120b + solver=gpt-oss-120b,62.15%,4.59,1087.28,0.0005,0.10
+35,planner=Qwen3 Next 80B A3B + solver=Ministral 3 8B,62.11%,4.27,1146.08,0.0005,0.10
+36,planner=gpt-oss-120b + solver=gpt-oss-20b,61.51%,2.71,1060.18,0.0004,0.08
+37,planner=Qwen3 32B + solver=Ministral 3 8B,61.17%,2.89,1130.35,0.0005,0.10
+38,planner=gpt-oss-120b + solver=Kimi K2.5,60.85%,4.09,1088.40,0.0009,0.18
+39,planner=gpt-oss-120b + solver=Qwen3 32B,58.80%,4.06,1090.80,0.0005,0.10
+40,planner=Claude 3 Haiku + solver=Qwen3 32B,56.02%,2.87,1038.42,0.0008,0.16
+41,planner=Claude 3 Haiku + solver=Claude 3 Haiku,55.91%,2.41,1024.49,0.0010,0.20
+42,planner=gpt-oss-20b + solver=Claude Opus 4.6,55.86%,2.84,1071.53,0.0052,1.04
+43,planner=Ministral 3 8B + solver=Qwen3 32B,55.02%,3.63,1117.98,0.0005,0.10
+44,planner=Kimi K2.5 + solver=Claude 3 Haiku,54.90%,3.42,1093.61,0.0017,0.34
+45,planner=Qwen3 32B + solver=Qwen3 32B,54.82%,2.53,1131.12,0.0005,0.10
+46,planner=Kimi K2.5 + solver=Qwen3 32B,54.73%,4.57,1101.93,0.0015,0.30
+47,planner=gpt-oss-20b + solver=Claude Haiku 4.5,54.28%,2.19,1068.81,0.0013,0.26
+48,planner=gpt-oss-20b + solver=Ministral 3 8B,54.25%,4.35,1078.77,0.0003,0.06
+49,planner=Qwen3 Next 80B A3B + solver=Qwen3 32B,54.13%,2.83,1146.78,0.0006,0.12
+50,planner=gpt-oss-20b + solver=Qwen3 Next 80B A3B,53.89%,2.11,1078.99,0.0003,0.06
+51,planner=gpt-oss-20b + solver=Claude 3 Haiku,52.66%,2.04,1066.79,0.0004,0.08
+52,planner=gpt-oss-20b + solver=gpt-oss-120b,52.17%,2.11,1073.72,0.0003,0.06
+53,planner=Ministral 3 8B + solver=Claude 3 Haiku,51.33%,4.10,1106.77,0.0008,0.16
+54,planner=gpt-oss-20b + solver=Kimi K2.5,51.01%,1.96,1074.86,0.0006,0.12
+55,planner=gpt-oss-20b + solver=gpt-oss-20b,50.09%,2.12,1072.00,0.0003,0.06
+56,planner=Qwen3 Next 80B A3B + solver=Claude 3 Haiku,49.98%,2.56,1132.71,0.0008,0.16
+57,planner=gpt-oss-20b + solver=Qwen3 32B,49.16%,2.05,1077.81,0.0003,0.06
+58,planner=Qwen3 32B + solver=Claude 3 Haiku,48.77%,2.23,1119.72,0.0008,0.16
+59,planner=Claude 3 Haiku + solver=Claude Haiku 4.5,46.50%,3.35,1027.12,0.0035,0.70
+60,planner=Claude Haiku 4.5 + solver=Claude Opus 4.6,43.54%,4.06,1043.17,0.0090,1.80
+61,planner=Claude Haiku 4.5 + solver=gpt-oss-20b,41.49%,3.03,1043.55,0.0023,0.46
+62,planner=Claude Haiku 4.5 + solver=gpt-oss-120b,41.20%,3.14,1045.50,0.0024,0.48
+63,planner=Claude Haiku 4.5 + solver=Qwen3 Next 80B A3B,41.17%,2.95,1051.62,0.0023,0.46
+64,planner=Claude Haiku 4.5 + solver=Ministral 3 8B,41.09%,3.75,1049.09,0.0023,0.46
+65,planner=Claude Haiku 4.5 + solver=Kimi K2.5,41.00%,6.16,1052.39,0.0027,0.54
+66,planner=Kimi K2.5 + solver=Claude Haiku 4.5,37.19%,4.23,1092.94,0.0044,0.88
+67,planner=Claude Haiku 4.5 + solver=Qwen3 32B,36.13%,2.89,1050.56,0.0023,0.46
+68,planner=Claude Haiku 4.5 + solver=Claude 3 Haiku,34.34%,2.63,1038.07,0.0024,0.48
+69,planner=Ministral 3 8B + solver=Claude Haiku 4.5,32.42%,4.14,1110.11,0.0035,0.70
+70,planner=Qwen3 Next 80B A3B + solver=Claude Haiku 4.5,32.19%,3.92,1135.68,0.0036,0.72
+71,planner=Claude Opus 4.6 + solver=Kimi K2.5,31.96%,4.72,1063.00,0.0101,2.02
+72,planner=Claude Opus 4.6 + solver=Ministral 3 8B,31.96%,4.72,1064.89,0.0101,2.02
+73,planner=Claude Opus 4.6 + solver=Qwen3 32B,31.96%,4.72,1066.81,0.0101,2.02
+74,planner=Claude Opus 4.6 + solver=Qwen3 Next 80B A3B,31.96%,4.72,1068.36,0.0101,2.02
+75,planner=Claude Opus 4.6 + solver=gpt-oss-120b,31.95%,4.60,1060.75,0.0101,2.02
+76,planner=Claude Opus 4.6 + solver=gpt-oss-20b,31.88%,4.57,1058.51,0.0101,2.02
+77,planner=Claude Opus 4.6 + solver=Claude 3 Haiku,31.78%,4.22,1052.62,0.0101,2.02
+78,planner=Claude Opus 4.6 + solver=Claude Haiku 4.5,31.77%,4.16,1053.85,0.0102,2.04
+79,planner=Claude Opus 4.6 + solver=Claude Opus 4.6,31.71%,4.19,1056.07,0.0101,2.02
+80,planner=Qwen3 32B + solver=Claude Haiku 4.5,26.63%,3.47,1122.12,0.0035,0.70
+81,planner=Claude Haiku 4.5 + solver=Claude Haiku 4.5,26.49%,3.40,1040.48,0.0040,0.80

@@ -7,6 +7,25 @@ metadata:
 
 # AgentOpt Skill
 
+## What this skill does
+
+This skill tells an agent exactly how to run AgentOpt end-to-end for offline model selection:
+- define an agent wrapper (`__init__` + `run`),
+- build/clean a labeled offline dataset,
+- choose a selector strategy and concurrency budget,
+- run evaluation and export reproducible artifacts.
+
+## How it works (mental model)
+
+AgentOpt evaluates model **combinations** over a labeled dataset:
+1. Create one model combo (e.g., planner=`gpt-4o-mini`, solver=`gpt-4.1`).
+2. Instantiate the user agent with that combo.
+3. Run all dataset samples, score with `eval_fn`, and track latency/tokens/cost.
+4. Repeat for other combos (or a searched subset, depending on `method`).
+5. Rank combinations by quality first, then latency/cost tie-breakers.
+
+`parallel=True` with `max_concurrent=N` controls the total in-flight API budget across all combo/datapoint evaluations.
+
 Use this skill when the user wants to:
 - run model selection for an agent pipeline (single-step or multi-step),
 - create or clean an offline evaluation dataset,
@@ -217,4 +236,3 @@ For external benchmark submission/repro checks, include:
 - Quickstart docs: `docs/getting-started/quickstart.md`
 - Selector docs: `docs/api/selectors.md`
 - End-to-end examples: `examples/*.py`
-

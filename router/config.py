@@ -82,6 +82,7 @@ class RouterConfig:
     agg: str = "max"     # 2-tuple marginal aggregation: "max" or "mean"
 
     # Training
+    resume: bool = False         # resume from best_model checkpoint
     freeze_encoder: bool = False  # if True, only train linear heads
     epochs: int = 5
     batch_size: int = 16       # effective batch size

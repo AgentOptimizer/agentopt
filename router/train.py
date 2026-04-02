@@ -150,9 +150,19 @@ def train(config: RouterConfig):
     )
 
     # Model
-    print(f"\nLoading model: {config.model_name}", flush=True)
-    model = BERTRouter(config.model_name, config.n_models)
-    model.encoder.resize_token_embeddings(len(tokenizer))
+    if config.resume:
+        resume_path = os.path.join(config.output_dir, "best_model")
+        print(f"\nResuming from checkpoint: {resume_path}", flush=True)
+        model = BERTRouter(resume_path, config.n_models)
+        # Load head weights
+        heads_path = os.path.join(resume_path, "heads.pt")
+        heads_data = torch.load(heads_path, map_location="cpu")
+        model.head.load_state_dict(heads_data["head"])
+        print("  Loaded encoder + head from checkpoint")
+    else:
+        print(f"\nLoading model: {config.model_name}", flush=True)
+        model = BERTRouter(config.model_name, config.n_models)
+        model.encoder.resize_token_embeddings(len(tokenizer))
 
     # Optionally freeze encoder
     if config.freeze_encoder:
@@ -302,6 +312,8 @@ def main():
     parser.add_argument("--scores-path", type=str, default="router/scores.json")
     parser.add_argument("--freeze-encoder", action="store_true",
                         help="Freeze BERT encoder, only train linear head")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume training from best_model checkpoint")
     parser.add_argument("--agg", type=str, default="max", choices=["max", "mean"],
                         help="2-tuple marginal aggregation: max (sharper) or mean (smoother)")
     args = parser.parse_args()
@@ -318,6 +330,7 @@ def main():
         output_dir=args.output_dir,
         scores_path=args.scores_path,
         freeze_encoder=args.freeze_encoder,
+        resume=args.resume,
         agg=args.agg,
     )
     train(config)

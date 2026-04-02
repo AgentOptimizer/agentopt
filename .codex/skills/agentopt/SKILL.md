@@ -42,6 +42,56 @@ Use this skill when the user wants to:
 
 ---
 
+## Parameter Reference (use this exact mapping)
+
+### `ModelSelector(...)` parameters
+
+| Parameter | Required | Description |
+|---|---:|---|
+| `agent` | yes | Agent class/factory that accepts one combo dict in `__init__` and exposes `run(input_data)` |
+| `models` | yes | Dict of node -> candidate list (Cartesian product defines combo space) |
+| `eval_fn` | yes | Scoring function `(expected, actual) -> bool|float` (higher is better) |
+| `dataset` | yes | Sequence of `(input_data, expected_answer)` pairs |
+| `method` | no | Selector algorithm (`auto`, `brute_force`, `random`, `hill_climbing`, `arm_elimination`, `epsilon_lucb`, `threshold`, `lm_proposal`, `bayesian`) |
+| `model_prices` | no | Custom token pricing overrides for accurate cost reporting |
+| `tracker` | no | Custom `LLMTracker` (e.g., enable persistent cache dir) |
+| `node_descriptions` | no | Node role descriptions, used by `lm_proposal` prompting |
+| `**kwargs` | depends | Method-specific knobs listed below |
+
+### `select_best(...)` parameters
+
+| Parameter | Default | Description |
+|---|---:|---|
+| `parallel` | `False` | Run async combo/datapoint evaluation when selector supports it |
+| `max_concurrent` | `20` | **Global** max in-flight API calls across all combos + datapoints |
+
+### Concurrency semantics (exact)
+
+When `parallel=True`, AgentOpt splits global budget into:
+- `dp_concurrent = min(max_concurrent, current_batch_size)`
+- `n_combo = max_concurrent // dp_concurrent`
+
+Guarantee:
+- `n_combo * dp_concurrent <= max_concurrent`
+
+Interpretation:
+- Raise `max_concurrent` to increase total throughput.
+- Keep it bounded by provider rate limits and local runtime capacity.
+
+### Method-specific `**kwargs`
+
+| Method | Extra params |
+|---|---|
+| `random` | `sample_fraction`, `seed` |
+| `hill_climbing` | `max_iterations`, `num_restarts`, `patience`, `seed`, `batch_size` |
+| `arm_elimination` | `n_initial`, `growth_factor`, `confidence` |
+| `epsilon_lucb` | `epsilon`, `n_initial`, `confidence` |
+| `threshold` | `threshold`, `n_initial`, `confidence` |
+| `lm_proposal` | `proposer_model`, `proposer_client`, `objective`, `dataset_preview_size`, `node_descriptions` |
+| `bayesian` | `batch_size`, `sample_fraction` |
+
+---
+
 ## 1) Agent Contract (required)
 
 AgentOpt expects:
@@ -215,6 +265,43 @@ For external benchmark submission/repro checks, include:
 - environment (package versions),
 - random seed (if applicable),
 - exact dataset split ID/version.
+
+## 5.1) Benchmark submission packet (recommended)
+
+Create one directory per benchmark run:
+
+```text
+artifacts/
+  <benchmark_name>/<run_id>/
+    results.csv
+    best_config.yaml
+    run_metadata.json
+    dataset_manifest.json
+    README_submission.md
+```
+
+`dataset_manifest.json` should include dataset source + labeling policy:
+
+```json
+{
+  "name": "my_offline_eval_v1",
+  "num_samples": 120,
+  "format": "jsonl(input, expected)",
+  "split": "offline_eval",
+  "label_policy": "human_verified",
+  "created_at_utc": "2026-04-02T00:00:00Z"
+}
+```
+
+`README_submission.md` should state:
+- benchmark/task name,
+- method and all key params (`parallel`, `max_concurrent`, method kwargs),
+- best combo and headline metrics,
+- reproducibility commands.
+
+Submission channel depends on project policy:
+- if using GitHub: upload packet in PR/issue comment and link commit SHA,
+- if using external benchmark portal: upload the same packet unchanged.
 
 ---
 

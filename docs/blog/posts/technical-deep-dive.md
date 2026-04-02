@@ -107,7 +107,7 @@ Arm Elimination works in rounds:
 3. **Grow the batch**: double the datapoints, evaluate only the survivors
 4. **Repeat**: until one combo remains or you run out of data
 
-Bad combos get eliminated early and cheaply. Good combos earn more evaluation budget. The total cost is far less than brute force.
+Bad combos get eliminated early and cheaply. Good combos earn more evaluation budget. The cumulative evaluation cost is far less than brute force.
 
 ### Epsilon-LUCB
 
@@ -131,14 +131,14 @@ The catch: Hill Climbing requires **topology information**. It needs a notion of
 
 Across our four benchmarks, Arm Elimination consistently achieves near-optimal accuracy while using up to 67% less budget than brute force:
 
-| Benchmark | Brute Force Accuracy | Arm Elimination Accuracy | Cost Savings |
+| Benchmark | Brute Force Accuracy | Arm Elimination Accuracy | Cumulative cost savings |
 |-----------|---------------------|------------------------|-------------|
 | HotpotQA | 74.27% | 73.19% | 67% |
 | MathQA | 98.84% | 98.83% | 58% |
 | GPQA | 74.75% | 74.10% | 24% |
 | BFCL | 70.00% | 69.37% | 12% |
 
-Nearly identical accuracy to exhaustive search, at roughly half the cost. These algorithms don't just save budget. They find the right combo with statistical guarantees.
+Nearly identical accuracy to exhaustive search, at roughly half the cumulative evaluation cost. These algorithms don't just save budget. They find the right combo with statistical guarantees.
 
 ## Empirical Validation
 
@@ -178,7 +178,7 @@ We validated AgentOpt across four diverse benchmarks using 9 models on Amazon Be
 </tbody>
 </table>
 
-*Format: obtained accuracy / cost savings vs brute force. Averaged over 50 seeds. <span class="ao-efficient">Green</span> = within 5% of brute force accuracy AND >50% cost savings.*
+*Format: obtained accuracy / cumulative evaluation cost savings vs brute force. Averaged over 50 seeds. <span class="ao-efficient">Green</span> = within 5% of brute force accuracy AND >50% savings on that metric.*
 
 Arm Elimination and Hill Climbing achieve comparable mean accuracy (within 1 percentage point of brute force across all four benchmarks), with Arm Elimination offering modestly higher cost savings on average (40% vs 37%). No single selector dominates all benchmarks. Hill Climbing excels when top models are tightly clustered (BFCL), while Arm Elimination performs best when there is clear separation between the best combo and the rest (HotpotQA, MathQA). LM Proposal (asking GPT-4.1 to predict the best combo) matches brute force on GPQA (where the answer is intuitive) but collapses to 34% on HotpotQA and 44% on BFCL. It cannot predict that Ministral outperforms Opus as a planner.
 

@@ -1,10 +1,10 @@
-Rank,Model,Accuracy,Server Latency (s),Wall Latency (s),Cost ($)
-1,Claude Opus 4.6,74.75%,9.16,46.02,2.4692
-2,Kimi K2.5,72.73%,16.41,54.10,1.1346
-3,gpt-oss-120b,68.18%,6.46,43.85,0.1901
-4,Claude Haiku 4.5,59.60%,3.70,39.63,0.5169
-5,Qwen3 Next 80B A3B,51.01%,10.33,49.18,0.1329
-6,gpt-oss-20b,50.00%,6.21,42.94,0.1303
-7,Qwen3 32B,46.97%,1.54,40.01,0.0732
-8,Ministral 3 8B,36.87%,0.25,38.37,0.0071
-9,Claude 3 Haiku,34.85%,1.79,37.31,0.0560
+Rank,Model,Accuracy,Server Latency/Sample (s),Wall Latency/Sample (s),Cost/Sample ($)
+1,Claude Opus 4.6,74.75%,9.16,46.02,0.0125
+2,Kimi K2.5,72.73%,16.41,54.10,0.0057
+3,gpt-oss-120b,68.18%,6.46,43.85,0.0010
+4,Claude Haiku 4.5,59.60%,3.70,39.63,0.0026
+5,Qwen3 Next 80B A3B,51.01%,10.33,49.18,0.0007
+6,gpt-oss-20b,50.00%,6.21,42.94,0.0007
+7,Qwen3 32B,46.97%,1.54,40.01,0.0004
+8,Ministral 3 8B,36.87%,0.25,38.37,0.0000
+9,Claude 3 Haiku,34.85%,1.79,37.31,0.0003

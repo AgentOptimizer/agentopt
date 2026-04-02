@@ -161,7 +161,7 @@ selector = EpsilonLUCBModelSelector(
 | `confidence` | `1.0` | Confidence level for bound computation |
 
 !!! success "When to use"
-    When finding the *exact* best combo isn't necessary and you can tolerate a small accuracy gap (epsilon) in exchange for significant cost savings. Particularly effective when many combos are close in performance.
+    When finding the *exact* best combo isn't necessary and you can tolerate a small accuracy gap (epsilon) in exchange for significant search cost savings. Particularly effective when many combos are close in performance.
 
 ---
 

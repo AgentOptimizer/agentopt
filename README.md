@@ -90,10 +90,10 @@ for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solve
     for input_data, expected in dataset:
         actual = agent.run(input_data)       # run on each datapoint
         score = eval_fn(expected, actual)    # score the output
-# rank combos by quality score, latency & cost
+# rank combos by quality score, latency & per-query cost
 ```
 
-But AgentOpt does this efficiently with **smart algorithms, parallelization, cost & latency tracking, and caching**. With `method="auto"` (the default), it **automatically** homes in on the best combination (wired to `arm_elimination` — strong best-arm identification with far fewer evaluations than `brute_force`), eliminating clearly worse combinations after just a few datapoints.
+But AgentOpt does this efficiently with **smart algorithms, parallelization, per-query cost & latency tracking, and caching**. With `method="auto"` (the default), it **automatically** homes in on the best combination (wired to `arm_elimination` — strong best-arm identification with far fewer evaluations than `brute_force`), eliminating clearly worse combinations after just a few datapoints.
 
 You just provide four things:
 
@@ -167,16 +167,16 @@ AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we 
 
 AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_selection_example.py](examples/advanced_selection_example.py) for details.
 
-If you do not need the strict best model combination and want **more evaluation savings**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
+If you do not need the strict best model combination and want **lower cumulative evaluation cost**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
 
 | `method=` | Best for | How it works |
 |-----------|----------|-------------|
-| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower evaluation cost than `brute_force`) |
+| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower cumulative evaluation cost than `brute_force`) |
 | `"brute_force"` | Small search spaces | Evaluates all combinations |
 | `"random"` | Quick exploration | Samples a random fraction |
 | `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
 | `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
-| `"epsilon_lucb"` | Extra cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
+| `"epsilon_lucb"` | Extra cumulative evaluation cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
 | `"threshold"` | Thresholding objectives | Bandit; determines whether each combination is above/below a user-defined `threshold` on the performance metric (e.g., mean accuracy) |
 | `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
 | `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt-py[bayesian]"`) |
@@ -204,7 +204,7 @@ your_agent(input)
 For each model combination, AgentOpt:
 1. Instantiates your agent class with the candidate models
 2. Calls `run()` on every datapoint in your evaluation set
-3. Tracks token usage, latency, and cost automatically
+3. Tracks token usage, latency, and per-query cost automatically
 4. Scores the output using your evaluation function
 5. Reports the Pareto-optimal combinations
 

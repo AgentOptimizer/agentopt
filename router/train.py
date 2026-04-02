@@ -1,12 +1,12 @@
-"""Training script for the two-pass BERT router.
+"""Training script for the BERT router (classification version).
 
-The model has a single shared Linear(1024 → 9) head. Training examples:
-- 1-tuple (GPQA, BFCL): query → 9 model scores
-- 2-tuple role1 (HotpotQA, MathQA): query → 9 role1 marginal scores
-- 2-tuple role2: query + role1_output → 9 role2 scores for that role1
+The model has a single shared Linear(1024 -> 9) head. Training uses cross-entropy
+loss against tiebreaker-selected labels (accuracy > latency > cost).
 
-All examples go through the same encoder + head. The encoder learns to
-produce appropriate [CLS] representations for each type of input.
+Training examples:
+- 1-tuple (GPQA, BFCL): query -> label (best model index 0-8)
+- 2-tuple role1 (HotpotQA, MathQA): query -> label (best role1 index 0-8)
+- 2-tuple role2: query + role1_output -> label (best role2 index 0-8 for that role1)
 
 Usage:
     cd agentopt/
@@ -30,7 +30,7 @@ from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from .config import BENCHMARK_TOKENS, RouterConfig
 from .data import RouterDataset, load_samples, train_test_split
 from .evaluate import evaluate
-from .model import BERTRouter, masked_mse_loss
+from .model import BERTRouter, masked_cross_entropy_loss
 
 
 def _collate_fn(batch):
@@ -40,6 +40,7 @@ def _collate_fn(batch):
 
     input_ids = torch.stack([b["input_ids"] for b in batch])
     attention_mask = torch.stack([b["attention_mask"] for b in batch])
+    labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
     heads = torch.tensor([b["head"] for b in batch], dtype=torch.long)
     role1_model_idxs = torch.tensor(
         [b["role1_model_idx"] for b in batch], dtype=torch.long
@@ -64,6 +65,7 @@ def _collate_fn(batch):
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
+        "labels": labels,
         "scores": scores,
         "mask": masks,
         "combo_scores": combo_scores,
@@ -76,7 +78,7 @@ def _collate_fn(batch):
 
 
 def train(config: RouterConfig):
-    """Train the two-pass BERT router."""
+    """Train the BERT router with cross-entropy classification."""
     if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
@@ -114,6 +116,10 @@ def train(config: RouterConfig):
     print(f"  By head: {dict(sorted(test_heads.items()))}")
     for b in sorted(test_bench):
         print(f"  {b}: {test_bench[b]}")
+
+    # Label distribution in train
+    train_labels = Counter(s["label"] for s in train_samples)
+    print(f"  Train label distribution: {dict(sorted(train_labels.items()))}")
 
     # Count unique test samples (for eval reporting)
     test_unique = len(set((s["benchmark"], s["sample_idx"]) for s in test_samples))
@@ -190,23 +196,31 @@ def train(config: RouterConfig):
         model.train()
         epoch_loss = 0.0
         n_batches = 0
+        n_correct = 0
+        n_total = 0
         t0 = time.time()
         optimizer.zero_grad()
 
         for step, batch in enumerate(train_loader):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-            scores = batch["scores"].to(device)
+            labels = batch["labels"].to(device)
             mask = batch["mask"].to(device)
 
             # Single forward pass — shared head for all example types
-            predictions = model(input_ids, attention_mask)
-            loss = masked_mse_loss(predictions, scores, mask)
+            logits = model(input_ids, attention_mask)
+            loss = masked_cross_entropy_loss(logits, labels, mask)
             loss = loss / accum_steps
             loss.backward()
 
             epoch_loss += loss.item() * accum_steps
             n_batches += 1
+
+            # Track training accuracy
+            with torch.no_grad():
+                preds = logits.argmax(dim=-1)
+                n_correct += (preds == labels).sum().item()
+                n_total += labels.size(0)
 
             if (step + 1) % accum_steps == 0 or (step + 1) == len(train_loader):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -215,10 +229,11 @@ def train(config: RouterConfig):
                 optimizer.zero_grad()
 
         avg_loss = epoch_loss / max(n_batches, 1)
+        train_acc = n_correct / max(n_total, 1)
         elapsed = time.time() - t0
         print(f"\nEpoch {epoch + 1}/{config.epochs} — "
-              f"loss: {avg_loss:.4f}, time: {elapsed:.1f}s, "
-              f"lr: {scheduler.get_last_lr()[0]:.2e}")
+              f"loss: {avg_loss:.4f}, train_acc: {train_acc:.1%}, "
+              f"time: {elapsed:.1f}s, lr: {scheduler.get_last_lr()[0]:.2e}")
 
         # Evaluate
         metrics = evaluate(model, test_loader, device, tokenizer,

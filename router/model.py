@@ -1,22 +1,19 @@
-"""ModernBERT-large router with a single shared prediction head.
+"""ModernBERT-large router with a single shared prediction head (classification).
 
 Architecture:
     ModernBERT-large encoder (395M params, 8192 context)
-    → [CLS] pooling
-    → Single Linear(hidden → 9) head, reused for all predictions
+    -> [CLS] pooling
+    -> Single Linear(hidden -> 9) head producing logits
+    -> Cross-entropy loss against tiebreaker-selected best model label
 
 For 1-tuple benchmarks (GPQA, BFCL):
-    Encode query → head → 9 model scores → pick argmax
+    Encode query -> head -> 9 logits -> pick argmax
 
-For 2-tuple benchmarks (HotpotQA, MathQA) — two-pass routing:
-    Pass 1: Encode query → head → 9 role1 scores → pick role1
-    Pass 2: Encode (query + role1 output) → head → 9 role2 scores → pick role2
+For 2-tuple benchmarks (HotpotQA, MathQA) -- two-pass routing:
+    Pass 1: Encode query -> head -> 9 role1 logits -> pick role1
+    Pass 2: Encode (query + role1 output) -> head -> 9 role2 logits -> pick role2
 
-The same linear head is reused for both passes, making it framework-agnostic
-and reducing parameters. The encoder learns to produce appropriate [CLS]
-representations regardless of whether the input is query-only or query+output.
-
-Loss: MSE on predicted scores vs actual scores, masked to ignore missing combos.
+Labels come from brute force model selection tiebreaker: accuracy > latency > cost.
 """
 
 from __future__ import annotations
@@ -62,7 +59,7 @@ class BERTRouter(nn.Module):
             cls: (batch, hidden_size)
 
         Returns:
-            scores: (batch, n_models)
+            logits: (batch, n_models)
         """
         return self.head(cls)
 
@@ -78,31 +75,36 @@ class BERTRouter(nn.Module):
             attention_mask: (batch, seq_len)
 
         Returns:
-            scores: (batch, n_models)
+            logits: (batch, n_models)
         """
         cls = self.encode(input_ids, attention_mask)
         return self.predict(cls)
 
 
-def masked_mse_loss(
-    predictions: torch.Tensor,
-    targets: torch.Tensor,
+def masked_cross_entropy_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
     mask: torch.Tensor,
 ) -> torch.Tensor:
-    """MSE loss computed only on positions where mask is True.
+    """Cross-entropy loss with masked valid models.
+
+    Masks out invalid model indices by setting their logits to -inf
+    before computing cross-entropy. This ensures the model only learns
+    to pick among valid options.
 
     Args:
-        predictions: (batch, n_models) — 9-dim predictions
-        targets: (batch, n_models) — 9-dim target scores
-        mask: (batch, n_models) bool — True where score exists
+        logits: (batch, n_models) — raw logits from the head
+        labels: (batch,) — target class indices (0 to n_models-1)
+        mask: (batch, n_models) bool — True where model is valid
 
     Returns:
-        Scalar loss (mean over all valid positions across the batch).
-        Returns 0 if no valid positions (should not happen in practice).
+        Scalar loss (mean over batch).
     """
-    if not mask.any():
-        return torch.tensor(0.0, device=predictions.device, requires_grad=True)
+    if logits.size(0) == 0:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
-    diff = (predictions - targets) ** 2
-    masked_diff = diff[mask]
-    return masked_diff.mean()
+    # Mask invalid models by setting logits to -inf
+    masked_logits = logits.clone()
+    masked_logits[~mask] = float("-inf")
+
+    return nn.functional.cross_entropy(masked_logits, labels)

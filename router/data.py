@@ -1,19 +1,16 @@
-"""Dataset loading and tokenization for the BERT router (two-pass version).
+"""Dataset loading and tokenization for the BERT router (classification version).
 
-Each sample produces one or more training examples:
+Each sample produces one or more training examples with a classification label
+(the tiebreaker-selected best model index) instead of score vectors.
 
 1-tuple benchmarks (GPQA, BFCL):
-    1 example: (query_text) → 9-dim score vector
+    1 example: (query_text) → label (0-8, best model by accuracy>latency>cost)
 
 2-tuple benchmarks (HotpotQA, MathQA):
-    1 role1 example: (query_text) → 9-dim role1 marginal scores
-    + up to 9 role2 examples: (query_text + role1_model_output) → 9-dim role2 scores
-      where role2_scores[j] = combo_score[role1_model_i * 9 + j]
+    1 role1 example: (query_text) → label (0-8, best role1 from overall best combo)
+    + up to 9 role2 examples: (query_text + role1_model_output) → label (0-8, best role2 for that role1)
 
-The role2 examples give the model richer context (seeing the actual role1 output)
-and provide 9× more training data for the role2 prediction task.
-
-Missing scores (partial coverage) are tracked via boolean masks.
+Missing scores (partial coverage) are tracked via boolean masks for eval metrics.
 """
 
 from __future__ import annotations
@@ -149,55 +146,13 @@ def _get_combo_list(benchmark: str) -> List[str]:
         raise ValueError(f"Unknown benchmark: {benchmark}")
 
 
-def _decompose_2tuple_scores(
-    combo_scores: torch.Tensor,
-    combo_mask: torch.Tensor,
-    n_models: int = 9,
-    agg: str = "max",
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Decompose 81-dim combo scores into two 9-dim role marginals.
-
-    For role1: role1_score[i] = agg of combo_score[i*9+j] across valid j.
-    For role2: role2_score[j] = agg of combo_score[i*9+j] across valid i.
-
-    agg="max": best-case score (sharper signal)
-    agg="mean": average-case score (smoother)
-    """
-    role1_scores = torch.zeros(n_models, dtype=torch.float32)
-    role1_mask = torch.zeros(n_models, dtype=torch.bool)
-    role2_scores = torch.zeros(n_models, dtype=torch.float32)
-    role2_mask = torch.zeros(n_models, dtype=torch.bool)
-
-    scores_2d = combo_scores[:n_models * n_models].view(n_models, n_models)
-    mask_2d = combo_mask[:n_models * n_models].view(n_models, n_models)
-
-    for i in range(n_models):
-        valid = mask_2d[i]
-        if valid.any():
-            vals = scores_2d[i][valid]
-            role1_scores[i] = vals.max().item() if agg == "max" else vals.mean().item()
-            role1_mask[i] = True
-
-    for j in range(n_models):
-        valid = mask_2d[:, j]
-        if valid.any():
-            vals = scores_2d[:, j][valid]
-            role2_scores[j] = vals.max().item() if agg == "max" else vals.mean().item()
-            role2_mask[j] = True
-
-    return role1_scores, role1_mask, role2_scores, role2_mask
-
-
 def _get_role2_scores_for_role1(
     combo_scores: torch.Tensor,
     combo_mask: torch.Tensor,
     role1_idx: int,
     n_models: int = 9,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Get 9-dim role2 scores for a specific role1 model.
-
-    Returns the row of the 9×9 combo matrix for role1_idx.
-    """
+    """Get 9-dim role2 scores for a specific role1 model."""
     start = role1_idx * n_models
     end = start + n_models
     return combo_scores[start:end].clone(), combo_mask[start:end].clone()
@@ -209,11 +164,12 @@ def _get_role2_scores_for_role1(
 
 
 class RouterDataset(Dataset):
-    """PyTorch dataset for the BERT router (two-pass version).
+    """PyTorch dataset for the BERT router (classification version).
 
     Each item contains:
         - input_ids, attention_mask: tokenized text
-        - scores: float tensor of shape (9,) — target model scores
+        - label: int — target class index (0-8), the tiebreaker-selected best model
+        - scores: float tensor of shape (9,) — target model scores (for eval metrics)
         - mask: bool tensor of shape (9,) — True where score exists
         - combo_scores: float tensor of shape (81,) — original combo scores (for eval)
         - combo_mask: bool tensor of shape (81,) — original combo mask (for eval)
@@ -251,6 +207,7 @@ class RouterDataset(Dataset):
         return {
             "input_ids": enc["input_ids"].squeeze(0),
             "attention_mask": enc["attention_mask"].squeeze(0),
+            "label": s["label"],
             "scores": s["scores"],
             "mask": s["mask"],
             "combo_scores": s["combo_scores"],
@@ -263,7 +220,7 @@ class RouterDataset(Dataset):
 
 
 # ---------------------------------------------------------------------------
-# Build samples from scores.json + role1_outputs.json + dataset queries
+# Build samples from scores.json + labels.json + role1_outputs.json + queries
 # ---------------------------------------------------------------------------
 
 
@@ -279,6 +236,18 @@ def _load_role1_outputs(path: Optional[str] = None) -> Dict:
         return json.load(f)
 
 
+def _load_labels() -> Dict:
+    """Load tiebreaker labels from labels.json."""
+    path = os.path.join(os.path.dirname(__file__), "labels.json")
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"labels.json not found at {path}\n"
+            "Run: python -m router.extract_labels"
+        )
+    with open(path) as f:
+        return json.load(f)
+
+
 def load_samples(
     config: RouterConfig,
     scores_path: Optional[str] = None,
@@ -290,7 +259,8 @@ def load_samples(
 
     Returns a list of dicts, each with:
         text: str — tokenizer input
-        scores: Tensor of shape (9,) — target scores
+        label: int — tiebreaker-selected best model index (0-8)
+        scores: Tensor of shape (9,) — target scores (for eval metrics only)
         mask: Tensor of shape (9,)
         combo_scores: Tensor of shape (81,) — original combo scores
         combo_mask: Tensor of shape (81,) — original combo mask
@@ -309,11 +279,15 @@ def load_samples(
     with open(scores_file) as f:
         all_scores = json.load(f)
 
+    # Load labels (tiebreaker-selected best model per sample)
+    all_labels = _load_labels()
+
     # Load role1 outputs for two-pass training
     role1_outputs = _load_role1_outputs()
 
     n_models = config.n_models
     samples = []
+    skipped_no_label = 0
 
     for bench in config.benchmarks:
         bench_scores = all_scores.get(bench, {})
@@ -321,8 +295,12 @@ def load_samples(
             print(f"WARNING: No scores for {bench}")
             continue
 
+        bench_labels = all_labels.get(bench, {})
+        if not bench_labels:
+            print(f"WARNING: No labels for {bench}")
+            continue
+
         combo_list = _get_combo_list(bench)
-        n_combos = len(combo_list)
         is_2tuple = bench in ("hotpotqa", "mathqa")
         token = BENCHMARK_TOKENS[bench]
 
@@ -342,6 +320,12 @@ def load_samples(
             if idx >= len(queries):
                 continue
 
+            # Get label for this sample
+            sample_label = bench_labels.get(str_idx)
+            if sample_label is None:
+                skipped_no_label += 1
+                continue
+
             query = queries[idx]
 
             # Build original combo score vectors (81-dim max)
@@ -355,6 +339,9 @@ def load_samples(
 
             if not is_2tuple:
                 # 1-tuple: single training example
+                # label is int (best model index 0-8)
+                label = sample_label
+
                 scores = torch.zeros(n_models, dtype=torch.float32)
                 mask = torch.zeros(n_models, dtype=torch.bool)
                 for combo_idx, combo_name in enumerate(combo_list):
@@ -364,6 +351,7 @@ def load_samples(
 
                 samples.append({
                     "text": f"{token} {query}",
+                    "label": label,
                     "scores": scores,
                     "mask": mask,
                     "combo_scores": combo_scores_vec,
@@ -374,12 +362,26 @@ def load_samples(
                     "sample_idx": idx,
                 })
             else:
-                # 2-tuple: role1 example (query only → marginal role1 scores)
-                r1_scores, r1_mask, _, _ = _decompose_2tuple_scores(
-                    combo_scores_vec, combo_mask_vec, n_models, agg=config.agg
-                )
+                # 2-tuple: role1 example
+                # sample_label is {"role1": int, "role2": {"0": int, ...}}
+                role1_label = sample_label["role1"]
+                role2_labels = sample_label.get("role2", {})
+
+                # Build role1 scores for eval (marginal max scores)
+                r1_scores = torch.zeros(n_models, dtype=torch.float32)
+                r1_mask = torch.zeros(n_models, dtype=torch.bool)
+                scores_2d = combo_scores_vec[:n_models * n_models].view(n_models, n_models)
+                mask_2d = combo_mask_vec[:n_models * n_models].view(n_models, n_models)
+
+                for i in range(n_models):
+                    valid = mask_2d[i]
+                    if valid.any():
+                        r1_scores[i] = scores_2d[i][valid].max().item()
+                        r1_mask[i] = True
+
                 samples.append({
                     "text": f"{token} {query}",
+                    "label": role1_label,
                     "scores": r1_scores,
                     "mask": r1_mask,
                     "combo_scores": combo_scores_vec,
@@ -390,25 +392,29 @@ def load_samples(
                     "sample_idx": idx,
                 })
 
-                # 2-tuple: role2 examples (query + role1 output → role2 scores)
+                # 2-tuple: role2 examples (query + role1 output → best role2)
                 sample_role1 = bench_role1.get(str_idx, {})
                 for model_idx, model_name in enumerate(_ROLE_MODELS):
                     output_text = sample_role1.get(model_name)
                     if output_text is None:
                         continue
 
+                    # Get role2 label for this role1
+                    r2_label = role2_labels.get(str(model_idx))
+                    if r2_label is None:
+                        continue
+
                     r2_scores, r2_mask = _get_role2_scores_for_role1(
                         combo_scores_vec, combo_mask_vec, model_idx, n_models
                     )
-                    # Skip if no valid role2 scores for this role1
                     if not r2_mask.any():
                         continue
 
-                    # Input: benchmark token + query + separator + role1 output
                     role2_text = f"{token} {query} [SEP] {output_text}"
 
                     samples.append({
                         "text": role2_text,
+                        "label": r2_label,
                         "scores": r2_scores,
                         "mask": r2_mask,
                         "combo_scores": combo_scores_vec,
@@ -418,6 +424,9 @@ def load_samples(
                         "benchmark": bench,
                         "sample_idx": idx,
                     })
+
+    if skipped_no_label > 0:
+        print(f"WARNING: Skipped {skipped_no_label} samples with no label")
 
     return samples
 

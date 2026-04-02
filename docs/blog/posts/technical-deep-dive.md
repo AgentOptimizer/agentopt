@@ -59,9 +59,10 @@ And the impact is enormous. Here's what we found across three benchmarks, compar
 
 | Benchmark | Expensive Combo | Acc | Cost | Budget Combo | Acc | Cost | Savings |
 |-----------|----------------|-----|------|-------------|-----|------|---------|
-| HotpotQA | Opus + Opus | ~73% | $2.71 | Qwen3 Next + gpt-oss-120b | 71.3% | $0.13 | **21x** |
-| MathQA | Opus + Opus | ~98.5% | $5.89 | Ministral + C3 Haiku | 94.0% | $0.05 | **118x** |
-| BFCL | Opus | 72% | $60.78 | Qwen3 Next | 71% | $1.87 | **32x** |
+| GPQA | Opus | 74.75% | $2.47 | gpt-oss-120b | 68.18% | $0.19 | **13x** |
+| HotpotQA | Opus + Opus | ~32% | $2.02 | Qwen3 Next + gpt-oss-120b | 71.8% | $0.13 | **16x** |
+| MathQA | Opus + Haiku 4.5 | 98.8% | $6.19 | Ministral + C3 Haiku | ~69% | $0.05 | **124x** |
+| BFCL | Opus | 70% | $60.13 | Qwen3 Next | 70% | $1.90 | **32x** |
 
 These are real numbers from real benchmarks. Same accuracy band, 20-100x cost difference. No amount of caching or request batching can close a 32x gap. The model choice *is* the optimization.
 
@@ -83,7 +84,7 @@ And the results prove why this matters. On HotpotQA (multi-hop question answerin
 
 **The weakest planner + the strongest solver beats the strongest planner + any solver.**
 
-Ministral 3 8B (the cheapest, smallest model) as planner paired with Claude Opus as solver achieves 74.8% accuracy. Claude Opus as *both* planner and solver? Only ~73%. Why? Because Opus as planner is *too capable*: it answers the question directly, bypassing the solver's search tools entirely. The "worse" planner correctly delegates to the tool-augmented solver, producing better results.
+Ministral 3 8B (the cheapest, smallest model) as planner paired with Claude Opus as solver achieves 74.3% accuracy. Claude Opus as *both* planner and solver? Only ~32%. Why? Because Opus as planner is *too capable*: it answers the question directly, bypassing the solver's search tools entirely. The "worse" planner correctly delegates to the tool-augmented solver, producing better results.
 
 You'd never find this by picking "the best model" for each layer independently. The best combo doesn't contain the best individual models. This is the credit assignment problem in action.
 
@@ -128,14 +129,14 @@ The catch: Hill Climbing requires **topology information**. It needs a notion of
 
 ### How Much Do These Save?
 
-Across our four benchmarks, Arm Elimination consistently achieves near-optimal accuracy while using 40-60% less budget than brute force:
+Across our four benchmarks, Arm Elimination consistently achieves near-optimal accuracy while using up to 67% less budget than brute force:
 
 | Benchmark | Brute Force Accuracy | Arm Elimination Accuracy | Cost Savings |
 |-----------|---------------------|------------------------|-------------|
-| HotpotQA | 74.78% | 74.12% | 64% |
-| GPQA | 80.30% | 80.14% | 49% |
-| MathQA | 98.83% | 98.80% | 46% |
-| BFCL | 72.00% | 72.00% | 11% |
+| HotpotQA | 74.27% | 73.19% | 67% |
+| MathQA | 98.84% | 98.83% | 58% |
+| GPQA | 74.75% | 74.10% | 24% |
+| BFCL | 70.00% | 69.37% | 12% |
 
 Nearly identical accuracy to exhaustive search, at roughly half the cost. These algorithms don't just save budget. They find the right combo with statistical guarantees.
 
@@ -154,32 +155,32 @@ We validated AgentOpt across four diverse benchmarks using 9 models on Amazon Be
 
 | Benchmark | Best Combo | Why It's Surprising |
 |-----------|-----------|-------------------|
-| HotpotQA | Ministral 3 8B + Opus | Weakest planner wins. Opus as planner bypasses search tools |
-| MathQA | Opus + Qwen3 Next | Critic barely matters. Opus solves math correctly on the first try |
-| BFCL | Opus (single) | Qwen3 Next ties at 32x lower cost. Statistical difference is ~1% |
-| GPQA | Opus (single) | Straightforward. Raw capability wins for grad-level science |
+| HotpotQA | Ministral 3 8B + Opus | Weakest planner wins. Opus as planner bypasses search tools and scores only ~32% |
+| MathQA | Opus + Haiku 4.5 | Critic barely matters. Opus solves math correctly on the first try |
+| BFCL | Opus / Kimi / Qwen3 Next (tied) | Three models tie at 70%. Qwen3 Next costs 32x less than Opus |
+| GPQA | Opus | Kimi is within 2pp at less than half the cost |
 
 ### Algorithm Comparison (50 random seeds each)
 
 <table>
 <thead>
-<tr><th>Algorithm</th><th>HotpotQA</th><th>GPQA</th><th>MathQA</th><th>BFCL</th></tr>
+<tr><th>Algorithm</th><th>GPQA</th><th>BFCL</th><th>HotpotQA</th><th>MathQA</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>Brute Force</strong></td><td>74.78% / 0%</td><td>80.30% / 0%</td><td>98.83% / 0%</td><td>72.00% / 0%</td></tr>
-<tr><td><strong>Arm Elimination</strong></td><td><span class="ao-efficient">74.12% / 64%</span></td><td>80.14% / 49%</td><td>98.80% / 46%</td><td>72.00% / 11%</td></tr>
-<tr><td><strong>Hill Climbing</strong></td><td><span class="ao-efficient">73.38% / 63%</span></td><td>79.64% / 9%</td><td><span class="ao-efficient">97.81% / 60%</span></td><td>71.94% / 6%</td></tr>
-<tr><td><strong>Bayesian Opt</strong></td><td><span class="ao-efficient">72.78% / 76%</span></td><td>75.41% / 44%</td><td><span class="ao-efficient">95.39% / 73%</span></td><td>70.61% / 40%</td></tr>
-<tr><td><strong>Random Search</strong></td><td><span class="ao-efficient">72.34% / 74%</span></td><td>70.53% / 63%</td><td><span class="ao-efficient">98.04% / 74%</span></td><td><span class="ao-efficient">67.99% / 63%</span></td></tr>
-<tr><td><strong>Epsilon-LUCB</strong></td><td><span class="ao-efficient">69.96% / 96%</span></td><td>79.47% / 44%</td><td><span class="ao-efficient">97.46% / 95%</span></td><td><span class="ao-efficient">71.33% / 50%</span></td></tr>
-<tr><td><strong>Threshold SE</strong></td><td>63.62% / 93%</td><td>65.88% / 94%</td><td>77.23% / 98%</td><td>57.52% / 92%</td></tr>
-<tr><td><strong>LM Proposal</strong></td><td>34.41% / 96%</td><td>80.30% / 41%</td><td><span class="ao-efficient">96.87% / 95%</span></td><td>45.00% / 96%</td></tr>
+<tr><td><strong>Brute Force</strong></td><td>74.75% / 0%</td><td>70.00% / 0%</td><td>74.27% / 0%</td><td>98.84% / 0%</td></tr>
+<tr><td><strong>Arm Elimination</strong></td><td>74.10% / 24%</td><td>69.37% / 12%</td><td><span class="ao-efficient">73.19% / 67%</span></td><td><span class="ao-efficient">98.83% / 58%</span></td></tr>
+<tr><td><strong>Hill Climbing</strong></td><td>74.55% / 14%</td><td>70.00% / 15%</td><td><span class="ao-efficient">73.13% / 63%</span></td><td><span class="ao-efficient">98.76% / 56%</span></td></tr>
+<tr><td><strong>Bayesian Opt</strong></td><td>72.43% / 45%</td><td>69.27% / 40%</td><td><span class="ao-efficient">73.33% / 76%</span></td><td><span class="ao-efficient">95.41% / 71%</span></td></tr>
+<tr><td><strong>Random Search</strong></td><td><span class="ao-efficient">68.57% / 63%</span></td><td><span class="ao-efficient">67.13% / 63%</span></td><td><span class="ao-efficient">72.25% / 74%</span></td><td><span class="ao-efficient">98.17% / 74%</span></td></tr>
+<tr><td><strong>Epsilon-LUCB</strong></td><td>73.14% / 47%</td><td><span class="ao-efficient">69.90% / 53%</span></td><td>69.71% / 97%</td><td><span class="ao-efficient">96.99% / 95%</span></td></tr>
+<tr><td><strong>Threshold SE</strong></td><td>57.83% / 62%</td><td>58.19% / 78%</td><td>65.42% / 88%</td><td>74.52% / 94%</td></tr>
+<tr><td><strong>LM Proposal</strong></td><td>74.75% / 48%</td><td>44.03% / 96%</td><td>34.13% / 97%</td><td><span class="ao-efficient">95.82% / 96%</span></td></tr>
 </tbody>
 </table>
 
 *Format: obtained accuracy / cost savings vs brute force. Averaged over 50 seeds. <span class="ao-efficient">Green</span> = within 5% of brute force accuracy AND >50% cost savings.*
 
-Arm Elimination is the consistent winner: it achieves near-brute-force accuracy across all four benchmarks while using 40-60% less budget. LM Proposal (asking GPT-4.1 to predict the best combo) matches brute force on GPQA (where the answer is intuitive) but collapses to 34% on HotpotQA and 45% on BFCL. It can't predict that Ministral outperforms Opus as a planner.
+Arm Elimination and Hill Climbing achieve comparable mean accuracy (within 1 percentage point of brute force across all four benchmarks), with Arm Elimination offering modestly higher cost savings on average (40% vs 37%). No single selector dominates all benchmarks. Hill Climbing excels when top models are tightly clustered (BFCL), while Arm Elimination performs best when there is clear separation between the best combo and the rest (HotpotQA, MathQA). LM Proposal (asking GPT-4.1 to predict the best combo) matches brute force on GPQA (where the answer is intuitive) but collapses to 34% on HotpotQA and 44% on BFCL. It cannot predict that Ministral outperforms Opus as a planner.
 
 ## Get Started
 

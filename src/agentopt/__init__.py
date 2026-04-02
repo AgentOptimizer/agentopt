@@ -60,7 +60,7 @@ def ModelSelector(
         dataset: List of ``(input_data, expected_output)`` pairs.
         method: Selection algorithm. ``"auto"`` (default) automatically finds
             the best combination (same implementation as ``"arm_elimination"`` —
-            strong best-arm identification with lower evaluation cost than
+            strong best-arm identification with lower search cost than
             ``"brute_force"``). Other options: ``"brute_force"``,
             ``"random"``, ``"hill_climbing"``, ``"arm_elimination"``,
             ``"epsilon_lucb"``, ``"threshold"``, ``"lm_proposal"``,

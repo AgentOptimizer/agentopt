@@ -5,7 +5,7 @@ The framework-specific examples (custom_agent_example.py, langchain_example.py, 
 all use method="brute_force" for simplicity. This example demonstrates the other
 selection algorithms available via ModelSelector(method=...). The default
 method="auto" automatically finds the best combination (wired to arm_elimination —
-strong best-arm identification with lower evaluation cost than brute_force).
+strong best-arm identification with lower search cost than brute_force).
 
 Prerequisites:
     1. pip install openai agentopt-py
@@ -210,7 +210,7 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Available methods:
-  auto              Automatically finds the best combination (wired to arm_elimination; lower evaluation cost than brute_force) (default)
+  auto              Automatically finds the best combination (wired to arm_elimination; lower search cost than brute_force) (default)
   random            Evaluate a random subset of combinations
   hill_climbing     Greedy search using model quality/speed rankings
   arm_elimination   Eliminate statistically dominated combinations early

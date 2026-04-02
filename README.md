@@ -167,16 +167,16 @@ AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we 
 
 AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_selection_example.py](examples/advanced_selection_example.py) for details.
 
-If you do not need the strict best model combination and want **lower cumulative evaluation cost**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
+If you do not need the strict best model combination and want **lower search cost**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
 
 | `method=` | Best for | How it works |
 |-----------|----------|-------------|
-| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower cumulative evaluation cost than `brute_force`) |
+| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower search cost than `brute_force`) |
 | `"brute_force"` | Small search spaces | Evaluates all combinations |
 | `"random"` | Quick exploration | Samples a random fraction |
 | `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
 | `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
-| `"epsilon_lucb"` | Extra cumulative evaluation cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
+| `"epsilon_lucb"` | Extra search cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
 | `"threshold"` | Thresholding objectives | Bandit; determines whether each combination is above/below a user-defined `threshold` on the performance metric (e.g., mean accuracy) |
 | `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
 | `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt-py[bayesian]"`) |

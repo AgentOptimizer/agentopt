@@ -165,7 +165,7 @@ AgentOpt patches `httpx` at the transport level — the same HTTP library used b
 | **Random Search** | Random sampling | Quick baselines |
 | **Hill Climbing** | Greedy + restarts | Medium spaces with model topology |
 | **Arm Elimination** | Progressive pruning | Statistical early stopping |
-| **Epsilon LUCB** | ε-optimal best arm | Extra cost savings when ε-optimal is enough |
+| **Epsilon LUCB** | ε-optimal best arm | Extra search cost savings when ε-optimal is enough |
 | **Threshold SE** | Threshold classification | Filtering combos above/below a performance target |
 | **LM Proposal** | LLM-guided shortlist | Leveraging model knowledge |
 | **Bayesian Optimization** | Gaussian Process | Expensive evaluations |

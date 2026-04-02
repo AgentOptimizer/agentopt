@@ -1,17 +1,19 @@
-"""Dataset loading and tokenization for the BERT router.
+"""Dataset loading and tokenization for the BERT router (two-pass version).
 
-Each sample is: (benchmark_token + query_text) → score vector.
-- 1-tuple benchmarks (GPQA, BFCL): 9-dim score vector
-- 2-tuple benchmarks (HotpotQA, MathQA): decomposed into two 9-dim vectors
-  (role1 marginal scores, role2 marginal scores)
+Each sample produces one or more training examples:
 
-For 2-tuple, the marginal scores are computed by averaging across the other
-role. E.g., role1_score[i] = mean of combo_score[i*9+j] for all valid j.
-This captures "how good is this model for role 1 on average."
+1-tuple benchmarks (GPQA, BFCL):
+    1 example: (query_text) → 9-dim score vector
 
-Missing scores (partial coverage, especially MathQA) are tracked via a
-boolean mask tensor. The loss function and evaluation metrics use this
-mask to ignore missing entries — no zero-filling or sample dropping.
+2-tuple benchmarks (HotpotQA, MathQA):
+    1 role1 example: (query_text) → 9-dim role1 marginal scores
+    + up to 9 role2 examples: (query_text + role1_model_output) → 9-dim role2 scores
+      where role2_scores[j] = combo_score[role1_model_i * 9 + j]
+
+The role2 examples give the model richer context (seeing the actual role1 output)
+and provide 9× more training data for the role2 prediction task.
+
+Missing scores (partial coverage) are tracked via boolean masks.
 """
 
 from __future__ import annotations
@@ -31,15 +33,12 @@ from .config import (
     COMBOS_MATHQA,
     MODELS_1TUPLE,
     RouterConfig,
+    _ROLE_MODELS,
 )
 
 # ---------------------------------------------------------------------------
 # Raw query extraction per benchmark
 # ---------------------------------------------------------------------------
-
-# These functions are used only when loading from datasets directly.
-# For score extraction we only need scores.json, but we also need the
-# query text from the actual benchmark datasets.
 
 
 def _load_gpqa_queries() -> List[str]:
@@ -75,11 +74,7 @@ def _load_bfcl_queries() -> List[str]:
 
 
 def _load_hotpotqa_queries() -> List[str]:
-    """Return formatted context+question for each HotpotQA sample (200 total).
-
-    Uses the same loading logic as the benchmark: shuffle with seed=0,
-    take first 200, format context with _format_context().
-    """
+    """Return formatted context+question for each HotpotQA sample (200 total)."""
     import random as _random
 
     data_path = Path(__file__).parent.parent / "benchmarks" / "HotpotQA" / "data" / "hotpot_dev_distractor_v1.json"
@@ -90,7 +85,7 @@ def _load_hotpotqa_queries() -> List[str]:
         raw = json.load(f)
 
     items = list(raw)
-    rng = _random.Random(0)  # benchmark uses seed=0
+    rng = _random.Random(0)
     rng.shuffle(items)
     items = items[:200]
 
@@ -120,11 +115,7 @@ def _format_hotpotqa_context(context) -> str:
 
 
 def _load_mathqa_queries() -> List[str]:
-    """Return problem+options text for each MathQA sample (200 total).
-
-    Loads from HuggingFace datasets library (allenai/math_qa) to match
-    the benchmark's load_math_qa() behavior.
-    """
+    """Return problem+options text for each MathQA sample (200 total)."""
     try:
         from datasets import load_dataset
         ds = load_dataset("allenai/math_qa", split="test")
@@ -135,7 +126,6 @@ def _load_mathqa_queries() -> List[str]:
             queries.append(f"{row['Problem']}\n\nOptions: {row['options']}")
         return queries
     except Exception:
-        # Fallback: return empty strings (will still train on scores)
         return [""] * 200
 
 
@@ -167,47 +157,29 @@ def _decompose_2tuple_scores(
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Decompose 81-dim combo scores into two 9-dim role marginals.
 
-    For role1 (planner/answer), role1_score[i] = agg of combo_score[i*9+j]
-    across all valid j.
+    For role1: role1_score[i] = agg of combo_score[i*9+j] across valid j.
+    For role2: role2_score[j] = agg of combo_score[i*9+j] across valid i.
 
-    For role2 (solver/critic), role2_score[j] = agg of combo_score[i*9+j]
-    across all valid i.
-
-    agg="max": best-case score (sharper signal, captures strong pairings)
-    agg="mean": average-case score (blurrier, dilutes strong pairings)
-
-    Args:
-        combo_scores: (81,) float tensor
-        combo_mask: (81,) bool tensor
-        n_models: number of models per role (9)
-        agg: "max" or "mean"
-
-    Returns:
-        role1_scores: (9,) float
-        role1_mask: (9,) bool — True if at least one combo with this role1 model has a score
-        role2_scores: (9,) float
-        role2_mask: (9,) bool
+    agg="max": best-case score (sharper signal)
+    agg="mean": average-case score (smoother)
     """
     role1_scores = torch.zeros(n_models, dtype=torch.float32)
     role1_mask = torch.zeros(n_models, dtype=torch.bool)
     role2_scores = torch.zeros(n_models, dtype=torch.float32)
     role2_mask = torch.zeros(n_models, dtype=torch.bool)
 
-    # Reshape to (9, 9) — row=role1, col=role2
     scores_2d = combo_scores[:n_models * n_models].view(n_models, n_models)
     mask_2d = combo_mask[:n_models * n_models].view(n_models, n_models)
 
-    # Role 1 marginals (aggregate across role2 dimension)
     for i in range(n_models):
-        valid = mask_2d[i]  # which role2 models have scores for this role1
+        valid = mask_2d[i]
         if valid.any():
             vals = scores_2d[i][valid]
             role1_scores[i] = vals.max().item() if agg == "max" else vals.mean().item()
             role1_mask[i] = True
 
-    # Role 2 marginals (aggregate across role1 dimension)
     for j in range(n_models):
-        valid = mask_2d[:, j]  # which role1 models have scores for this role2
+        valid = mask_2d[:, j]
         if valid.any():
             vals = scores_2d[:, j][valid]
             role2_scores[j] = vals.max().item() if agg == "max" else vals.mean().item()
@@ -216,23 +188,37 @@ def _decompose_2tuple_scores(
     return role1_scores, role1_mask, role2_scores, role2_mask
 
 
+def _get_role2_scores_for_role1(
+    combo_scores: torch.Tensor,
+    combo_mask: torch.Tensor,
+    role1_idx: int,
+    n_models: int = 9,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Get 9-dim role2 scores for a specific role1 model.
+
+    Returns the row of the 9×9 combo matrix for role1_idx.
+    """
+    start = role1_idx * n_models
+    end = start + n_models
+    return combo_scores[start:end].clone(), combo_mask[start:end].clone()
+
+
 # ---------------------------------------------------------------------------
 # Dataset class
 # ---------------------------------------------------------------------------
 
 
 class RouterDataset(Dataset):
-    """PyTorch dataset for the BERT router.
+    """PyTorch dataset for the BERT router (two-pass version).
 
     Each item contains:
-        - input_ids, attention_mask: tokenized "[BENCH] query_text"
-        - scores: float tensor of shape (18,) — [role1(9), role2(9)]
-          For 1-tuple: role1 = model scores, role2 = zeros
-          For 2-tuple: role1 = marginal role1 scores, role2 = marginal role2 scores
-        - mask: bool tensor of shape (18,)
-        - combo_scores: float tensor of shape (81,) — original combo scores for eval
-        - combo_mask: bool tensor of shape (81,) — original combo mask for eval
-        - head: int — 0 for 1-tuple, 1 for 2-tuple
+        - input_ids, attention_mask: tokenized text
+        - scores: float tensor of shape (9,) — target model scores
+        - mask: bool tensor of shape (9,) — True where score exists
+        - combo_scores: float tensor of shape (81,) — original combo scores (for eval)
+        - combo_mask: bool tensor of shape (81,) — original combo mask (for eval)
+        - head: int — 0 for 1-tuple, 1 for 2-tuple role1, 2 for 2-tuple role2
+        - role1_model_idx: int — which role1 model (for role2 examples), -1 otherwise
         - benchmark: str
         - sample_idx: int
     """
@@ -270,14 +256,27 @@ class RouterDataset(Dataset):
             "combo_scores": s["combo_scores"],
             "combo_mask": s["combo_mask"],
             "head": s["head"],
+            "role1_model_idx": s.get("role1_model_idx", -1),
             "benchmark": s["benchmark"],
             "sample_idx": s["sample_idx"],
         }
 
 
 # ---------------------------------------------------------------------------
-# Build samples from scores.json + dataset queries
+# Build samples from scores.json + role1_outputs.json + dataset queries
 # ---------------------------------------------------------------------------
+
+
+def _load_role1_outputs(path: Optional[str] = None) -> Dict:
+    """Load role1 model outputs from role1_outputs.json."""
+    if path is None:
+        path = os.path.join(os.path.dirname(__file__), "role1_outputs.json")
+    if not os.path.exists(path):
+        print(f"WARNING: role1_outputs.json not found at {path}")
+        print("  Run: python -m router.extract_role1_outputs")
+        return {}
+    with open(path) as f:
+        return json.load(f)
 
 
 def load_samples(
@@ -286,18 +285,21 @@ def load_samples(
 ) -> List[dict]:
     """Load all samples across benchmarks.
 
+    For 1-tuple benchmarks: 1 training example per sample.
+    For 2-tuple benchmarks: 1 role1 example + up to 9 role2 examples per sample.
+
     Returns a list of dicts, each with:
-        text: str — "[BENCH] query_text"
-        scores: Tensor of shape (18,) — decomposed [role1, role2]
-        mask: Tensor of shape (18,)
+        text: str — tokenizer input
+        scores: Tensor of shape (9,) — target scores
+        mask: Tensor of shape (9,)
         combo_scores: Tensor of shape (81,) — original combo scores
         combo_mask: Tensor of shape (81,) — original combo mask
-        head: int — 0 or 1
+        head: int — 0 (1-tuple), 1 (2-tuple role1), 2 (2-tuple role2)
+        role1_model_idx: int — -1 for 1-tuple/role1, 0-8 for role2
         benchmark: str
         sample_idx: int
     """
     scores_file = scores_path or config.scores_path
-    # Resolve relative to agentopt/ root
     if not os.path.isabs(scores_file):
         scores_file = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -306,6 +308,9 @@ def load_samples(
 
     with open(scores_file) as f:
         all_scores = json.load(f)
+
+    # Load role1 outputs for two-pass training
+    role1_outputs = _load_role1_outputs()
 
     n_models = config.n_models
     samples = []
@@ -318,29 +323,28 @@ def load_samples(
 
         combo_list = _get_combo_list(bench)
         n_combos = len(combo_list)
-        head = 0 if bench in ("gpqa", "bfcl") else 1
+        is_2tuple = bench in ("hotpotqa", "mathqa")
         token = BENCHMARK_TOKENS[bench]
 
         # Load query texts
         query_loader = _QUERY_LOADERS[bench]
         queries = query_loader()
 
+        # Load role1 outputs for this benchmark
+        bench_role1 = role1_outputs.get(bench, {})
+
         n_samples = len(bench_scores)
         if len(queries) < n_samples:
-            print(f"WARNING: {bench} has {n_samples} score entries but "
-                  f"only {len(queries)} queries — padding with empty strings")
             queries.extend([""] * (n_samples - len(queries)))
 
         for str_idx, score_dict in bench_scores.items():
             idx = int(str_idx)
             if idx >= len(queries):
-                print(f"WARNING: {bench} sample {idx} has no query text")
                 continue
 
             query = queries[idx]
-            text = f"{token} {query}"
 
-            # Build original combo score and mask vectors (81-dim max)
+            # Build original combo score vectors (81-dim max)
             combo_scores_vec = torch.zeros(n_models * n_models, dtype=torch.float32)
             combo_mask_vec = torch.zeros(n_models * n_models, dtype=torch.bool)
 
@@ -349,36 +353,71 @@ def load_samples(
                     combo_scores_vec[combo_idx] = score_dict[combo_name]
                     combo_mask_vec[combo_idx] = True
 
-            # Build training targets (18-dim: [role1(9), role2(9)])
-            train_scores = torch.zeros(n_models * 2, dtype=torch.float32)
-            train_mask = torch.zeros(n_models * 2, dtype=torch.bool)
-
-            if head == 0:
-                # 1-tuple: first 9 = model scores, last 9 = zeros
+            if not is_2tuple:
+                # 1-tuple: single training example
+                scores = torch.zeros(n_models, dtype=torch.float32)
+                mask = torch.zeros(n_models, dtype=torch.bool)
                 for combo_idx, combo_name in enumerate(combo_list):
                     if combo_name in score_dict:
-                        train_scores[combo_idx] = score_dict[combo_name]
-                        train_mask[combo_idx] = True
+                        scores[combo_idx] = score_dict[combo_name]
+                        mask[combo_idx] = True
+
+                samples.append({
+                    "text": f"{token} {query}",
+                    "scores": scores,
+                    "mask": mask,
+                    "combo_scores": combo_scores_vec,
+                    "combo_mask": combo_mask_vec,
+                    "head": 0,
+                    "role1_model_idx": -1,
+                    "benchmark": bench,
+                    "sample_idx": idx,
+                })
             else:
-                # 2-tuple: decompose 81 → 9+9 marginals
-                r1_scores, r1_mask, r2_scores, r2_mask = _decompose_2tuple_scores(
+                # 2-tuple: role1 example (query only → marginal role1 scores)
+                r1_scores, r1_mask, _, _ = _decompose_2tuple_scores(
                     combo_scores_vec, combo_mask_vec, n_models, agg=config.agg
                 )
-                train_scores[:n_models] = r1_scores
-                train_scores[n_models:] = r2_scores
-                train_mask[:n_models] = r1_mask
-                train_mask[n_models:] = r2_mask
+                samples.append({
+                    "text": f"{token} {query}",
+                    "scores": r1_scores,
+                    "mask": r1_mask,
+                    "combo_scores": combo_scores_vec,
+                    "combo_mask": combo_mask_vec,
+                    "head": 1,
+                    "role1_model_idx": -1,
+                    "benchmark": bench,
+                    "sample_idx": idx,
+                })
 
-            samples.append({
-                "text": text,
-                "scores": train_scores,
-                "mask": train_mask,
-                "combo_scores": combo_scores_vec,
-                "combo_mask": combo_mask_vec,
-                "head": head,
-                "benchmark": bench,
-                "sample_idx": idx,
-            })
+                # 2-tuple: role2 examples (query + role1 output → role2 scores)
+                sample_role1 = bench_role1.get(str_idx, {})
+                for model_idx, model_name in enumerate(_ROLE_MODELS):
+                    output_text = sample_role1.get(model_name)
+                    if output_text is None:
+                        continue
+
+                    r2_scores, r2_mask = _get_role2_scores_for_role1(
+                        combo_scores_vec, combo_mask_vec, model_idx, n_models
+                    )
+                    # Skip if no valid role2 scores for this role1
+                    if not r2_mask.any():
+                        continue
+
+                    # Input: benchmark token + query + separator + role1 output
+                    role2_text = f"{token} {query} [SEP] {output_text}"
+
+                    samples.append({
+                        "text": role2_text,
+                        "scores": r2_scores,
+                        "mask": r2_mask,
+                        "combo_scores": combo_scores_vec,
+                        "combo_mask": combo_mask_vec,
+                        "head": 2,
+                        "role1_model_idx": model_idx,
+                        "benchmark": bench,
+                        "sample_idx": idx,
+                    })
 
     return samples
 
@@ -388,31 +427,37 @@ def train_test_split(
     test_size: float = 0.2,
     seed: int = 42,
 ) -> Tuple[List[dict], List[dict]]:
-    """Stratified train/test split by benchmark.
+    """Stratified train/test split by benchmark AND sample_idx.
 
-    Ensures each benchmark has ~test_size fraction in the test set.
+    All examples from the same (benchmark, sample_idx) go to the same split.
+    This prevents data leakage: role2 examples for a sample can't appear
+    in train if the role1 example is in test.
     """
     rng = random.Random(seed)
 
-    # Group by benchmark
-    by_bench: Dict[str, List[dict]] = {}
+    # Group by (benchmark, sample_idx)
+    by_key: Dict[tuple, List[dict]] = {}
     for s in samples:
-        by_bench.setdefault(s["benchmark"], []).append(s)
+        key = (s["benchmark"], s["sample_idx"])
+        by_key.setdefault(key, []).append(s)
+
+    # Group keys by benchmark for stratification
+    bench_keys: Dict[str, List[tuple]] = {}
+    for key in by_key:
+        bench_keys.setdefault(key[0], []).append(key)
 
     train, test = [], []
-    for bench, bench_samples in sorted(by_bench.items()):
-        indices = list(range(len(bench_samples)))
-        rng.shuffle(indices)
-        n_test = max(1, int(len(indices) * test_size))
-        test_indices = set(indices[:n_test])
+    for bench, keys in sorted(bench_keys.items()):
+        rng.shuffle(keys)
+        n_test = max(1, int(len(keys) * test_size))
+        test_keys = set(keys[:n_test])
 
-        for i, s in enumerate(bench_samples):
-            if i in test_indices:
-                test.append(s)
+        for key in keys:
+            if key in test_keys:
+                test.extend(by_key[key])
             else:
-                train.append(s)
+                train.extend(by_key[key])
 
-    # Shuffle within splits
     rng.shuffle(train)
     rng.shuffle(test)
 

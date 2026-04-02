@@ -1,4 +1,12 @@
-"""Training script for the hierarchical BERT router.
+"""Training script for the two-pass BERT router.
+
+The model has a single shared Linear(1024 → 9) head. Training examples:
+- 1-tuple (GPQA, BFCL): query → 9 model scores
+- 2-tuple role1 (HotpotQA, MathQA): query → 9 role1 marginal scores
+- 2-tuple role2: query + role1_output → 9 role2 scores for that role1
+
+All examples go through the same encoder + head. The encoder learns to
+produce appropriate [CLS] representations for each type of input.
 
 Usage:
     cd agentopt/
@@ -26,16 +34,19 @@ from .model import BERTRouter, masked_mse_loss
 
 
 def _collate_fn(batch):
-    """Custom collate: pad scores/mask to 18 (9+9), combo_scores/mask to 81."""
-    n_train = 18   # role1(9) + role2(9)
-    n_combo = 81   # original combos for eval
+    """Custom collate: pad scores/mask to 9, combo_scores/mask to 81."""
+    n_models = 9
+    n_combo = 81
 
     input_ids = torch.stack([b["input_ids"] for b in batch])
     attention_mask = torch.stack([b["attention_mask"] for b in batch])
     heads = torch.tensor([b["head"] for b in batch], dtype=torch.long)
+    role1_model_idxs = torch.tensor(
+        [b["role1_model_idx"] for b in batch], dtype=torch.long
+    )
 
-    scores = torch.zeros(len(batch), n_train)
-    masks = torch.zeros(len(batch), n_train, dtype=torch.bool)
+    scores = torch.zeros(len(batch), n_models)
+    masks = torch.zeros(len(batch), n_models, dtype=torch.bool)
     combo_scores = torch.zeros(len(batch), n_combo)
     combo_masks = torch.zeros(len(batch), n_combo, dtype=torch.bool)
 
@@ -58,13 +69,14 @@ def _collate_fn(batch):
         "combo_scores": combo_scores,
         "combo_mask": combo_masks,
         "head": heads,
+        "role1_model_idx": role1_model_idxs,
         "benchmark": benchmarks,
         "sample_idx": sample_idxs,
     }
 
 
 def train(config: RouterConfig):
-    """Train the hierarchical BERT router."""
+    """Train the two-pass BERT router."""
     if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
@@ -89,14 +101,23 @@ def train(config: RouterConfig):
 
     # Print split stats
     from collections import Counter
-    train_counts = Counter(s["benchmark"] for s in train_samples)
-    test_counts = Counter(s["benchmark"] for s in test_samples)
-    print(f"\nTrain: {len(train_samples)} samples")
-    for b in sorted(train_counts):
-        print(f"  {b}: {train_counts[b]}")
-    print(f"Test: {len(test_samples)} samples")
-    for b in sorted(test_counts):
-        print(f"  {b}: {test_counts[b]}")
+    train_heads = Counter(s["head"] for s in train_samples)
+    test_heads = Counter(s["head"] for s in test_samples)
+    train_bench = Counter(s["benchmark"] for s in train_samples)
+    test_bench = Counter(s["benchmark"] for s in test_samples)
+
+    print(f"\nTrain: {len(train_samples)} examples")
+    print(f"  By head: {dict(sorted(train_heads.items()))}")
+    for b in sorted(train_bench):
+        print(f"  {b}: {train_bench[b]}")
+    print(f"Test: {len(test_samples)} examples")
+    print(f"  By head: {dict(sorted(test_heads.items()))}")
+    for b in sorted(test_bench):
+        print(f"  {b}: {test_bench[b]}")
+
+    # Count unique test samples (for eval reporting)
+    test_unique = len(set((s["benchmark"], s["sample_idx"]) for s in test_samples))
+    print(f"  Unique test samples: {test_unique}")
 
     train_dataset = RouterDataset(train_samples, tokenizer, config.max_length)
     test_dataset = RouterDataset(test_samples, tokenizer, config.max_length)
@@ -127,10 +148,10 @@ def train(config: RouterConfig):
     model = BERTRouter(config.model_name, config.n_models)
     model.encoder.resize_token_embeddings(len(tokenizer))
 
-    # Optionally freeze encoder — only train the linear heads
+    # Optionally freeze encoder
     if config.freeze_encoder:
         model.encoder.requires_grad_(False)
-        print("Encoder FROZEN — only training linear heads")
+        print("Encoder FROZEN — only training linear head")
 
     model = model.to(device)
 
@@ -177,9 +198,9 @@ def train(config: RouterConfig):
             attention_mask = batch["attention_mask"].to(device)
             scores = batch["scores"].to(device)
             mask = batch["mask"].to(device)
-            head = batch["head"].to(device)
 
-            predictions = model(input_ids, attention_mask, head)
+            # Single forward pass — shared head for all example types
+            predictions = model(input_ids, attention_mask)
             loss = masked_mse_loss(predictions, scores, mask)
             loss = loss / accum_steps
             loss.backward()
@@ -200,28 +221,27 @@ def train(config: RouterConfig):
               f"lr: {scheduler.get_last_lr()[0]:.2e}")
 
         # Evaluate
-        metrics = evaluate(model, test_loader, device, n_models=config.n_models)
+        metrics = evaluate(model, test_loader, device, tokenizer,
+                           n_models=config.n_models)
         _print_metrics(metrics)
 
-        # Save best model (by overall mean_selected_score)
-        overall_score = metrics["overall"]["mean_selected_score"]
-        if overall_score > best_metric:
-            best_metric = overall_score
+        # Save best model (by overall selection_accuracy)
+        overall_sel_acc = metrics["overall"]["selection_accuracy"]
+        if overall_sel_acc > best_metric:
+            best_metric = overall_sel_acc
             best_epoch = epoch + 1
             save_path = os.path.join(config.output_dir, "best_model")
             model.encoder.save_pretrained(save_path)
             tokenizer.save_pretrained(save_path)
             torch.save({
-                "head_1tuple": model.head_1tuple.state_dict(),
-                "head_role1": model.head_role1.state_dict(),
-                "head_role2": model.head_role2.state_dict(),
+                "head": model.head.state_dict(),
                 "config": {
                     "model_name": config.model_name,
                     "n_models": config.n_models,
                 },
             }, os.path.join(save_path, "heads.pt"))
             print(f"  ** Saved best model (epoch {best_epoch}, "
-                  f"mean_score={overall_score:.3f})")
+                  f"sel_acc={overall_sel_acc:.3f})")
 
         # Save metrics
         metrics_path = os.path.join(config.output_dir, f"metrics_epoch{epoch + 1}.json")
@@ -229,7 +249,7 @@ def train(config: RouterConfig):
             json.dump(metrics, f, indent=2)
 
     print(f"\nTraining complete. Best: epoch {best_epoch}, "
-          f"mean_score={best_metric:.3f}")
+          f"sel_acc={best_metric:.3f}")
     print(f"Model saved to: {config.output_dir}/best_model/")
 
 
@@ -252,7 +272,7 @@ def _print_metrics(metrics: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train the hierarchical BERT router")
+    parser = argparse.ArgumentParser(description="Train the two-pass BERT router")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=16,
                         help="Effective batch size (via gradient accumulation)")
@@ -263,21 +283,13 @@ def main():
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test-size", type=float, default=0.2)
-    parser.add_argument("--output-dir", type=str, default="router/checkpoints_hierarchical")
+    parser.add_argument("--output-dir", type=str, default="router/checkpoints_twopass")
     parser.add_argument("--scores-path", type=str, default="router/scores.json")
     parser.add_argument("--freeze-encoder", action="store_true",
-                        help="Freeze BERT encoder, only train linear heads")
+                        help="Freeze BERT encoder, only train linear head")
     parser.add_argument("--agg", type=str, default="max", choices=["max", "mean"],
                         help="2-tuple marginal aggregation: max (sharper) or mean (smoother)")
     args = parser.parse_args()
-
-    # Default output dir changes based on config
-    output_dir = args.output_dir
-    if output_dir == "router/checkpoints_hierarchical":
-        if args.freeze_encoder:
-            output_dir = "router/checkpoints_frozen"
-        elif args.agg == "max":
-            output_dir = "router/checkpoints_max"
 
     config = RouterConfig(
         epochs=args.epochs,
@@ -288,7 +300,7 @@ def main():
         max_length=args.max_length,
         seed=args.seed,
         test_size=args.test_size,
-        output_dir=output_dir,
+        output_dir=args.output_dir,
         scores_path=args.scores_path,
         freeze_encoder=args.freeze_encoder,
         agg=args.agg,

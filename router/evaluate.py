@@ -272,12 +272,15 @@ def _compute_benchmark_metrics(
         k = min(3, len(valid_indices))
         top_k_in_valid = valid_preds.topk(k).indices
         top_k_indices = valid_indices[top_k_in_valid]
-        is_top3 = oracle_idx in top_k_indices.tolist()
+        # Top-3 correct if any of the top-3 picks achieves the oracle score
+        top_k_scores = combo_scores[top_k_indices]
+        is_top3 = (top_k_scores - oracle_val).abs().min().item() < 1e-6
 
         rand_idx = valid_indices[rng.randint(0, len(valid_indices) - 1)].item()
         random_scores.append(combo_scores[rand_idx].item())
 
-        correct.append(1 if selected_idx == oracle_idx else 0)
+        # Count as correct if selected score matches oracle score (handles ties)
+        correct.append(1 if abs(selected_score - oracle_val) < 1e-6 else 0)
         top3.append(1 if is_top3 else 0)
         selected_scores.append(selected_score)
         oracle_scores.append(oracle_val)
@@ -341,9 +344,18 @@ def _compute_benchmark_metrics(
 
         if k2 > 0:
             top_r2 = valid_r2[role2_pred[valid_r2].topk(k2).indices]
-            is_top3 = (oracle_r1 in top_r1.tolist()) and (oracle_r2 in top_r2.tolist())
+            # Check if any combo in top-3 role1 × top-3 role2 achieves oracle score
+            is_top3 = False
+            for r1_cand in top_r1.tolist():
+                for r2_cand in top_r2.tolist():
+                    cand_idx = r1_cand * n_models + r2_cand
+                    if combo_mask[cand_idx] and abs(combo_scores[cand_idx].item() - oracle_val) < 1e-6:
+                        is_top3 = True
+                        break
+                if is_top3:
+                    break
         else:
-            is_top3 = oracle_r1 in top_r1.tolist()
+            is_top3 = False
 
         # Random baseline
         rand_combo = valid_combo_indices[
@@ -351,7 +363,8 @@ def _compute_benchmark_metrics(
         ].item()
         random_scores.append(combo_scores[rand_combo].item())
 
-        correct.append(1 if selected_idx == oracle_combo_idx else 0)
+        # Count as correct if selected score matches oracle score (handles ties)
+        correct.append(1 if abs(selected_score - oracle_val) < 1e-6 else 0)
         top3.append(1 if is_top3 else 0)
         selected_scores.append(selected_score)
         oracle_scores.append(oracle_val)

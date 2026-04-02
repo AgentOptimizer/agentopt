@@ -1,4 +1,4 @@
-Model,Effort,Accuracy,Samples,Cost/Sample,Server Lat/Sample (s)
+Model,Effort/Budget Tokens,Accuracy,Samples,Cost/Sample,Server Lat/Sample (s)
 Opus,high,0.839,192,0.113,70.4
 Opus,medium,0.793,198,0.0341,23.9
 Opus,none,0.722,198,0.0120,8.79

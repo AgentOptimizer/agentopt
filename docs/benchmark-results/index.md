@@ -141,19 +141,19 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 
 | Rank | Planner | Solver | Accuracy | Avg Latency (s) | Cost |
 |:-----|:--------|:-------|:---------|:----------------|:-----|
-| 67 | Kimi K2.5 | Claude Haiku 4.5 | 37.19% | 4.23 | $0.88 |
-| 68 | Claude Haiku 4.5 | Qwen3 32B | 36.13% | 2.89 | $0.46 |
-| 69 | Claude Haiku 4.5 | Claude 3 Haiku | 34.34% | 2.63 | $0.49 |
-| 70 | Ministral 3 8B | Claude Haiku 4.5 | 32.42% | 4.14 | $0.70 |
-| 71 | Qwen3 Next 80B A3B | Claude Haiku 4.5 | 32.19% | 3.92 | $0.72 |
-| 72 | Claude Opus 4.6 | Kimi K2.5 | 31.96% | 4.72 | $2.02 |
-| 73 | Claude Opus 4.6 | Ministral 3 8B | 31.96% | 4.72 | $2.02 |
-| 74 | Claude Opus 4.6 | Qwen3 32B | 31.96% | 4.72 | $2.02 |
-| 75 | Claude Opus 4.6 | Qwen3 Next 80B A3B | 31.96% | 4.72 | $2.02 |
-| 76 | Claude Opus 4.6 | gpt-oss-120b | 31.95% | 4.60 | $2.02 |
-| 77 | Claude Opus 4.6 | gpt-oss-20b | 31.88% | 4.57 | $2.03 |
-| 78 | Claude Opus 4.6 | Claude 3 Haiku | 31.78% | 4.22 | $2.02 |
-| 79 | Claude Opus 4.6 | Claude Haiku 4.5 | 31.77% | 4.16 | $2.03 |
+| 67 | Claude Haiku 4.5 | Qwen3 32B | 36.13% | 2.89 | $0.46 |
+| 68 | Claude Haiku 4.5 | Claude 3 Haiku | 34.34% | 2.63 | $0.49 |
+| 69 | Ministral 3 8B | Claude Haiku 4.5 | 32.42% | 4.14 | $0.70 |
+| 70 | Qwen3 Next 80B A3B | Claude Haiku 4.5 | 32.19% | 3.92 | $0.72 |
+| 71 | Claude Opus 4.6 | Kimi K2.5 | 31.96% | 4.72 | $2.02 |
+| 72 | Claude Opus 4.6 | Ministral 3 8B | 31.96% | 4.72 | $2.02 |
+| 73 | Claude Opus 4.6 | Qwen3 32B | 31.96% | 4.72 | $2.02 |
+| 74 | Claude Opus 4.6 | Qwen3 Next 80B A3B | 31.96% | 4.72 | $2.02 |
+| 75 | Claude Opus 4.6 | gpt-oss-120b | 31.95% | 4.60 | $2.02 |
+| 76 | Claude Opus 4.6 | gpt-oss-20b | 31.88% | 4.57 | $2.03 |
+| 77 | Claude Opus 4.6 | Claude 3 Haiku | 31.78% | 4.22 | $2.02 |
+| 78 | Claude Opus 4.6 | Claude Haiku 4.5 | 31.77% | 4.16 | $2.03 |
+| 79 | Claude Opus 4.6 | Claude Opus 4.6 | 31.71% | 4.19 | $2.02 |
 | 80 | Qwen3 32B | Claude Haiku 4.5 | 26.63% | 3.47 | $0.69 |
 | 81 | Claude Haiku 4.5 | Claude Haiku 4.5 | 26.49% | 3.40 | $0.79 |
 

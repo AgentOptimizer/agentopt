@@ -103,8 +103,8 @@ def resolve_target(
     """Return (target_base_url, upstream_path).
     
     Priority:
-    1. X-AgentOpt-Target header -> use directly (in-process path)
-    2. Path pattern matching -> registered provider (subprocess path)
+    1. Path pattern matching -> registered provider (authoritative, allows overrides)
+    2. X-AgentOpt-Target header -> fallback for unregistered/custom providers
     3. Raise error if no match
     """
 ```

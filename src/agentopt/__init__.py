@@ -9,7 +9,6 @@ model combination.
 __version__ = "0.1.0"
 
 from agentopt.proxy import CallRecord, LLMTracker, SessionInfo
-from agentopt.proxy.interceptor import _session_id_var as _session_id_var
 
 
 def get_current_session_env() -> dict:

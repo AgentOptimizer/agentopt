@@ -194,12 +194,15 @@ class TestCacheIntegration:
 
     def test_non_llm_request_not_intercepted(self):
         """GET /health is not an LLM endpoint — should not be redirected."""
-        client = _make_client()
+        handler = lambda req: httpx.Response(200, json={"status": "ok"})
+        client = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="https://api.openai.com",
+        )
         with self.tracker.track(data_id="dp_1", combo_id="c"):
-            try:
-                client.get("/health")
-            except Exception:
-                pass
+            resp = client.get("/health")
+            # Verify the request was NOT rewritten to the proxy URL.
+            assert resp.status_code == 200
         assert len(self.tracker.get_records()) == 0
 
 

@@ -249,6 +249,9 @@ class ProxyServer:
         """Catch-all: ``ANY /{session_id}/{path:.*}``."""
         session_id = request.match_info["session_id"]
         remaining_path = "/" + request.match_info.get("path", "")
+        # Preserve query string for providers that use it (e.g. API keys).
+        if request.query_string:
+            remaining_path += "?" + request.query_string
 
         session = self.session_manager.get_session(session_id)
         if session is None:
@@ -331,7 +334,7 @@ class ProxyServer:
 
         # --- Non-streaming response ---
         resp_bytes = await upstream_resp.read()
-        await upstream_resp.release()
+        upstream_resp.release()
 
         if upstream_resp.status == 200:
             self._record_call(
@@ -394,7 +397,7 @@ class ProxyServer:
         async for chunk in upstream_resp.content.iter_any():
             accumulated.append(chunk)
             await resp.write(chunk)
-        await upstream_resp.release()
+        upstream_resp.release()
 
         latency = time.monotonic() - t0
         full_body = b"".join(accumulated)

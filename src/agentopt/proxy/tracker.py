@@ -157,6 +157,20 @@ class LLMTracker:
                     session.agent_id = old_agent_id
 
     # ------------------------------------------------------------------
+    # Provider registry
+    # ------------------------------------------------------------------
+
+    def register_provider(
+        self, name: str, base_url: str, path_patterns: tuple,
+    ) -> None:
+        """Add or replace a provider in the proxy's registry.
+
+        Must be called after :meth:`start`.
+        """
+        assert self._server is not None, "call tracker.start() first"
+        self._server.register_provider(name, base_url, path_patterns)
+
+    # ------------------------------------------------------------------
     # Subprocess helpers
     # ------------------------------------------------------------------
 

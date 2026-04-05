@@ -11,7 +11,6 @@ proxy server — the interceptor only rewrites URLs.
 
 from contextvars import ContextVar
 from typing import Any, Callable, Optional
-from urllib.parse import urlparse
 
 import httpx
 
@@ -65,16 +64,20 @@ def _rewrite_request(
     if original_url.port and original_url.port not in (80, 443):
         original_base += f":{original_url.port}"
 
-    remaining_path = original_url.raw_path.decode("ascii", errors="ignore")
+    # Preserve both path and query string.
+    remaining = original_url.raw_path.decode("ascii", errors="ignore")
+    if original_url.query:
+        remaining += "?" + original_url.query.decode("ascii", errors="ignore")
 
-    new_url = f"{proxy_base_url}/{session_id}{remaining_path}"
+    new_url = f"{proxy_base_url}/{session_id}{remaining}"
 
     # Merge existing headers with the target header.
-    headers = dict(request.headers)
+    # Remove the original Host header (case-insensitive) — httpx will set
+    # a new one for the proxy URL.
+    headers = {
+        k: v for k, v in request.headers.items() if k.lower() != "host"
+    }
     headers[TARGET_HEADER] = original_base
-    # Remove the original Host header — httpx will set a new one for the
-    # proxy URL.
-    headers.pop("host", None)
 
     return httpx.Request(
         method=request.method, url=new_url, headers=headers, content=request.content,

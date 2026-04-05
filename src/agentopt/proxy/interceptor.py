@@ -1,23 +1,29 @@
-"""httpx monkey-patching for LLM call interception."""
+"""httpx monkey-patching — redirect LLM requests through the proxy server.
 
-import json
-import time
-import warnings
+This module replaces the SDK's original base URL with the local proxy URL
+at *request time*, inserting the current session ID (from a ``ContextVar``)
+into the URL path and forwarding the original base URL as a header so the
+proxy knows where to forward.
+
+All token parsing, caching, and ``CallRecord`` creation is handled by the
+proxy server — the interceptor only rewrites URLs.
+"""
+
 from contextvars import ContextVar
-from datetime import datetime, timezone
 from typing import Any, Callable, Optional
+from urllib.parse import urlparse
 
 import httpx
 
-from .cache import CacheEntry, ResponseCache, _make_cache_key
+from .providers import TARGET_HEADER
 
 # ---------------------------------------------------------------------------
-# ContextVars for attribution
+# ContextVar — the active session ID (set by LLMTracker.track())
 # ---------------------------------------------------------------------------
 
-_data_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_data_id", default=None)
-_combo_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_combo_id", default=None)
-_agent_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_agent_id", default=None)
+_session_id_var: ContextVar[Optional[str]] = ContextVar(
+    "agentopt_session_id", default=None
+)
 
 # ---------------------------------------------------------------------------
 # State
@@ -26,16 +32,16 @@ _agent_id_var: ContextVar[Optional[str]] = ContextVar("agentopt_agent_id", defau
 _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
 _installed = False
+_proxy_base_url: Optional[str] = None
 
-# Cache instance (None means caching disabled)
-_cache: Optional[ResponseCache] = None
-
-# Warn-once flags for streaming limitations
-_streaming_cache_warned: bool = False
-_streaming_tokens_warned: bool = False
-
-# URL path patterns that indicate LLM API endpoints
-_LLM_PATH_PATTERNS = ("/chat/completions", "/v1/messages", "/v1/responses")
+# URL path patterns that indicate LLM API endpoints.
+_LLM_PATH_PATTERNS = (
+    "/chat/completions",
+    "/v1/messages",
+    "/v1/responses",
+    "/v1beta/models",
+    "/v1/models",
+)
 
 
 def _is_llm_request(request: httpx.Request) -> bool:
@@ -46,142 +52,32 @@ def _is_llm_request(request: httpx.Request) -> bool:
     return any(pattern in path for pattern in _LLM_PATH_PATTERNS)
 
 
-def _parse_usage(body: dict) -> Optional[dict]:
-    """Extract model and token usage from an LLM API response body.
+def _rewrite_request(
+    request: httpx.Request, proxy_base_url: str, session_id: str,
+) -> httpx.Request:
+    """Create a new ``httpx.Request`` pointing at the proxy.
 
-    Handles both OpenAI format (prompt_tokens/completion_tokens)
-    and Anthropic format (input_tokens/output_tokens).
+    The original base URL (scheme + host) is forwarded as the
+    ``X-AgentOpt-Target`` header so the proxy can route upstream.
     """
-    model = body.get("model")
-    usage = body.get("usage")
-    if not model or not usage:
-        return None
+    original_url = request.url
+    original_base = f"{original_url.scheme}://{original_url.host}"
+    if original_url.port and original_url.port not in (80, 443):
+        original_base += f":{original_url.port}"
 
-    prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
-    completion_tokens = (
-        usage.get("completion_tokens") or usage.get("output_tokens") or 0
-    )
+    remaining_path = original_url.raw_path.decode("ascii", errors="ignore")
 
-    return {
-        "model": model,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-    }
+    new_url = f"{proxy_base_url}/{session_id}{remaining_path}"
 
+    # Merge existing headers with the target header.
+    headers = dict(request.headers)
+    headers[TARGET_HEADER] = original_base
+    # Remove the original Host header — httpx will set a new one for the
+    # proxy URL.
+    headers.pop("host", None)
 
-def _get_request_body(request: httpx.Request) -> Optional[dict]:
-    """Parse and cache the JSON body of an httpx.Request.
-
-    The parsed body is stored in request.extensions so that repeated calls
-    for the same request instance do not re-deserialize the content.
-    """
-    cache_key = "_agentopt_json_body"
-    if cache_key in request.extensions:
-        return request.extensions[cache_key]
-
-    try:
-        body = json.loads(request.content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        body = None
-
-    request.extensions[cache_key] = body
-    return body
-
-
-def _try_record(
-    request: httpx.Request,
-    response: httpx.Response,
-    latency_seconds: float,
-    callback: Callable,
-    cached: bool = False,
-) -> None:
-    """Attempt to parse the response and create a CallRecord."""
-    from .models import CallRecord
-
-    try:
-        body = json.loads(response.content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return
-
-    parsed = _parse_usage(body)
-    if parsed is None:
-        return
-
-    request_body = _get_request_body(request) or {}
-
-    model = request_body.get("model") or parsed["model"]
-
-    record = CallRecord(
-        data_id=_data_id_var.get(),
-        combo_id=_combo_id_var.get(),
-        agent_id=_agent_id_var.get(),
-        model=model,
-        prompt_tokens=parsed["prompt_tokens"],
-        completion_tokens=parsed["completion_tokens"],
-        latency_seconds=latency_seconds,
-        request_url=str(request.url),
-        request_body=request_body,
-        response_body=body,
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        cached=cached,
-    )
-    callback(record)
-
-
-def _try_cache_lookup(
-    request: httpx.Request,
-) -> Optional[tuple[httpx.Response, float]]:
-    """Check if a cached response exists for this request.
-
-    Returns ``(response, original_latency_seconds)`` on hit, ``None`` on miss.
-    """
-    if _cache is None:
-        return None
-
-    request_body = _get_request_body(request)
-    if request_body is None:
-        return None
-
-    key = _make_cache_key(request_body)
-    entry = _cache.get(key)
-    if entry is None:
-        return None
-
-    # Build a synthetic httpx.Response from cached bytes.
-    # Strip content-encoding/transfer-encoding: the stored bytes are
-    # already decoded, so re-applying these headers causes httpx to
-    # attempt double-decompression.
-    headers = {
-        k: v
-        for k, v in entry.response_headers.items()
-        if k.lower() not in ("content-encoding", "transfer-encoding")
-    }
-    response = httpx.Response(
-        status_code=200, content=entry.response_bytes, headers=headers,
-    )
-    response.request = request
-    return response, entry.latency_seconds
-
-
-def _try_cache_store(
-    request: httpx.Request, response: httpx.Response, latency_seconds: float = 0.0,
-) -> None:
-    """Store a successful response in the cache."""
-    if _cache is None:
-        return
-
-    request_body = _get_request_body(request)
-    if request_body is None:
-        return
-
-    key = _make_cache_key(request_body)
-    _cache.put(
-        key,
-        CacheEntry(
-            response_bytes=response.content,
-            response_headers=dict(response.headers),
-            latency_seconds=latency_seconds,
-        ),
+    return httpx.Request(
+        method=request.method, url=new_url, headers=headers, content=request.content,
     )
 
 
@@ -190,112 +86,47 @@ def _try_cache_store(
 # ---------------------------------------------------------------------------
 
 
-def install(callback: Callable, cache: Optional[ResponseCache] = None,) -> None:
-    """Monkey-patch httpx.Client.send and httpx.AsyncClient.send."""
-    global _original_sync_send, _original_async_send, _installed
-    global _cache
+def install_redirect(proxy_base_url: str) -> None:
+    """Monkey-patch ``httpx`` to redirect LLM requests through the proxy.
+
+    Non-LLM requests and requests outside an active tracking session are
+    passed through unmodified.
+    """
+    global _original_sync_send, _original_async_send, _installed, _proxy_base_url
 
     if _installed:
         return
 
-    _cache = cache
-
+    _proxy_base_url = proxy_base_url
     _original_sync_send = httpx.Client.send
     _original_async_send = httpx.AsyncClient.send
 
     def _patched_sync_send(
         self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any
     ) -> httpx.Response:
-        if not _is_llm_request(request):
-            return _original_sync_send(self, request, stream=stream, **kwargs)
-
-        # Cache lookup (only for non-streaming requests)
-        if not stream:
-            cache_hit = _try_cache_lookup(request)
-            if cache_hit is not None:
-                cached_response, original_latency = cache_hit
-                _try_record(
-                    request, cached_response, original_latency, callback, cached=True
-                )
-                return cached_response
-        else:
-            warnings.warn("Caching does not support streaming")
-
-        t0 = time.monotonic()
-        response = _original_sync_send(self, request, stream=stream, **kwargs)
-        latency = time.monotonic() - t0
-
-        if not stream:
-            if response.status_code == 200:
-                try:
-                    response.read()
-                    _try_cache_store(request, response, latency)
-                    _try_record(request, response, latency, callback)
-                except Exception:
-                    pass
-        else:
-            warnings.warn("Token tracking does not support streaming")
-
-        return response
+        if _is_llm_request(request):
+            session_id = _session_id_var.get()
+            if session_id is not None:
+                request = _rewrite_request(request, _proxy_base_url, session_id)  # type: ignore[arg-type]
+        return _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
 
     async def _patched_async_send(
         self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any
     ) -> httpx.Response:
-        if not _is_llm_request(request):
-            return await _original_async_send(self, request, stream=stream, **kwargs)
-
-        # Cache lookup (only for non-streaming requests)
-        if not stream:
-            cache_hit = _try_cache_lookup(request)
-            if cache_hit is not None:
-                cached_response, original_latency = cache_hit
-                _try_record(
-                    request, cached_response, original_latency, callback, cached=True
-                )
-                return cached_response
-        else:
-            global _streaming_cache_warned
-            if not _streaming_cache_warned:
-                warnings.warn(
-                    "Caching does not support streaming",
-                    category=UserWarning,
-                    stacklevel=2,
-                )
-                _streaming_cache_warned = True
-
-        t0 = time.monotonic()
-        response = await _original_async_send(self, request, stream=stream, **kwargs)
-        latency = time.monotonic() - t0
-
-        if not stream:
-            if response.status_code == 200:
-                try:
-                    await response.aread()
-                    _try_cache_store(request, response, latency)
-                    _try_record(request, response, latency, callback)
-                except Exception:
-                    pass
-        else:
-            global _streaming_tokens_warned
-            if not _streaming_tokens_warned:
-                warnings.warn(
-                    "Token tracking does not support streaming",
-                    category=UserWarning,
-                    stacklevel=2,
-                )
-                _streaming_tokens_warned = True
-
-        return response
+        if _is_llm_request(request):
+            session_id = _session_id_var.get()
+            if session_id is not None:
+                request = _rewrite_request(request, _proxy_base_url, session_id)  # type: ignore[arg-type]
+        return await _original_async_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
 
     httpx.Client.send = _patched_sync_send  # type: ignore[assignment]
     httpx.AsyncClient.send = _patched_async_send  # type: ignore[assignment]
     _installed = True
 
 
-def uninstall() -> None:
-    """Restore original httpx send methods."""
-    global _original_sync_send, _original_async_send, _installed
-    global _cache
+def uninstall_redirect() -> None:
+    """Restore the original ``httpx.Client.send`` methods."""
+    global _original_sync_send, _original_async_send, _installed, _proxy_base_url
 
     if not _installed:
         return
@@ -307,5 +138,5 @@ def uninstall() -> None:
 
     _original_sync_send = None
     _original_async_send = None
-    _cache = None
+    _proxy_base_url = None
     _installed = False

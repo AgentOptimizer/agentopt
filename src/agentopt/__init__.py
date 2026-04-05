@@ -8,7 +8,36 @@ model combination.
 
 __version__ = "0.1.0"
 
-from agentopt.proxy import CallRecord, LLMTracker
+from agentopt.proxy import CallRecord, LLMTracker, SessionInfo
+from agentopt.proxy.interceptor import _session_id_var as _session_id_var
+
+
+def get_current_session_env() -> dict:
+    """Return proxy env vars for the current tracking session.
+
+    Use inside ``agent.run()`` when spawning subprocess-based agents::
+
+        import agentopt, os, subprocess
+        env = {**os.environ, **agentopt.get_current_session_env()}
+        subprocess.run(["gemini", "cli", ...], env=env)
+
+    Returns an empty dict if no tracking session is active.
+    """
+    # Lazy import to avoid circular dependency at module load time.
+    from agentopt.proxy.interceptor import _proxy_base_url, _session_id_var
+
+    session_id = _session_id_var.get()
+    if session_id is None or _proxy_base_url is None:
+        return {}
+    url = f"{_proxy_base_url}/{session_id}"
+    return {
+        "OPENAI_BASE_URL": url,
+        "ANTHROPIC_BASE_URL": url,
+        "GOOGLE_API_BASE": url,
+        "AGENTOPT_SESSION_ID": session_id,
+        "AGENTOPT_PROXY_URL": _proxy_base_url,
+    }
+
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
 from .model_selection import (
@@ -110,4 +139,7 @@ __all__ = [
     "Dataset",
     "EvalFn",
     "ModelsConfig",
+    # Proxy / session helpers
+    "SessionInfo",
+    "get_current_session_env",
 ]

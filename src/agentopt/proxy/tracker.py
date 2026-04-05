@@ -1,4 +1,4 @@
-"""LLMTracker — context management and record storage."""
+"""LLMTracker — proxy-based LLM call tracking and session management."""
 
 import threading
 from contextlib import contextmanager
@@ -6,37 +6,39 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 from .cache import ResponseCache
-from .interceptor import (
-    _agent_id_var,
-    _combo_id_var,
-    _data_id_var,
-    install,
-    uninstall,
-)
+from .interceptor import _session_id_var, install_redirect, uninstall_redirect
 from .models import CallRecord
+from .server import ProxyServer
+from .session import SessionInfo
 
 
 class LLMTracker:
-    """Tracks LLM API calls via httpx interception.
+    """Tracks LLM API calls via a local HTTP proxy server.
+
+    On ``start()`` the tracker launches a lightweight proxy server on
+    ``127.0.0.1`` (OS-assigned port) and monkey-patches ``httpx`` so that
+    in-process LLM requests are transparently redirected through it.
+    Subprocess agents can be directed to the proxy by setting the
+    environment variables returned by :meth:`get_session_env`.
 
     Parameters
     ----------
     cache : bool
         Enable API-level response caching (default ``True``).
-        When enabled, identical requests (same model, messages, etc.)
-        return cached responses instantly without hitting the API.
     cache_dir : str or Path, optional
-        Directory for the SQLite cache database. Defaults to
-        ``"./.agentopt_cache"`` so the cache persists across runs.
-        Set to ``None`` to disable disk persistence (in-memory only).
+        Directory for the SQLite cache database.  Defaults to
+        ``"./.agentopt_cache"``.  ``None`` disables disk persistence.
 
     Usage::
 
-        tracker = LLMTracker(cache_dir="./llm_cache")
+        tracker = LLMTracker()
         tracker.start()
 
-        with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
+        with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku") as session:
             result = agent(input_data)
+            # For subprocess agents:
+            # env = {**os.environ, **tracker.get_session_env(session.session_id)}
+            # subprocess.run(["my-agent", ...], env=env)
 
         usage = tracker.get_usage(combo_id="gpt4o+haiku")
         tracker.stop()
@@ -53,24 +55,115 @@ class LLMTracker:
         self._lock = threading.Lock()
         self._active = False
         self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
+        self._server: Optional[ProxyServer] = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Install httpx patches. Idempotent."""
+        """Launch the proxy server and install the httpx redirect.
+
+        Idempotent — calling ``start()`` twice is a no-op.
+        """
         if self._active:
             return
-        install(
-            callback=self._on_call, cache=self._response_cache,
-        )
+        self._server = ProxyServer(cache=self._response_cache)
+        self._server.start()
+        install_redirect(proxy_base_url=self._server.base_url)
         self._active = True
 
     def stop(self) -> None:
-        """Remove httpx patches and flush cache to disk. Idempotent."""
+        """Shut down the proxy, restore httpx, and flush the cache.
+
+        Idempotent.
+        """
         if not self._active:
             return
-        uninstall()
+
+        # Collect records from all (ended + still-active) sessions.
+        if self._server is not None:
+            with self._lock:
+                self._records.extend(self._server.session_manager.get_all_records())
+            uninstall_redirect()
+            self._server.stop()
+            self._server = None
+
         if self._response_cache is not None:
             self._response_cache.close()
         self._active = False
+
+    # ------------------------------------------------------------------
+    # Session tracking
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def track(
+        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+    ):
+        """Create a proxy session scoped to this context.
+
+        Yields a :class:`SessionInfo` whose ``session_id`` can be used
+        with :meth:`get_session_env` for subprocess agents.
+        """
+        assert self._server is not None, "call tracker.start() first"
+        session = self._server.session_manager.create_session(
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+        )
+        token = _session_id_var.set(session.session_id)
+        try:
+            yield session
+        finally:
+            _session_id_var.reset(token)
+            self._server.session_manager.end_session(session.session_id)
+
+    @contextmanager
+    def track_agent(self, agent_id: str):
+        """Update the agent_id on the current session.
+
+        Requires an enclosing :meth:`track` scope.
+        """
+        session_id = _session_id_var.get()
+        old_agent_id: Optional[str] = None
+        if session_id and self._server:
+            session = self._server.session_manager.get_session(session_id)
+            if session is not None:
+                old_agent_id = session.agent_id
+                session.agent_id = agent_id
+        try:
+            yield
+        finally:
+            if session_id and self._server:
+                session = self._server.session_manager.get_session(session_id)
+                if session is not None:
+                    session.agent_id = old_agent_id
+
+    # ------------------------------------------------------------------
+    # Subprocess helpers
+    # ------------------------------------------------------------------
+
+    def get_session_env(self, session_id: str) -> Dict[str, str]:
+        """Return environment variables for subprocess agents.
+
+        Set these on the subprocess environment so its LLM SDK traffic
+        is automatically routed through the proxy::
+
+            env = {**os.environ, **tracker.get_session_env(session.session_id)}
+            subprocess.run(["gemini", "cli", ...], env=env)
+        """
+        assert self._server is not None, "call tracker.start() first"
+        url = self._server.session_url(session_id)
+        return {
+            "OPENAI_BASE_URL": url,
+            "ANTHROPIC_BASE_URL": url,
+            "GOOGLE_API_BASE": url,
+            "AGENTOPT_SESSION_ID": session_id,
+            "AGENTOPT_PROXY_URL": self._server.base_url,
+        }
+
+    # ------------------------------------------------------------------
+    # Cache management
+    # ------------------------------------------------------------------
 
     def flush_cache(self) -> None:
         """Flush dirty cache entries to disk immediately."""
@@ -82,32 +175,17 @@ class LLMTracker:
         if self._response_cache is not None:
             self._response_cache.clear()
 
-    def _on_call(self, record: CallRecord) -> None:
-        """Callback from interceptor — appends record thread-safely."""
+    # ------------------------------------------------------------------
+    # Record queries
+    # ------------------------------------------------------------------
+
+    def _all_records(self) -> List[CallRecord]:
+        """Gather records from both the server and the local archive."""
         with self._lock:
-            self._records.append(record)
-
-    @contextmanager
-    def track(self, data_id: str, combo_id: str, agent_id: Optional[str] = None):
-        """Set context vars for attribution during this scope."""
-        t1 = _data_id_var.set(data_id)
-        t2 = _combo_id_var.set(combo_id)
-        t3 = _agent_id_var.set(agent_id)
-        try:
-            yield
-        finally:
-            _data_id_var.reset(t1)
-            _combo_id_var.reset(t2)
-            _agent_id_var.reset(t3)
-
-    @contextmanager
-    def track_agent(self, agent_id: str):
-        """Set only agent_id, keeping data_id and combo_id unchanged."""
-        t = _agent_id_var.set(agent_id)
-        try:
-            yield
-        finally:
-            _agent_id_var.reset(t)
+            records = list(self._records)
+        if self._server is not None:
+            records.extend(self._server.session_manager.get_all_records())
+        return records
 
     def get_records(
         self,
@@ -115,12 +193,9 @@ class LLMTracker:
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> List[CallRecord]:
-        """Return CallRecord list, filtered by any combination of IDs."""
-        with self._lock:
-            records = list(self._records)
-
+        """Return ``CallRecord`` list, filtered by any combination of IDs."""
         result = []
-        for r in records:
+        for r in self._all_records():
             if data_id is not None and r.data_id != data_id:
                 continue
             if combo_id is not None and r.combo_id != combo_id:
@@ -136,10 +211,7 @@ class LLMTracker:
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Dict[str, Tuple[int, int]]:
-        """Return aggregated ``{model: (input_tokens, output_tokens)}``.
-
-        Filtered by any combination of IDs.
-        """
+        """Return aggregated ``{model: (input_tokens, output_tokens)}``."""
         records = self.get_records(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id
         )

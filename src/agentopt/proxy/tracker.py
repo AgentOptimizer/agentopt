@@ -1,5 +1,6 @@
 """LLMTracker — proxy-based LLM call tracking and session management."""
 
+import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -105,15 +106,32 @@ class LLMTracker:
 
         Yields a :class:`SessionInfo` whose ``session_id`` can be used
         with :meth:`get_session_env` for subprocess agents.
+
+        Process-level environment variables (``OPENAI_BASE_URL``, etc.)
+        are set automatically so that any subprocess spawned during this
+        scope inherits them — no explicit ``get_session_env()`` call
+        needed by frameworks that internally spawn subprocesses.
         """
         assert self._server is not None, "call tracker.start() first"
         session = self._server.session_manager.create_session(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id,
         )
         token = _session_id_var.set(session.session_id)
+
+        # Set process env vars so subprocess agents inherit them.
+        env_vars = self.get_session_env(session.session_id)
+        old_env = {k: os.environ.get(k) for k in env_vars}
+        os.environ.update(env_vars)
+
         try:
             yield session
         finally:
+            # Restore original env vars.
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
             _session_id_var.reset(token)
             self._server.session_manager.end_session(session.session_id)
 

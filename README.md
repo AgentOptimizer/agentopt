@@ -24,6 +24,10 @@
 
 ---
 
+## News
+[2026/04] 🔥 Version 0.1.0 released!
+
+
 ## Why AgentOpt
 Choosing models for your agent is surprisingly hard. Which family? Small or big? Thinking or non-thinking? And different steps may need different models. The combinatorial space explodes fast — 3 steps × 8 models = **512 combinations** to evaluate.
 

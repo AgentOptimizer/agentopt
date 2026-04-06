@@ -21,8 +21,8 @@ _RESPONSE_BODY = MOCK_RESPONSE_BODY
 _REQUEST_BODY = MOCK_REQUEST_BODY
 
 
-def _make_client() -> httpx.Client:
-    return httpx.Client(base_url="https://api.openai.com")
+def _make_client(base_url: str = "https://api.openai.com") -> httpx.Client:
+    return httpx.Client(base_url=base_url)
 
 
 def _post(client: httpx.Client, body: dict | None = None) -> httpx.Response:
@@ -42,13 +42,9 @@ def _db_row_count(cache_dir) -> int:
         conn.close()
 
 
-def _register_mock(tracker, mock_upstream):
-    """Point the tracker's proxy at the mock upstream."""
-    tracker._server.register_provider(
-        "openai",
-        mock_upstream.base_url,
-        ("/v1/chat/completions", "/chat/completions", "/v1/responses"),
-    )
+def _client(mock_upstream) -> httpx.Client:
+    """Client pointing at mock upstream — header routing handles the rest."""
+    return _make_client(base_url=mock_upstream.base_url)
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +247,8 @@ class TestTrackerDiskCache:
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker.start()
-        _register_mock(tracker, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker.track(data_id="dp_1", combo_id="c"):
                 _post(client)  # miss
                 _post(client)  # hit
@@ -271,9 +266,8 @@ class TestTrackerDiskCache:
 
         tracker1 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker1.start()
-        _register_mock(tracker1, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker1.track(data_id="dp_1", combo_id="c"):
                 _post(client)  # miss
         finally:
@@ -281,9 +275,8 @@ class TestTrackerDiskCache:
 
         tracker2 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker2.start()
-        _register_mock(tracker2, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker2.track(data_id="dp_2", combo_id="c"):
                 _post(client)  # hit from disk
 
@@ -297,9 +290,8 @@ class TestTrackerDiskCache:
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker.start()
-        _register_mock(tracker, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker.track(data_id="dp_1", combo_id="c"):
                 _post(client)
             tracker.flush_cache()
@@ -311,9 +303,8 @@ class TestTrackerDiskCache:
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker.start()
-        _register_mock(tracker, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker.track(data_id="dp_1", combo_id="c"):
                 _post(client)
             tracker.flush_cache()
@@ -328,9 +319,8 @@ class TestTrackerDiskCache:
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=False, cache_dir=cache_dir)
         tracker.start()
-        _register_mock(tracker, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker.track(data_id="dp_1", combo_id="c"):
                 _post(client)
             assert not cache_dir.exists()
@@ -342,9 +332,8 @@ class TestTrackerDiskCache:
 
         tracker1 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker1.start()
-        _register_mock(tracker1, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker1.track(data_id="dp_1", combo_id="combo_a"):
                 _post(client)
         finally:
@@ -352,9 +341,8 @@ class TestTrackerDiskCache:
 
         tracker2 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker2.start()
-        _register_mock(tracker2, mock_upstream)
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker2.track(data_id="dp_2", combo_id="combo_b"):
                 _post(client)  # hit from disk
 

@@ -1,0 +1,30 @@
+{
+    "run_id": "2026-04-05__23-10-43",
+    "uuid": "130457b7-abc9-43a6-a01c-3dd7cee1b647",
+    "dataset_path": null,
+    "dataset_name": "terminal-bench-core",
+    "dataset_version": "0.1.1",
+    "output_path": "/Users/wenyuehua/Desktop/agentopt/runs",
+    "agent_name": "terminus-1",
+    "no_rebuild": false,
+    "cleanup": true,
+    "log_level": 20,
+    "task_ids": [
+        "hello-world"
+    ],
+    "exclude_task_ids": null,
+    "n_tasks": null,
+    "n_concurrent_trials": 4,
+    "n_attempts": 1,
+    "dataset_size": 1,
+    "accuracy": 0.0,
+    "model_name": "openai/gpt-4o",
+    "start_time": "2026-04-06T03:10:43.410151+00:00",
+    "end_time": "2026-04-06T03:11:50.126798+00:00",
+    "commit_hash": "a81db37150797f57e1c9d6e98f0f35be01ebfefd",
+    "username": "Wenyueh",
+    "s3_bucket": null,
+    "agent_kwargs": null,
+    "pass_at_k": {},
+    "resumed_at": null
+}

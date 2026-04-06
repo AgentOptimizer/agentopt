@@ -1,0 +1,40 @@
+root@60ad82474859:/app# echo 'Hello, world!' > hello.txt; tmux wait -S done
+root@60ad82474859:/app# ls; tmux wait -S done
+hello.txt
+root@60ad82474859:/app# cat hello.txt; tmux wait -S done
+Hello, world!
+root@60ad82474859:/app#
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

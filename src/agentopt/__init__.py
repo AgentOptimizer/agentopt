@@ -12,29 +12,36 @@ from agentopt.proxy import CallRecord, LLMTracker, SessionInfo
 
 
 def get_current_session_env() -> dict:
-    """Return proxy env vars for the current tracking session.
+    """Return env vars that route a subprocess through the current session's port.
 
-    Use inside ``agent.run()`` when spawning subprocess-based agents::
+    Call inside ``agent.run()`` to get ``HTTPS_PROXY`` and CA-bundle vars
+    for subprocess agents::
 
         import agentopt, os, subprocess
         env = {**os.environ, **agentopt.get_current_session_env()}
         subprocess.run(["gemini", "cli", ...], env=env)
 
+    Each :meth:`LLMTracker.track` scope has its own port (via ContextVar),
+    so this is safe for parallel evaluation.
+
     Returns an empty dict if no tracking session is active.
     """
-    # Lazy import to avoid circular dependency at module load time.
-    from agentopt.proxy.interceptor import _proxy_base_url, _session_id_var
+    from agentopt.proxy.interceptor import _session_port_var
 
-    session_id = _session_id_var.get()
-    if session_id is None or _proxy_base_url is None:
+    port = _session_port_var.get()
+    if port is None:
         return {}
-    url = f"{_proxy_base_url}/{session_id}"
+
+    from agentopt.proxy.certs import CertificateAuthority
+
+    ca = CertificateAuthority()
+    ca_bundle = ca.ca_bundle_path
+    proxy_url = f"http://127.0.0.1:{port}"
     return {
-        "OPENAI_BASE_URL": url,
-        "ANTHROPIC_BASE_URL": url,
-        "GOOGLE_API_BASE": url,
-        "AGENTOPT_SESSION_ID": session_id,
-        "AGENTOPT_PROXY_URL": _proxy_base_url,
+        "HTTPS_PROXY": proxy_url,
+        "SSL_CERT_FILE": ca_bundle,
+        "REQUESTS_CA_BUNDLE": ca_bundle,
+        "NODE_EXTRA_CA_CERTS": ca_bundle,
     }
 
 

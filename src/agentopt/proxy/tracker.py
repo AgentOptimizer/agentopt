@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 from .cache import ResponseCache
-from .interceptor import _session_id_var, install_redirect, uninstall_redirect
+from .certs import CertificateAuthority
+from .interceptor import _session_port_var, install_redirect, uninstall_redirect
 from .models import CallRecord
 from .server import ProxyServer
 from .session import SessionInfo
@@ -16,30 +17,25 @@ from .session import SessionInfo
 class LLMTracker:
     """Tracks LLM API calls via a local HTTP proxy server.
 
-    On ``start()`` the tracker launches a lightweight proxy server on
-    ``127.0.0.1`` (OS-assigned port) and monkey-patches ``httpx`` so that
-    in-process LLM requests are transparently redirected through it.
-    Subprocess agents can be directed to the proxy by setting the
-    environment variables returned by :meth:`get_session_env`.
+    Each :meth:`track` session gets its own TCP port.  The port **is** the
+    session identity — no session IDs in URLs or ContextVars needed.
 
-    Parameters
-    ----------
-    cache : bool
-        Enable API-level response caching (default ``True``).
-    cache_dir : str or Path, optional
-        Directory for the SQLite cache database.  Defaults to
-        ``"./.agentopt_cache"``.  ``None`` disables disk persistence.
+    * **In-process agents** — the httpx monkey-patch rewrites requests to
+      ``http://127.0.0.1:{session_port}/...`` (plaintext HTTP, bypasses
+      ``HTTPS_PROXY``).
+    * **Subprocess agents** — inherit ``HTTPS_PROXY`` pointing at the same
+      session port → CONNECT-mode TLS termination.
+
+    One mechanism, one port per session, both agent types.
 
     Usage::
 
         tracker = LLMTracker()
         tracker.start()
 
-        with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku") as session:
-            result = agent(input_data)
-            # For subprocess agents:
-            # env = {**os.environ, **tracker.get_session_env(session.session_id)}
-            # subprocess.run(["my-agent", ...], env=env)
+        with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
+            result = agent.run(input_data)        # in-process: just works
+            subprocess.run(["gemini", "cli", ...]) # subprocess: just works
 
         usage = tracker.get_usage(combo_id="gpt4o+haiku")
         tracker.stop()
@@ -56,6 +52,7 @@ class LLMTracker:
         self._lock = threading.Lock()
         self._active = False
         self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
+        self._ca = CertificateAuthority()
         self._server: Optional[ProxyServer] = None
 
     # ------------------------------------------------------------------
@@ -63,33 +60,25 @@ class LLMTracker:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Launch the proxy server and install the httpx redirect.
-
-        Idempotent — calling ``start()`` twice is a no-op.
-        """
+        """Launch the proxy server and install the httpx redirect."""
         if self._active:
             return
-        self._server = ProxyServer(cache=self._response_cache)
+        self._server = ProxyServer(cache=self._response_cache, ca=self._ca)
         self._server.start()
-        install_redirect(proxy_base_url=self._server.base_url)
+        install_redirect()
         self._active = True
 
     def stop(self) -> None:
-        """Shut down the proxy, restore httpx, and flush the cache.
-
-        Idempotent.
-        """
+        """Shut down the proxy, restore httpx, and flush the cache."""
         if not self._active:
             return
-
-        # Collect records from all (ended + still-active) sessions.
         if self._server is not None:
+            uninstall_redirect()
+            self._server.session_manager.force_end_all()
             with self._lock:
                 self._records.extend(self._server.session_manager.get_all_records())
-            uninstall_redirect()
             self._server.stop()
             self._server = None
-
         if self._response_cache is not None:
             self._response_cache.close()
         self._active = False
@@ -102,59 +91,66 @@ class LLMTracker:
     def track(
         self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
     ):
-        """Create a proxy session scoped to this context.
+        """Create a tracking session with its own proxy port.
 
-        Yields a :class:`SessionInfo` whose ``session_id`` can be used
-        with :meth:`get_session_env` for subprocess agents.
+        Sets the ``_session_port_var`` ContextVar so the httpx monkey-patch
+        routes in-process LLM calls to the session port.  Does NOT mutate
+        ``os.environ`` — subprocess agents should pass
+        :meth:`get_session_env` explicitly::
 
-        Process-level environment variables (``OPENAI_BASE_URL``, etc.)
-        are set automatically so that any subprocess spawned during this
-        scope inherits them — no explicit ``get_session_env()`` call
-        needed by frameworks that internally spawn subprocesses.
+            with tracker.track(...) as session:
+                env = {**os.environ, **tracker.get_session_env(session)}
+                subprocess.run(["tb", "run", ...], env=env)
+
+        This keeps parallel evaluation fully safe — each subprocess gets
+        its own env dict pointing at its own port.
         """
         assert self._server is not None, "call tracker.start() first"
         session = self._server.session_manager.create_session(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id,
         )
-        token = _session_id_var.set(session.session_id)
 
-        # Set process env vars so subprocess agents inherit them.
-        env_vars = self.get_session_env(session.session_id)
-        old_env = {k: os.environ.get(k) for k in env_vars}
-        os.environ.update(env_vars)
+        # Bind a port for this session.
+        session_port = self._server.open_session_port(session.session_id)
+
+        # Set ContextVar for in-process httpx monkey-patch.
+        token = _session_port_var.set(session_port)
 
         try:
             yield session
         finally:
-            # Restore original env vars.
-            for k, v in old_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-            _session_id_var.reset(token)
+            _session_port_var.reset(token)
+            self._server.close_session_port(session.session_id)
             self._server.session_manager.end_session(session.session_id)
 
-    @contextmanager
-    def track_agent(self, agent_id: str):
-        """Update the agent_id on the current session.
+    # ------------------------------------------------------------------
+    # Subprocess helpers
+    # ------------------------------------------------------------------
 
-        Requires an enclosing :meth:`track` scope.
+    def get_session_env(self, session: SessionInfo) -> Dict[str, str]:
+        """Return env vars that route a subprocess through this session's port.
+
+        Usage::
+
+            with tracker.track(data_id="dp_1", combo_id="c") as session:
+                env = {**os.environ, **tracker.get_session_env(session)}
+                subprocess.run(["tb", "run", ...], env=env)
+
+        Each session has its own port, so parallel subprocess evaluation
+        is fully safe — each subprocess gets its own ``HTTPS_PROXY``.
         """
-        session_id = _session_id_var.get()
-        old_agent_id: Optional[str] = None
-        if session_id and self._server:
-            session = self._server.session_manager.get_session(session_id)
-            if session is not None:
-                old_agent_id = session.agent_id
-                session.agent_id = agent_id
-        try:
-            yield
-        finally:
-            if session_id and self._server:
-                session = self._server.session_manager.get_session(session_id)
-                if session is not None:
-                    session.agent_id = old_agent_id
+        assert self._server is not None, "call tracker.start() first"
+        entry = self._server._session_listeners.get(session.session_id)
+        assert entry is not None, f"no port for session {session.session_id}"
+        _, port = entry
+        ca_bundle = self._ca.ca_bundle_path
+        proxy_url = f"http://127.0.0.1:{port}"
+        return {
+            "HTTPS_PROXY": proxy_url,
+            "SSL_CERT_FILE": ca_bundle,
+            "REQUESTS_CA_BUNDLE": ca_bundle,
+            "NODE_EXTRA_CA_CERTS": ca_bundle,
+        }
 
     # ------------------------------------------------------------------
     # Provider registry
@@ -163,35 +159,9 @@ class LLMTracker:
     def register_provider(
         self, name: str, base_url: str, path_patterns: tuple,
     ) -> None:
-        """Add or replace a provider in the proxy's registry.
-
-        Must be called after :meth:`start`.
-        """
+        """Add or replace a provider in the proxy's registry."""
         assert self._server is not None, "call tracker.start() first"
         self._server.register_provider(name, base_url, path_patterns)
-
-    # ------------------------------------------------------------------
-    # Subprocess helpers
-    # ------------------------------------------------------------------
-
-    def get_session_env(self, session_id: str) -> Dict[str, str]:
-        """Return environment variables for subprocess agents.
-
-        Set these on the subprocess environment so its LLM SDK traffic
-        is automatically routed through the proxy::
-
-            env = {**os.environ, **tracker.get_session_env(session.session_id)}
-            subprocess.run(["gemini", "cli", ...], env=env)
-        """
-        assert self._server is not None, "call tracker.start() first"
-        url = self._server.session_url(session_id)
-        return {
-            "OPENAI_BASE_URL": url,
-            "ANTHROPIC_BASE_URL": url,
-            "GOOGLE_API_BASE": url,
-            "AGENTOPT_SESSION_ID": session_id,
-            "AGENTOPT_PROXY_URL": self._server.base_url,
-        }
 
     # ------------------------------------------------------------------
     # Cache management

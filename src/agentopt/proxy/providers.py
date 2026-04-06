@@ -1,7 +1,8 @@
 """Provider registry and auto-detection for LLM API routing."""
 
+import fnmatch
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,35 @@ DEFAULT_PROVIDERS: Dict[str, ProviderConfig] = {
 # Header name used by the httpx monkey-patch to pass the original base URL.
 TARGET_HEADER = "x-agentopt-target"
 
+# ---------------------------------------------------------------------------
+# Known LLM API hostnames — used for CONNECT-mode interception.
+# Only CONNECT requests to these hosts are TLS-terminated and inspected.
+# Everything else is tunneled through as a transparent passthrough.
+# ---------------------------------------------------------------------------
+
+INTERCEPT_HOSTS: Set[str] = {
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.mistral.ai",
+    "api.groq.com",
+    "api.together.xyz",
+    "api.deepseek.com",
+}
+
+# Wildcard patterns (matched with fnmatch).
+INTERCEPT_PATTERNS: Tuple[str, ...] = (
+    "bedrock-runtime.*.amazonaws.com",
+    "*.openai.azure.com",
+)
+
+
+def should_intercept(hostname: str) -> bool:
+    """Return ``True`` if CONNECT traffic to *hostname* should be intercepted."""
+    if hostname in INTERCEPT_HOSTS:
+        return True
+    return any(fnmatch.fnmatch(hostname, pat) for pat in INTERCEPT_PATTERNS)
+
 
 def detect_provider(
     path: str, providers: Optional[Dict[str, ProviderConfig]] = None,
@@ -61,14 +91,12 @@ def resolve_target(
     """Determine the upstream base URL and path for a proxied request.
 
     Resolution order:
-    1. Path-pattern auto-detection against the **provider registry**.
-       This is authoritative: if a provider is registered for this path
-       pattern, its ``base_url`` is used even when an
-       ``X-AgentOpt-Target`` header is present.  This lets tests (and
-       production configs) override where traffic for a given API path
-       is forwarded.
-    2. ``X-AgentOpt-Target`` header — fallback for providers that are
-       **not** in the registry (custom / unknown endpoints).
+    1. ``X-AgentOpt-Target`` header — set by the httpx monkey-patch for
+       in-process agents.  Contains the exact original base URL, which
+       may be a custom / self-hosted endpoint (e.g. Azure OpenAI).
+    2. Path-pattern auto-detection against the **provider registry** —
+       fallback for subprocess agents where custom headers are not
+       available.
 
     Returns
     -------
@@ -84,18 +112,19 @@ def resolve_target(
     if providers is None:
         providers = DEFAULT_PROVIDERS
 
-    # 1. Registered provider (authoritative — allows overrides)
-    provider = detect_provider(path, providers)
-    if provider is not None:
-        return provider.base_url, path
-
-    # 2. Explicit header (fallback for unregistered / custom providers)
+    # 1. Explicit header (in-process agents — exact target, supports
+    #    Azure / self-hosted / custom OpenAI-compatible endpoints)
     target = headers.get(TARGET_HEADER)
     if target:
         return target.rstrip("/"), path
 
+    # 2. Auto-detect from path pattern (subprocess agents)
+    provider = detect_provider(path, providers)
+    if provider is not None:
+        return provider.base_url, path
+
     raise ValueError(
         f"Cannot resolve LLM provider for path {path!r}. "
-        "Either register the provider via register_provider() or "
-        "set the X-AgentOpt-Target header (in-process agents)."
+        "Either set the X-AgentOpt-Target header (in-process) or "
+        "register the provider via register_provider()."
     )

@@ -21,9 +21,9 @@ _RESPONSE_BYTES = json.dumps(_RESPONSE_BODY).encode()
 _REQUEST_BODY = MOCK_REQUEST_BODY
 
 
-def _make_client() -> httpx.Client:
+def _make_client(base_url: str = "https://api.openai.com") -> httpx.Client:
     """Plain httpx client — requests go through the monkey-patched send."""
-    return httpx.Client(base_url="https://api.openai.com")
+    return httpx.Client(base_url=base_url)
 
 
 def _post(client: httpx.Client, body: dict | None = None) -> httpx.Response:
@@ -100,17 +100,15 @@ class TestCacheIntegration:
         self.mock_upstream = mock_upstream
         self.tracker = LLMTracker(cache=True, cache_dir=None)
         self.tracker.start()
-        # Register mock upstream as the OpenAI provider.
-        self.tracker._server.register_provider(
-            "openai",
-            mock_upstream.base_url,
-            ("/v1/chat/completions", "/chat/completions", "/v1/responses"),
-        )
         yield
         self.tracker.stop()
 
+    def _client(self):
+        """Client pointing at mock upstream — header routing handles the rest."""
+        return _make_client(base_url=self.mock_upstream.base_url)
+
     def test_cache_hit_returns_same_response(self):
-        client = _make_client()
+        client = self._client()
         with self.tracker.track(data_id="dp_1", combo_id="c"):
             resp1 = _post(client)
             resp2 = _post(client)
@@ -118,7 +116,7 @@ class TestCacheIntegration:
         assert resp1.status_code == resp2.status_code == 200
 
     def test_cache_hit_recorded_with_original_latency(self):
-        client = _make_client()
+        client = self._client()
         with self.tracker.track(data_id="dp_1", combo_id="c"):
             _post(client)  # miss
             _post(client)  # hit
@@ -131,7 +129,7 @@ class TestCacheIntegration:
         assert records[1].latency_seconds == records[0].latency_seconds
 
     def test_cache_hit_records_tokens(self):
-        client = _make_client()
+        client = self._client()
         with self.tracker.track(data_id="dp_1", combo_id="c"):
             _post(client)
             _post(client)
@@ -142,7 +140,7 @@ class TestCacheIntegration:
             assert r.completion_tokens == 5
 
     def test_cache_hit_count(self):
-        client = _make_client()
+        client = self._client()
         with self.tracker.track(data_id="dp_1", combo_id="c"):
             _post(client)  # miss
             _post(client)  # hit
@@ -153,7 +151,7 @@ class TestCacheIntegration:
         assert sum(1 for r in records if not r.cached) == 1
 
     def test_different_requests_no_hit(self):
-        client = _make_client()
+        client = self._client()
         body1 = {
             "model": "gpt-4o-mini",
             "messages": [{"role": "user", "content": "q1"}],
@@ -170,7 +168,7 @@ class TestCacheIntegration:
         assert all(not r.cached for r in records)
 
     def test_clear_cache(self):
-        client = _make_client()
+        client = self._client()
         with self.tracker.track(data_id="dp_1", combo_id="c"):
             _post(client)
         self.tracker.clear_cache()
@@ -182,7 +180,7 @@ class TestCacheIntegration:
         assert all(not r.cached for r in records)
 
     def test_cache_with_attribution(self):
-        client = _make_client()
+        client = self._client()
         with self.tracker.track(data_id="dp_1", combo_id="combo_a"):
             _post(client)  # miss
             _post(client)  # hit
@@ -196,8 +194,7 @@ class TestCacheIntegration:
         """GET /health is not an LLM endpoint — should not be redirected."""
         handler = lambda req: httpx.Response(200, json={"status": "ok"})
         client = httpx.Client(
-            transport=httpx.MockTransport(handler),
-            base_url="https://api.openai.com",
+            transport=httpx.MockTransport(handler), base_url="https://api.openai.com",
         )
         with self.tracker.track(data_id="dp_1", combo_id="c"):
             resp = client.get("/health")
@@ -210,13 +207,8 @@ class TestCacheDisabled:
     def test_disabled_via_constructor(self, mock_upstream):
         tracker = LLMTracker(cache=False)
         tracker.start()
-        tracker._server.register_provider(
-            "openai",
-            mock_upstream.base_url,
-            ("/v1/chat/completions", "/chat/completions", "/v1/responses"),
-        )
         try:
-            client = _make_client()
+            client = _make_client(base_url=mock_upstream.base_url)
             with tracker.track(data_id="dp_1", combo_id="c"):
                 _post(client)
                 _post(client)
@@ -255,16 +247,11 @@ class TestCacheThreadSafety:
     def test_concurrent_tracker_with_cache(self, mock_upstream):
         tracker = LLMTracker(cache=True, cache_dir=None)
         tracker.start()
-        tracker._server.register_provider(
-            "openai",
-            mock_upstream.base_url,
-            ("/v1/chat/completions", "/chat/completions", "/v1/responses"),
-        )
         errors = []
 
         def worker():
             try:
-                client = _make_client()
+                client = _make_client(base_url=mock_upstream.base_url)
                 with tracker.track(data_id="dp", combo_id="c"):
                     for _ in range(5):
                         _post(client)
@@ -292,13 +279,8 @@ class TestCacheAsync:
         async def _run():
             tracker = LLMTracker(cache=True, cache_dir=None)
             tracker.start()
-            tracker._server.register_provider(
-                "openai",
-                mock_upstream.base_url,
-                ("/v1/chat/completions", "/chat/completions", "/v1/responses"),
-            )
             try:
-                client = httpx.AsyncClient(base_url="https://api.openai.com")
+                client = httpx.AsyncClient(base_url=mock_upstream.base_url)
 
                 with tracker.track(data_id="dp_1", combo_id="c"):
                     resp1 = await client.post(

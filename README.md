@@ -162,6 +162,7 @@ AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we 
 | LlamaIndex | Supported | [llamaindex_example.py](examples/llamaindex_example.py) |
 | AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
 | OpenAI-Compatible API SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
+| Terminal Bench | Supported | [terminal_bench_example.py](examples/terminal_bench_example.py) |
 
 ## Selection Algorithms
 

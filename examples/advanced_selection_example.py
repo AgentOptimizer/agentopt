@@ -9,8 +9,13 @@ strong best-arm identification with lower search cost than brute_force).
 
 Prerequisites:
     1. pip install openai agentopt-py
-    2. Set OPENAI_API_KEY environment variable
+    2. Set OPENAI_API_KEY environment variable (this script uses python-dotenv; install
+       it or use ``pip install \"agentopt-py[examples]\"``)
     3. For Bayesian optimization: pip install "agentopt-py[bayesian]"
+    4. For matrix UCB-LRF: pip install "agentopt-py[ucb_lrf]"
+
+The matrix UCB demos use ``observation_budget_fraction=0.1`` (~10% of the combination ×
+datapoint grid). Use ``1.0`` for a full-grid run; tune ``max_concurrent`` for step size.
 """
 
 from dotenv import load_dotenv
@@ -187,6 +192,40 @@ def run_bayesian():
     return selector.select_best(parallel=True)
 
 
+def run_matrix_ucb():
+    """method="matrix_ucb" — UCB exploration over the combination × datapoint matrix."""
+    selector = ModelSelector(
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
+        method="matrix_ucb",
+        a=1.0,
+        observation_budget_fraction=0.1,
+    )
+    return selector.select_best(max_concurrent=4)
+
+
+def run_matrix_ucb_lrf():
+    """method="matrix_ucb_lrf" — matrix UCB with low-rank ensemble (requires agentopt[ucb_lrf])."""
+    selector = ModelSelector(
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
+        method="matrix_ucb_lrf",
+        rank=1,
+        ensemble_size=16,
+        iterations=5,
+        eta=5.0,
+        warmup_percentage=0.05,
+        observation_budget_fraction=0.1,
+    )
+    # Unlike matrix_ucb (which always uses async eval), LRF still uses parallel=True
+    # for concurrent cell evaluation; sequential path is sync-only.
+    return selector.select_best(parallel=True, max_concurrent=4)
+
+
 # ---------------------------------------------------------------------------
 # Main — pick which algorithm to demo
 # ---------------------------------------------------------------------------
@@ -200,6 +239,8 @@ METHODS = {
     "threshold": run_threshold,
     "lm_proposal": run_lm_proposal,
     "bayesian": run_bayesian,
+    "matrix_ucb": run_matrix_ucb,
+    "matrix_ucb_lrf": run_matrix_ucb_lrf,
 }
 
 if __name__ == "__main__":
@@ -218,6 +259,8 @@ Available methods:
   threshold         Classify combinations above/below a quality threshold
   lm_proposal       Use a proposer LLM to shortlist promising combinations
   bayesian          GP-based Bayesian optimization (requires agentopt[bayesian])
+  matrix_ucb        UCB on the combination × datapoint matrix (demo: 10%% budget)
+  matrix_ucb_lrf    Same with low-rank uncertainty (requires agentopt[ucb_lrf])
 """,
     )
     parser.add_argument("--method", choices=METHODS, default="auto")

@@ -19,6 +19,8 @@ from .model_selection import (
     HillClimbingModelSelector,
     LMProposalModelSelector,
     DatapointResult,
+    MatrixUCBLRFModelSelector,
+    MatrixUCBModelSelector,
     ModelResult,
     RandomSearchModelSelector,
     SelectionResults,
@@ -38,6 +40,8 @@ _METHODS = {
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "epsilon_lucb": EpsilonLUCBModelSelector,
+    "matrix_ucb": MatrixUCBModelSelector,
+    "matrix_ucb_lrf": MatrixUCBLRFModelSelector,
     "threshold": ThresholdBanditSEModelSelector,
     "lm_proposal": LMProposalModelSelector,
     "bayesian": BayesianOptimizationModelSelector,
@@ -63,8 +67,9 @@ def ModelSelector(
             strong best-arm identification with lower search cost than
             ``"brute_force"``). Other options: ``"brute_force"``,
             ``"random"``, ``"hill_climbing"``, ``"arm_elimination"``,
-            ``"epsilon_lucb"``, ``"threshold"``, ``"lm_proposal"``,
-            ``"bayesian"``.
+            ``"epsilon_lucb"``, ``"matrix_ucb"``, ``"matrix_ucb_lrf"``,
+            ``"threshold"``,
+            ``"lm_proposal"``, ``"bayesian"``.
         **kwargs: Additional arguments passed to the selector
             (e.g. ``epsilon``, ``threshold``, ``sample_fraction``).
 
@@ -98,6 +103,8 @@ __all__ = [
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
     "EpsilonLUCBModelSelector",
+    "MatrixUCBModelSelector",
+    "MatrixUCBLRFModelSelector",
     "ThresholdBanditSEModelSelector",
     "LMProposalModelSelector",
     "BayesianOptimizationModelSelector",

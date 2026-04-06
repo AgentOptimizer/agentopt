@@ -14,8 +14,9 @@ Prerequisites:
     3. For Bayesian optimization: pip install "agentopt-py[bayesian]"
     4. For matrix UCB-LRF: pip install "agentopt-py[ucb_lrf]"
 
-The matrix UCB demos use ``observation_budget_fraction=0.1`` (~10% of the combination ×
-datapoint grid). Use ``1.0`` for a full-grid run; tune ``max_concurrent`` for step size.
+The matrix UCB demos use ``sample_fraction=0.1`` (~10% of the combination × datapoint
+grid), like ``random`` / ``bayesian``. Matrix UCB-LRF also accepts ``warmup_fraction``
+(alias for ``warmup_percentage``). Use ``1.0`` for a full grid; tune ``max_concurrent`` for step size.
 """
 
 from dotenv import load_dotenv
@@ -201,7 +202,7 @@ def run_matrix_ucb():
         dataset=dataset,
         method="matrix_ucb",
         a=1.0,
-        observation_budget_fraction=0.1,
+        sample_fraction=0.1,
     )
     return selector.select_best(max_concurrent=4)
 
@@ -218,8 +219,8 @@ def run_matrix_ucb_lrf():
         ensemble_size=16,
         iterations=5,
         eta=5.0,
-        warmup_percentage=0.05,
-        observation_budget_fraction=0.1,
+        warmup_fraction=0.05,
+        sample_fraction=0.1,
     )
     # Unlike matrix_ucb (which always uses async eval), LRF still uses parallel=True
     # for concurrent cell evaluation; sequential path is sync-only.

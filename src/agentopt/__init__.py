@@ -71,7 +71,8 @@ def ModelSelector(
             ``"threshold"``,
             ``"lm_proposal"``, ``"bayesian"``.
         **kwargs: Additional arguments passed to the selector
-            (e.g. ``epsilon``, ``threshold``, ``sample_fraction``).
+            (e.g. ``epsilon``, ``threshold``, ``sample_fraction``, ``warmup_fraction``
+            for matrix UCB-LRF).
 
     Returns:
         A selector instance. Call ``.select_best()`` to run.

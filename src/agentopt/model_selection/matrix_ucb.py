@@ -36,6 +36,35 @@ from .base import BaseModelSelector, ModelResult, SelectionResults
 logger = logging.getLogger(__name__)
 
 
+def _resolve_observation_budget_fraction(
+    observation_budget_fraction: float,
+    sample_fraction: Optional[float],
+) -> float:
+    """Match RandomSearch/Bayesian: ``sample_fraction`` overrides ``observation_budget_fraction``."""
+    if sample_fraction is not None:
+        s = float(sample_fraction)
+        if not 0 < s <= 1:
+            raise ValueError("sample_fraction must be in the range (0, 1].")
+        return min(1.0, s)
+    o = float(observation_budget_fraction)
+    if o <= 0:
+        raise ValueError("observation_budget_fraction must be positive")
+    return min(1.0, o)
+
+
+def _resolve_warmup_percentage(
+    warmup_percentage: float,
+    warmup_fraction: Optional[float],
+) -> float:
+    """Optional alias ``warmup_fraction`` for ``warmup_percentage`` (matrix UCB-LRF)."""
+    if warmup_fraction is not None:
+        w = float(warmup_fraction)
+        if not 0 < w < 1:
+            raise ValueError("warmup_fraction must be in the range (0, 1).")
+        return w
+    return float(warmup_percentage)
+
+
 def _target_observation_count(
     n_combos: int, n_datapoints: int, observation_budget_fraction: float,
 ) -> int:
@@ -159,9 +188,11 @@ class MatrixUCBModelSelector(BaseModelSelector):
     Selection always proceeds in batches of matrix cells; only
     ``select_best(..., max_concurrent=...)`` matters (``parallel`` is ignored).
 
-    ``observation_budget_fraction`` (default ``1.0``) caps how many matrix cells are
-    observed: ``1.0`` fills the full grid; ``0.1`` stops after about 10% of cells
-    (API cost vs. coverage trade-off).
+    ``observation_budget_fraction`` or, equivalently, ``sample_fraction`` (same meaning
+    as in :class:`RandomSearchModelSelector` / Bayesian: fraction of the search budget —
+    here, **fraction of matrix cells** to observe) caps evaluations. ``1.0`` fills the
+    full grid; ``0.1`` stops after about 10% of cells. If both are passed, ``sample_fraction``
+    wins.
     """
 
     def __init__(
@@ -172,6 +203,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
         dataset: Dataset = None,
         a: float = 1.0,
         observation_budget_fraction: float = 1.0,
+        sample_fraction: Optional[float] = None,
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
@@ -185,10 +217,9 @@ class MatrixUCBModelSelector(BaseModelSelector):
             tracker=tracker,
         )
         self.a = float(a)
-        o = float(observation_budget_fraction)
-        if o <= 0:
-            raise ValueError("observation_budget_fraction must be positive")
-        self.observation_budget_fraction = min(1.0, o)
+        self.observation_budget_fraction = _resolve_observation_budget_fraction(
+            observation_budget_fraction, sample_fraction,
+        )
         self._rng = np.random.default_rng(seed)
 
     def select_best(
@@ -290,8 +321,10 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
     """Matrix UCB with low-rank factorization uncertainty (ensemble ALS), per banditeval.
 
     Warmup and main-phase cell batches use ``select_best(..., max_concurrent=...)``.
-    Use ``observation_budget_fraction`` (default ``1.0``) to cap observed cells; see
-    :class:`MatrixUCBModelSelector`.
+    Cell budget: ``observation_budget_fraction`` or ``sample_fraction`` (see
+    :class:`MatrixUCBModelSelector`). Warmup threshold: ``warmup_percentage`` or
+    ``warmup_fraction`` — random probes until this **fraction of the full grid** is
+    observed, then LRF+UCB (banditeval-style).
     """
 
     def __init__(
@@ -303,12 +336,14 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
         rank: int = 1,
         ensemble_size: int = 64,
         warmup_percentage: float = 0.05,
+        warmup_fraction: Optional[float] = None,
         regularizer_weight: float = 0.1,
         drop_probability: float = 0.05,
         iterations: int = 10,
         eta: float = 5.0,
         device: str = "cpu",
         observation_budget_fraction: float = 1.0,
+        sample_fraction: Optional[float] = None,
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
@@ -341,16 +376,17 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
         self.Factorization = Factorization
         self.rank = int(rank)
         self.ensemble_size = int(ensemble_size)
-        self.warmup_percentage = float(warmup_percentage)
+        self.warmup_percentage = _resolve_warmup_percentage(
+            warmup_percentage, warmup_fraction,
+        )
         self.regularizer_weight = float(regularizer_weight)
         self.drop_probability = float(drop_probability)
         self.iterations = int(iterations)
         self.eta = float(eta)
         self.device = device
-        o = float(observation_budget_fraction)
-        if o <= 0:
-            raise ValueError("observation_budget_fraction must be positive")
-        self.observation_budget_fraction = min(1.0, o)
+        self.observation_budget_fraction = _resolve_observation_budget_fraction(
+            observation_budget_fraction, sample_fraction,
+        )
         self._seed = seed
 
     def _run_selection(

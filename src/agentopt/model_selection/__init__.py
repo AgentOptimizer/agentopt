@@ -9,6 +9,7 @@ from .hill_climbing import HillClimbingModelSelector
 from .lm_proposal import LMProposalModelSelector
 from .random_search import RandomSearchModelSelector
 from .threshold_successive_elimination import ThresholdBanditSEModelSelector
+from .matrix_ucb import MatrixUCBLRFModelSelector, MatrixUCBModelSelector
 
 __all__ = [
     "BaseModelSelector",
@@ -19,6 +20,8 @@ __all__ = [
     "EpsilonLUCBModelSelector",
     "ThresholdBanditSEModelSelector",
     "LMProposalModelSelector",
+    "MatrixUCBModelSelector",
+    "MatrixUCBLRFModelSelector",
     "BayesianOptimizationModelSelector",
     "DatapointResult",
     "ModelResult",

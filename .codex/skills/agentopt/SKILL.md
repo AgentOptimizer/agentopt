@@ -323,3 +323,10 @@ Submission channel depends on project policy:
 - Quickstart docs: `docs/getting-started/quickstart.md`
 - Selector docs: `docs/api/selectors.md`
 - End-to-end examples: `examples/*.py`
+
+## Verification checklist (for agents)
+
+After implementing AgentOpt in a target app, verify:
+- run completes without selector/runtime errors,
+- `run_metadata.json` contains method + concurrency + dataset size + best combo,
+- `results.csv` and `best_config.yaml` are present and non-empty.

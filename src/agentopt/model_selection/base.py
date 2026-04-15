@@ -849,7 +849,7 @@ class BaseModelSelector(ABC):
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
             dp_id = f"{label}::dp_{dp_offset + i}"
             try:
-                with self._tracker.track(data_id=dp_id, combo_id=label):
+                with self._tracker.track(data_id=dp_id, combo_id=label) as session:
                     start_time = time.time()
                     actual_result = self._invoke_agent(agent, input_data)
                     wall_clock = time.time() - start_time
@@ -907,7 +907,7 @@ class BaseModelSelector(ABC):
             dp_id = f"{label}::dp_{dp_offset + idx + 1}"
             async with semaphore:
                 try:
-                    with self._tracker.track(data_id=dp_id, combo_id=label):
+                    with self._tracker.track(data_id=dp_id, combo_id=label) as session:
                         start_time = time.time()
                         if is_async:
                             actual_result = await self._invoke_agent(agent, input_data)

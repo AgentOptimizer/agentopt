@@ -8,7 +8,42 @@ model combination.
 
 __version__ = "0.1.0"
 
-from agentopt.proxy import CallRecord, LLMTracker
+from agentopt.proxy import CallRecord, LLMTracker, SessionInfo
+
+
+def get_current_session_env() -> dict:
+    """Return env vars that route a subprocess through the current session's port.
+
+    Call inside ``agent.run()`` to get ``HTTPS_PROXY`` and CA-bundle vars
+    for subprocess agents::
+
+        import agentopt, os, subprocess
+        env = {**os.environ, **agentopt.get_current_session_env()}
+        subprocess.run(["gemini", "cli", ...], env=env)
+
+    Each :meth:`LLMTracker.track` scope has its own port (via ContextVar),
+    so this is safe for parallel evaluation.
+
+    Returns an empty dict if no tracking session is active.
+    """
+    from agentopt.proxy.interceptor import _session_port_var
+
+    port = _session_port_var.get()
+    if port is None:
+        return {}
+
+    from agentopt.proxy.certs import CertificateAuthority
+
+    ca = CertificateAuthority()
+    ca_bundle = ca.ca_bundle_path
+    proxy_url = f"http://127.0.0.1:{port}"
+    return {
+        "HTTPS_PROXY": proxy_url,
+        "SSL_CERT_FILE": ca_bundle,
+        "REQUESTS_CA_BUNDLE": ca_bundle,
+        "NODE_EXTRA_CA_CERTS": ca_bundle,
+    }
+
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
 from .model_selection import (
@@ -19,6 +54,8 @@ from .model_selection import (
     HillClimbingModelSelector,
     LMProposalModelSelector,
     DatapointResult,
+    MatrixUCBLRFModelSelector,
+    MatrixUCBModelSelector,
     ModelResult,
     RandomSearchModelSelector,
     SelectionResults,
@@ -38,6 +75,8 @@ _METHODS = {
     "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
     "epsilon_lucb": EpsilonLUCBModelSelector,
+    "matrix_ucb": MatrixUCBModelSelector,
+    "matrix_ucb_lrf": MatrixUCBLRFModelSelector,
     "threshold": ThresholdBanditSEModelSelector,
     "lm_proposal": LMProposalModelSelector,
     "bayesian": BayesianOptimizationModelSelector,
@@ -63,10 +102,12 @@ def ModelSelector(
             strong best-arm identification with lower search cost than
             ``"brute_force"``). Other options: ``"brute_force"``,
             ``"random"``, ``"hill_climbing"``, ``"arm_elimination"``,
-            ``"epsilon_lucb"``, ``"threshold"``, ``"lm_proposal"``,
-            ``"bayesian"``.
+            ``"epsilon_lucb"``, ``"matrix_ucb"``, ``"matrix_ucb_lrf"``,
+            ``"threshold"``,
+            ``"lm_proposal"``, ``"bayesian"``.
         **kwargs: Additional arguments passed to the selector
-            (e.g. ``epsilon``, ``threshold``, ``sample_fraction``).
+            (e.g. ``epsilon``, ``threshold``, ``sample_fraction``, ``warmup_fraction``
+            for matrix UCB-LRF).
 
     Returns:
         A selector instance. Call ``.select_best()`` to run.
@@ -98,6 +139,8 @@ __all__ = [
     "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
     "EpsilonLUCBModelSelector",
+    "MatrixUCBModelSelector",
+    "MatrixUCBLRFModelSelector",
     "ThresholdBanditSEModelSelector",
     "LMProposalModelSelector",
     "BayesianOptimizationModelSelector",
@@ -110,4 +153,7 @@ __all__ = [
     "Dataset",
     "EvalFn",
     "ModelsConfig",
+    # Proxy / session helpers
+    "SessionInfo",
+    "get_current_session_env",
 ]

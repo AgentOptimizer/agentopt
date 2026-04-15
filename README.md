@@ -24,6 +24,10 @@
 
 ---
 
+## News
+[2026/04] 🔥 Version 0.1.0 released!
+
+
 ## Why AgentOpt
 Choosing models for your agent is surprisingly hard. Which family? Small or big? Thinking or non-thinking? And different steps may need different models. The combinatorial space explodes fast — 3 steps × 8 models = **512 combinations** to evaluate.
 
@@ -162,6 +166,7 @@ AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we 
 | LlamaIndex | Supported | [llamaindex_example.py](examples/llamaindex_example.py) |
 | AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
 | OpenAI-Compatible API SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
+| Terminal Bench | Supported | [terminal_bench_example.py](examples/terminal_bench_example.py) |
 
 ## Selection Algorithms
 

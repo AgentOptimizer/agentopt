@@ -105,8 +105,8 @@ if __name__ == "__main__":
     selector = ModelSelector(
         agent=MyAgent,
         models={
-            "researcher": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-            "writer": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+            "researcher": ["gpt-4o", "gpt-4o-mini"],
+            "writer": ["gpt-4o", "gpt-4o-mini"],
         },
         eval_fn=eval_fn,
         dataset=dataset,

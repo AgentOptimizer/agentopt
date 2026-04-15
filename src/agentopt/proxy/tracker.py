@@ -1,42 +1,41 @@
-"""LLMTracker — context management and record storage."""
+"""LLMTracker — proxy-based LLM call tracking and session management."""
 
+import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 from .cache import ResponseCache
-from .interceptor import (
-    _agent_id_var,
-    _combo_id_var,
-    _data_id_var,
-    install,
-    uninstall,
-)
+from .certs import CertificateAuthority
+from .interceptor import _session_port_var, install_redirect, uninstall_redirect
 from .models import CallRecord
+from .server import ProxyServer
+from .session import SessionInfo
 
 
 class LLMTracker:
-    """Tracks LLM API calls via httpx interception.
+    """Tracks LLM API calls via a local HTTP proxy server.
 
-    Parameters
-    ----------
-    cache : bool
-        Enable API-level response caching (default ``True``).
-        When enabled, identical requests (same model, messages, etc.)
-        return cached responses instantly without hitting the API.
-    cache_dir : str or Path, optional
-        Directory for the SQLite cache database. Defaults to
-        ``"./.agentopt_cache"`` so the cache persists across runs.
-        Set to ``None`` to disable disk persistence (in-memory only).
+    Each :meth:`track` session gets its own TCP port.  The port **is** the
+    session identity — no session IDs in URLs or ContextVars needed.
+
+    * **In-process agents** — the httpx monkey-patch rewrites requests to
+      ``http://127.0.0.1:{session_port}/...`` (plaintext HTTP, bypasses
+      ``HTTPS_PROXY``).
+    * **Subprocess agents** — inherit ``HTTPS_PROXY`` pointing at the same
+      session port → CONNECT-mode TLS termination.
+
+    One mechanism, one port per session, both agent types.
 
     Usage::
 
-        tracker = LLMTracker(cache_dir="./llm_cache")
+        tracker = LLMTracker()
         tracker.start()
 
         with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
-            result = agent(input_data)
+            result = agent.run(input_data)        # in-process: just works
+            subprocess.run(["gemini", "cli", ...]) # subprocess: just works
 
         usage = tracker.get_usage(combo_id="gpt4o+haiku")
         tracker.stop()
@@ -53,24 +52,120 @@ class LLMTracker:
         self._lock = threading.Lock()
         self._active = False
         self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
+        self._ca = CertificateAuthority()
+        self._server: Optional[ProxyServer] = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Install httpx patches. Idempotent."""
+        """Launch the proxy server and install the httpx redirect."""
         if self._active:
             return
-        install(
-            callback=self._on_call, cache=self._response_cache,
-        )
+        self._server = ProxyServer(cache=self._response_cache, ca=self._ca)
+        self._server.start()
+        install_redirect()
         self._active = True
 
     def stop(self) -> None:
-        """Remove httpx patches and flush cache to disk. Idempotent."""
+        """Shut down the proxy, restore httpx, and flush the cache."""
         if not self._active:
             return
-        uninstall()
+        if self._server is not None:
+            uninstall_redirect()
+            self._server.session_manager.force_end_all()
+            with self._lock:
+                self._records.extend(self._server.session_manager.get_all_records())
+            self._server.stop()
+            self._server = None
         if self._response_cache is not None:
             self._response_cache.close()
         self._active = False
+
+    # ------------------------------------------------------------------
+    # Session tracking
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def track(
+        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+    ):
+        """Create a tracking session with its own proxy port.
+
+        Sets the ``_session_port_var`` ContextVar so the httpx monkey-patch
+        routes in-process LLM calls to the session port.  Does NOT mutate
+        ``os.environ`` — subprocess agents should pass
+        :meth:`get_session_env` explicitly::
+
+            with tracker.track(...) as session:
+                env = {**os.environ, **tracker.get_session_env(session)}
+                subprocess.run(["tb", "run", ...], env=env)
+
+        This keeps parallel evaluation fully safe — each subprocess gets
+        its own env dict pointing at its own port.
+        """
+        assert self._server is not None, "call tracker.start() first"
+        session = self._server.session_manager.create_session(
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+        )
+
+        # Bind a port for this session.
+        session_port = self._server.open_session_port(session.session_id)
+
+        # Set ContextVar for in-process httpx monkey-patch.
+        token = _session_port_var.set(session_port)
+
+        try:
+            yield session
+        finally:
+            _session_port_var.reset(token)
+            self._server.close_session_port(session.session_id)
+            self._server.session_manager.end_session(session.session_id)
+
+    # ------------------------------------------------------------------
+    # Subprocess helpers
+    # ------------------------------------------------------------------
+
+    def get_session_env(self, session: SessionInfo) -> Dict[str, str]:
+        """Return env vars that route a subprocess through this session's port.
+
+        Usage::
+
+            with tracker.track(data_id="dp_1", combo_id="c") as session:
+                env = {**os.environ, **tracker.get_session_env(session)}
+                subprocess.run(["tb", "run", ...], env=env)
+
+        Each session has its own port, so parallel subprocess evaluation
+        is fully safe — each subprocess gets its own ``HTTPS_PROXY``.
+        """
+        assert self._server is not None, "call tracker.start() first"
+        entry = self._server._session_listeners.get(session.session_id)
+        assert entry is not None, f"no port for session {session.session_id}"
+        _, port = entry
+        ca_bundle = self._ca.ca_bundle_path
+        proxy_url = f"http://127.0.0.1:{port}"
+        return {
+            "HTTPS_PROXY": proxy_url,
+            "SSL_CERT_FILE": ca_bundle,
+            "REQUESTS_CA_BUNDLE": ca_bundle,
+            "NODE_EXTRA_CA_CERTS": ca_bundle,
+        }
+
+    # ------------------------------------------------------------------
+    # Provider registry
+    # ------------------------------------------------------------------
+
+    def register_provider(
+        self, name: str, base_url: str, path_patterns: tuple,
+    ) -> None:
+        """Add or replace a provider in the proxy's registry."""
+        assert self._server is not None, "call tracker.start() first"
+        self._server.register_provider(name, base_url, path_patterns)
+
+    # ------------------------------------------------------------------
+    # Cache management
+    # ------------------------------------------------------------------
 
     def flush_cache(self) -> None:
         """Flush dirty cache entries to disk immediately."""
@@ -82,32 +177,17 @@ class LLMTracker:
         if self._response_cache is not None:
             self._response_cache.clear()
 
-    def _on_call(self, record: CallRecord) -> None:
-        """Callback from interceptor — appends record thread-safely."""
+    # ------------------------------------------------------------------
+    # Record queries
+    # ------------------------------------------------------------------
+
+    def _all_records(self) -> List[CallRecord]:
+        """Gather records from both the server and the local archive."""
         with self._lock:
-            self._records.append(record)
-
-    @contextmanager
-    def track(self, data_id: str, combo_id: str, agent_id: Optional[str] = None):
-        """Set context vars for attribution during this scope."""
-        t1 = _data_id_var.set(data_id)
-        t2 = _combo_id_var.set(combo_id)
-        t3 = _agent_id_var.set(agent_id)
-        try:
-            yield
-        finally:
-            _data_id_var.reset(t1)
-            _combo_id_var.reset(t2)
-            _agent_id_var.reset(t3)
-
-    @contextmanager
-    def track_agent(self, agent_id: str):
-        """Set only agent_id, keeping data_id and combo_id unchanged."""
-        t = _agent_id_var.set(agent_id)
-        try:
-            yield
-        finally:
-            _agent_id_var.reset(t)
+            records = list(self._records)
+        if self._server is not None:
+            records.extend(self._server.session_manager.get_all_records())
+        return records
 
     def get_records(
         self,
@@ -115,12 +195,9 @@ class LLMTracker:
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> List[CallRecord]:
-        """Return CallRecord list, filtered by any combination of IDs."""
-        with self._lock:
-            records = list(self._records)
-
+        """Return ``CallRecord`` list, filtered by any combination of IDs."""
         result = []
-        for r in records:
+        for r in self._all_records():
             if data_id is not None and r.data_id != data_id:
                 continue
             if combo_id is not None and r.combo_id != combo_id:
@@ -136,10 +213,7 @@ class LLMTracker:
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Dict[str, Tuple[int, int]]:
-        """Return aggregated ``{model: (input_tokens, output_tokens)}``.
-
-        Filtered by any combination of IDs.
-        """
+        """Return aggregated ``{model: (input_tokens, output_tokens)}``."""
         records = self.get_records(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id
         )

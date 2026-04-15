@@ -11,38 +11,18 @@ import pytest
 from agentopt.proxy import LLMTracker
 from agentopt.proxy.cache import CacheEntry, ResponseCache, _DB_FILENAME
 
+from .conftest import MOCK_REQUEST_BODY, MOCK_RESPONSE_BODY
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_RESPONSE_BODY = {
-    "id": "chatcmpl-test",
-    "object": "chat.completion",
-    "model": "gpt-4o-mini",
-    "choices": [
-        {
-            "index": 0,
-            "message": {"role": "assistant", "content": "Paris"},
-            "finish_reason": "stop",
-        }
-    ],
-    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-}
-
-_REQUEST_BODY = {
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "What is the capital of France?"}],
-}
+_RESPONSE_BODY = MOCK_RESPONSE_BODY
+_REQUEST_BODY = MOCK_REQUEST_BODY
 
 
-def _fake_handler(request: httpx.Request) -> httpx.Response:
-    return httpx.Response(200, json=_RESPONSE_BODY)
-
-
-def _make_client() -> httpx.Client:
-    return httpx.Client(
-        transport=httpx.MockTransport(_fake_handler), base_url="https://api.openai.com",
-    )
+def _make_client(base_url: str = "https://api.openai.com") -> httpx.Client:
+    return httpx.Client(base_url=base_url)
 
 
 def _post(client: httpx.Client, body: dict | None = None) -> httpx.Response:
@@ -60,6 +40,11 @@ def _db_row_count(cache_dir) -> int:
         return count
     finally:
         conn.close()
+
+
+def _client(mock_upstream) -> httpx.Client:
+    """Client pointing at mock upstream — header routing handles the rest."""
+    return _make_client(base_url=mock_upstream.base_url)
 
 
 # ---------------------------------------------------------------------------
@@ -258,14 +243,15 @@ class TestBackgroundFlush:
 
 
 class TestTrackerDiskCache:
-    def test_tracker_cache_dir_param(self, tmp_path):
+    def test_tracker_cache_dir_param(self, tmp_path, mock_upstream):
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker.start()
         try:
-            client = _make_client()
-            _post(client)  # miss
-            _post(client)  # hit
+            client = _client(mock_upstream)
+            with tracker.track(data_id="dp_1", combo_id="c"):
+                _post(client)  # miss
+                _post(client)  # hit
 
             records = tracker.get_records()
             assert sum(1 for r in records if r.cached) == 1
@@ -275,22 +261,24 @@ class TestTrackerDiskCache:
 
         assert _db_row_count(cache_dir) == 1
 
-    def test_cache_survives_restart(self, tmp_path):
+    def test_cache_survives_restart(self, tmp_path, mock_upstream):
         cache_dir = tmp_path / "llm_cache"
 
         tracker1 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker1.start()
         try:
-            client = _make_client()
-            _post(client)  # miss
+            client = _client(mock_upstream)
+            with tracker1.track(data_id="dp_1", combo_id="c"):
+                _post(client)  # miss
         finally:
             tracker1.stop()
 
         tracker2 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker2.start()
         try:
-            client = _make_client()
-            _post(client)  # hit from disk
+            client = _client(mock_upstream)
+            with tracker2.track(data_id="dp_2", combo_id="c"):
+                _post(client)  # hit from disk
 
             records = tracker2.get_records()
             assert len(records) == 1
@@ -298,25 +286,27 @@ class TestTrackerDiskCache:
         finally:
             tracker2.stop()
 
-    def test_flush_cache_method(self, tmp_path):
+    def test_flush_cache_method(self, tmp_path, mock_upstream):
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker.start()
         try:
-            client = _make_client()
-            _post(client)
+            client = _client(mock_upstream)
+            with tracker.track(data_id="dp_1", combo_id="c"):
+                _post(client)
             tracker.flush_cache()
             assert _db_row_count(cache_dir) == 1
         finally:
             tracker.stop()
 
-    def test_clear_cache_clears_db(self, tmp_path):
+    def test_clear_cache_clears_db(self, tmp_path, mock_upstream):
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker.start()
         try:
-            client = _make_client()
-            _post(client)
+            client = _client(mock_upstream)
+            with tracker.track(data_id="dp_1", combo_id="c"):
+                _post(client)
             tracker.flush_cache()
             assert _db_row_count(cache_dir) == 1
 
@@ -325,24 +315,25 @@ class TestTrackerDiskCache:
         finally:
             tracker.stop()
 
-    def test_cache_false_ignores_cache_dir(self, tmp_path):
+    def test_cache_false_ignores_cache_dir(self, tmp_path, mock_upstream):
         cache_dir = tmp_path / "llm_cache"
         tracker = LLMTracker(cache=False, cache_dir=cache_dir)
         tracker.start()
         try:
-            client = _make_client()
-            _post(client)
+            client = _client(mock_upstream)
+            with tracker.track(data_id="dp_1", combo_id="c"):
+                _post(client)
             assert not cache_dir.exists()
         finally:
             tracker.stop()
 
-    def test_disk_cache_with_attribution(self, tmp_path):
+    def test_disk_cache_with_attribution(self, tmp_path, mock_upstream):
         cache_dir = tmp_path / "llm_cache"
 
         tracker1 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker1.start()
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker1.track(data_id="dp_1", combo_id="combo_a"):
                 _post(client)
         finally:
@@ -351,7 +342,7 @@ class TestTrackerDiskCache:
         tracker2 = LLMTracker(cache=True, cache_dir=cache_dir)
         tracker2.start()
         try:
-            client = _make_client()
+            client = _client(mock_upstream)
             with tracker2.track(data_id="dp_2", combo_id="combo_b"):
                 _post(client)  # hit from disk
 

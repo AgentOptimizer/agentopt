@@ -25,3 +25,8 @@ class CallRecord:
     response_body: Dict[str, Any] = field(default_factory=dict)
     timestamp: str = ""
     cached: bool = False
+
+    # Outcome — 200 on success; upstream HTTP status or 0 on connection failure.
+    status_code: int = 200
+    # Populated when the upstream call failed (non-2xx, connection error, etc.).
+    error: Optional[str] = None

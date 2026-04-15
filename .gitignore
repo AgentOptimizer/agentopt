@@ -216,3 +216,6 @@ __marimo__/
 # Example outputs
 llm_cache/
 examples/optimized_config.yaml
+
+# Terminal Bench run artifacts
+runs/

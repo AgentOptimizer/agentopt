@@ -18,23 +18,26 @@ Two modes per session port:
 """
 
 import asyncio
+import fnmatch
 import json
 import logging
 import ssl
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .certs import CertificateAuthority
 from .models import CallRecord
 from .providers import (
     DEFAULT_PROVIDERS,
+    INTERCEPT_HOSTS,
+    INTERCEPT_PATTERNS,
     TARGET_HEADER,
     ProviderConfig,
     resolve_target,
-    should_intercept,
 )
 from .session import SessionInfo, SessionManager
 
@@ -93,6 +96,10 @@ class ProxyServer:
         self._providers: Dict[str, ProviderConfig] = dict(
             providers or DEFAULT_PROVIDERS
         )
+        # Per-instance CONNECT intercept set — seeded from module defaults.
+        # register_provider() extends this with hostnames from custom providers.
+        self._intercept_hosts: Set[str] = set(INTERCEPT_HOSTS)
+        self._intercept_patterns: List[str] = list(INTERCEPT_PATTERNS)
 
         # Lifecycle
         self._thread: Optional[threading.Thread] = None
@@ -112,10 +119,26 @@ class ProxyServer:
     def register_provider(
         self, name: str, base_url: str, path_patterns: tuple,
     ) -> None:
-        """Add or replace a provider in the registry."""
+        """Add or replace a provider in the registry.
+
+        Registers the provider for both modes:
+        * **Direct mode** — adds to path-pattern auto-detection registry.
+        * **CONNECT mode** — adds the hostname from *base_url* to the
+          CONNECT intercept set, so subprocess agents routing through
+          ``HTTPS_PROXY`` get TLS-terminated and tracked.
+        """
         self._providers[name] = ProviderConfig(
             name=name, base_url=base_url, path_patterns=path_patterns,
         )
+        hostname = urlparse(base_url).hostname
+        if hostname:
+            self._intercept_hosts.add(hostname)
+
+    def _should_intercept(self, hostname: str) -> bool:
+        """Return ``True`` if CONNECT traffic to *hostname* should be intercepted."""
+        if hostname in self._intercept_hosts:
+            return True
+        return any(fnmatch.fnmatch(hostname, pat) for pat in self._intercept_patterns)
 
     # ------------------------------------------------------------------
     # Session ports
@@ -287,7 +310,7 @@ class ProxyServer:
             if header_line in (b"\r\n", b"\n", b""):
                 break
 
-        if not should_intercept(hostname) or self._ca is None:
+        if not self._should_intercept(hostname) or self._ca is None:
             await self._connect_passthrough(hostname, remote_port, reader, writer)
             return
 

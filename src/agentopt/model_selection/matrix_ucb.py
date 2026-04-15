@@ -37,8 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_observation_budget_fraction(
-    observation_budget_fraction: float,
-    sample_fraction: Optional[float],
+    observation_budget_fraction: float, sample_fraction: Optional[float],
 ) -> float:
     """Match RandomSearch/Bayesian: ``sample_fraction`` overrides ``observation_budget_fraction``."""
     if sample_fraction is not None:
@@ -53,8 +52,7 @@ def _resolve_observation_budget_fraction(
 
 
 def _resolve_warmup_percentage(
-    warmup_percentage: float,
-    warmup_fraction: Optional[float],
+    warmup_percentage: float, warmup_fraction: Optional[float],
 ) -> float:
     """Optional alias ``warmup_fraction`` for ``warmup_percentage`` (matrix UCB-LRF)."""
     if warmup_fraction is not None:
@@ -80,10 +78,7 @@ def _np_filled_count(observed: np.ndarray) -> int:
 
 
 def _ucb_plain_next_batch(
-    observed: np.ndarray,
-    a: float,
-    max_cells: int,
-    rng: np.random.Generator,
+    observed: np.ndarray, a: float, max_cells: int, rng: np.random.Generator,
 ) -> Optional[np.ndarray]:
     """Next batch of matrix cells: shape ``(2, k)`` rows [combo_idx, datapoint_idx], or ``None``."""
     n_combos, n_datapoints = observed.shape
@@ -455,10 +450,7 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
             return None
         _, top_dp = torch.topk(combo_entry_stds, k, largest=True)
         return torch.stack(
-            [
-                torch.full((k,), best_combo, device=observed_t.device),
-                top_dp,
-            ]
+            [torch.full((k,), best_combo, device=observed_t.device), top_dp,]
         )
 
     def _select_sequential(self, max_concurrent: int = 20) -> SelectionResults:
@@ -525,10 +517,7 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
                 combo = all_combos[int(combo_i)]
                 name = self._combo_name(combo)
                 sc, lat, ids = self._evaluate_combo(
-                    combo,
-                    [dataset_list[int(dp_i)]],
-                    label=name,
-                    dp_offset=int(dp_i),
+                    combo, [dataset_list[int(dp_i)]], label=name, dp_offset=int(dp_i),
                 )
                 _record_cells(cell_data, int(combo_i), int(dp_i), sc, lat, ids)
                 if sc:

@@ -35,6 +35,7 @@ dependencies = [
 
 [project.optional-dependencies]
 bayesian = ["torch>=2.0.0", "botorch>=0.10.0", "gpytorch>=1.11.0"]
+ucb_lrf = ["torch>=2.0.0", "einops>=0.6"]
 crewai = ["crewai"]
 langgraph = ["langchain-openai<1", "langgraph"]
 examples = [

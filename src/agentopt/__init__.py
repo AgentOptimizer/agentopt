@@ -133,6 +133,8 @@ __all__ = [
     "BaseModelSelector",
     "LLMTracker",
     "CallRecord",
+    # Integrations
+    "OpenClawAgent",
     # Selectors
     "BruteForceModelSelector",
     "RandomSearchModelSelector",

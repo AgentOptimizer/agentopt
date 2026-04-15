@@ -1,196 +1,50 @@
 ---
 name: agentopt
-description: Use this skill when optimizing LLM model combinations for an existing agent workflow with AgentOpt, especially when creating an offline evaluation dataset, choosing selector/concurrency settings, and exporting benchmark-ready artifacts.
+description: Use when the user wants to pick the best LLM model (or combination of models) for a multi-step agent pipeline by running offline evaluation over a labeled dataset. Trigger phrases include "which model should I use", "benchmark my planner/solver", "compare GPT-4o vs GPT-4o-mini for my agent", "model selection for my agent", "offline eval of model combos".
 metadata:
-  short-description: Optimize agent model combos with offline eval
+  short-description: Pick the best LLM model combo for a multi-node agent using offline labeled evaluation
 ---
 
-# AgentOpt Skill
+# AgentOpt
 
-## What this skill does
+## When to use this skill
 
-This skill tells an agent exactly how to run AgentOpt end-to-end for offline model selection:
-- define an agent wrapper (`__init__` + `run`),
-- build/clean a labeled offline dataset,
-- choose a selector strategy and concurrency budget,
-- run evaluation and export reproducible artifacts.
+Trigger when the user asks to:
+- choose among candidate LLMs for an agent with one or more LLM-calling steps (planner, solver, reviewer, etc.),
+- benchmark an agent pipeline against a labeled dataset,
+- tune a concurrency/cost budget for an evaluation run,
+- produce shareable artifacts (ranked CSV, best config YAML) from a model-selection run.
 
-## How it works (mental model)
+Do not trigger for: online A/B testing, prompt optimization without labeled data, single-model evaluation.
 
-AgentOpt evaluates model **combinations** over a labeled dataset:
-1. Create one model combo (e.g., planner=`gpt-4o-mini`, solver=`gpt-4.1`).
-2. Instantiate the user agent with that combo.
-3. Run all dataset samples, score with `eval_fn`, and track latency/tokens/cost.
-4. Repeat for other combos (or a searched subset, depending on `method`).
-5. Rank combinations by quality first, then latency/cost tie-breakers.
+## Prerequisites
 
-`parallel=True` with `max_concurrent=N` controls the total in-flight API budget across all combo/datapoint evaluations.
+- Python `>=3.10` (declared in `pyproject.toml`).
+- Install: `uv pip install agentopt-py` (or `pip install agentopt-py`).
+- API keys in env for each provider the candidate models use (e.g. `OPENAI_API_KEY`).
+- Labeled offline dataset: a sequence of `(input_data, expected_answer)` pairs. If production traces lack ground truth, label them (human or rubric) first.
 
-Use this skill when the user wants to:
-- run model selection for an agent pipeline (single-step or multi-step),
-- create or clean an offline evaluation dataset,
-- tune `method` / `parallel` / `max_concurrent`,
-- produce shareable benchmark outputs (CSV + best config + run metadata).
+## Minimal end-to-end example
 
-## Fast Workflow
-
-1. **Wrap agent with AgentOpt contract**
-2. **Create/validate offline dataset**
-3. **Define candidate model space**
-4. **Run selector with explicit concurrency budget**
-5. **Export artifacts for review/submission**
-
----
-
-## Parameter Reference (use this exact mapping)
-
-### `ModelSelector(...)` parameters
-
-| Parameter | Required | Description |
-|---|---:|---|
-| `agent` | yes | Agent class/factory that accepts one combo dict in `__init__` and exposes `run(input_data)` |
-| `models` | yes | Dict of node -> candidate list (Cartesian product defines combo space) |
-| `eval_fn` | yes | Scoring function `(expected, actual) -> bool|float` (higher is better) |
-| `dataset` | yes | Sequence of `(input_data, expected_answer)` pairs |
-| `method` | no | Selector algorithm (`auto`, `brute_force`, `random`, `hill_climbing`, `arm_elimination`, `epsilon_lucb`, `threshold`, `lm_proposal`, `bayesian`) |
-| `model_prices` | no | Custom token pricing overrides for accurate cost reporting |
-| `tracker` | no | Custom `LLMTracker` (e.g., enable persistent cache dir) |
-| `node_descriptions` | no | Node role descriptions, used by `lm_proposal` prompting |
-| `**kwargs` | depends | Method-specific knobs listed below |
-
-### `select_best(...)` parameters
-
-| Parameter | Default | Description |
-|---|---:|---|
-| `parallel` | `False` | Run async combo/datapoint evaluation when selector supports it |
-| `max_concurrent` | `20` | **Global** max in-flight API calls across all combos + datapoints |
-
-### Concurrency semantics (exact)
-
-When `parallel=True`, AgentOpt splits global budget into:
-- `dp_concurrent = min(max_concurrent, current_batch_size)`
-- `n_combo = max_concurrent // dp_concurrent`
-
-Guarantee:
-- `n_combo * dp_concurrent <= max_concurrent`
-
-Interpretation:
-- Raise `max_concurrent` to increase total throughput.
-- Keep it bounded by provider rate limits and local runtime capacity.
-
-### Method-specific `**kwargs`
-
-| Method | Extra params |
-|---|---|
-| `random` | `sample_fraction`, `seed` |
-| `hill_climbing` | `max_iterations`, `num_restarts`, `patience`, `seed`, `batch_size` |
-| `arm_elimination` | `n_initial`, `growth_factor`, `confidence` |
-| `epsilon_lucb` | `epsilon`, `n_initial`, `confidence` |
-| `threshold` | `threshold`, `n_initial`, `confidence` |
-| `lm_proposal` | `proposer_model`, `proposer_client`, `objective`, `dataset_preview_size`, `node_descriptions` |
-| `bayesian` | `batch_size`, `sample_fraction` |
-
----
-
-## 1) Agent Contract (required)
-
-AgentOpt expects:
-- `__init__(self, models)` where `models` is a dict like `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`
-- `run(self, input_data)` returning output for one datapoint
+This is a complete, runnable script. Start here; customize below.
 
 ```python
+from agentopt import ModelSelector
+
 class MyAgent:
     def __init__(self, models):
         self.planner_model = models["planner"]
         self.solver_model = models["solver"]
 
     def run(self, input_data):
-        # call your framework here (OpenAI / LangChain / CrewAI / etc.)
+        # Call your LLM(s) here using self.planner_model / self.solver_model.
+        # Return whatever eval_fn expects as `actual`.
         return {"answer": "..."}
-```
 
-No inheritance/base class is required (duck typing).
-
----
-
-## 2) Offline Dataset Creation (required)
-
-### Dataset shape AgentOpt enforces
-
-Dataset must:
-- support `len(dataset)` and `dataset[i]`,
-- be non-empty,
-- contain elements that unpack as `(input_data, expected_answer)`.
-
-Canonical form:
-
-```python
 dataset = [
     ({"question": "What is 2+2?"}, "4"),
     ({"question": "Capital of France?"}, "Paris"),
 ]
-```
-
-### Recommended JSONL schema for offline evaluation
-
-Use JSONL with one object per line:
-
-```json
-{"input": {"question": "What is 2+2?"}, "expected": "4", "id": "sample-0001"}
-{"input": {"question": "Capital of France?"}, "expected": "Paris", "id": "sample-0002"}
-```
-
-### Build dataset from traces/logs (example)
-
-```python
-import json
-from pathlib import Path
-
-def load_offline_dataset(path: str, limit: int | None = None):
-    rows = []
-    with Path(path).open("r", encoding="utf-8") as f:
-        for line in f:
-            obj = json.loads(line)
-            # Keep only labeled rows
-            if "input" not in obj or "expected" not in obj:
-                continue
-            rows.append((obj["input"], obj["expected"]))
-            if limit and len(rows) >= limit:
-                break
-    if not rows:
-        raise ValueError("No usable labeled rows found.")
-    return rows
-```
-
-If your production traces do not contain ground truth, create labels first (human or rubric-based) before running AgentOpt.
-
----
-
-## 3) Model Space Definition
-
-`models` is a dict mapping node name -> candidate list.
-
-```python
-models = {
-    "planner": ["gpt-4o-mini", "gpt-4.1"],
-    "solver": ["gpt-4o-mini", "gpt-4.1"],
-}
-```
-
-Candidate entries can be:
-- model name strings, or
-- prebuilt LLM/model instances (framework-dependent), as long as your agent wrapper consumes them correctly.
-
-Keep node keys in `models` aligned with what your agent reads in `__init__(self, models)`.
-
----
-
-## 4) Run Selection
-
-Use `ModelSelector(...)` for method dispatch:
-
-```python
-from agentopt import ModelSelector
 
 def eval_fn(expected, actual):
     text = actual.get("answer", str(actual)) if isinstance(actual, dict) else str(actual)
@@ -198,135 +52,178 @@ def eval_fn(expected, actual):
 
 selector = ModelSelector(
     agent=MyAgent,
-    models=models,
+    models={
+        "planner": ["gpt-4o-mini", "gpt-4.1"],
+        "solver": ["gpt-4o-mini", "gpt-4.1"],
+    },
     eval_fn=eval_fn,
     dataset=dataset,
-    method="auto",  # auto -> arm_elimination
+    method="auto",
 )
 
 results = selector.select_best(parallel=True, max_concurrent=40)
 results.print_summary()
+results.to_csv("artifacts/results.csv")
+results.export_config("artifacts/best_config.yaml")
+print("best:", results.get_best_combo(), "cost:", results.selection_cost)
 ```
 
-### Method selection guidance
-
-- `auto` / `arm_elimination`: default for most users.
-- `brute_force`: exhaustive baseline.
-- `random`: cheap exploratory baseline (`sample_fraction`).
-- `hill_climbing`: local search with restarts (`num_restarts`).
-- `epsilon_lucb`: near-best identification (`epsilon`, `n_initial`).
-- `threshold`: classify combos above/below target score (`threshold`, `n_initial`).
-- `lm_proposal`: proposer LLM picks one combo first (then evaluates that combo).
-
-### Concurrency semantics (important)
-
-`max_concurrent` is the **total API call budget** across all combos + datapoints.
-
-Internally AgentOpt splits it into:
-- datapoint-level concurrency per combo (`dp_concurrent`),
-- combo-level concurrency (`n_combo`),
-
-such that:
-- `n_combo * dp_concurrent <= max_concurrent`
-
-So increasing `max_concurrent` raises total throughput, not just per-combo throughput.
+A working fuller version lives at `examples/custom_agent_example.py`.
 
 ---
 
-## 5) Export Benchmark-Ready Artifacts
+## Customization
 
-Always export at least:
-- ranked results table (`CSV`),
-- best combo config (`YAML`),
-- run metadata (`JSON`) containing method + concurrency + dataset size.
+### 1. Agent contract
+
+AgentOpt instantiates the user's agent with a combo dict and calls `run` per datapoint. Duck-typed — no base class.
+
+```python
+class MyAgent:
+    def __init__(self, models):           # models = {"planner": "gpt-4o-mini", ...}
+        ...
+    def run(self, input_data):            # returns anything eval_fn can score
+        ...
+```
+
+Keep node keys in `models` (the dict) aligned with the keys your `__init__` reads.
+
+### 2. Dataset
+
+Required shape: indexable, non-empty, elements unpack as `(input_data, expected)`.
+
+```python
+dataset = [
+    ({"question": "..."}, "expected-answer"),
+    ...
+]
+```
+
+JSONL loader (recommended for reproducibility):
+
+```python
+import json
+from pathlib import Path
+
+def load_offline_dataset(path, limit=None):
+    rows = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        obj = json.loads(line)
+        if "input" not in obj or "expected" not in obj:
+            continue
+        rows.append((obj["input"], obj["expected"]))
+        if limit and len(rows) >= limit:
+            break
+    if not rows:
+        raise ValueError("No labeled rows found.")
+    return rows
+```
+
+### 3. Model space
+
+`models` is `{node_name: [candidate, ...]}`. Cartesian product defines the combo space.
+
+```python
+models = {
+    "planner": ["gpt-4o-mini", "gpt-4.1"],
+    "solver":  ["gpt-4o-mini", "gpt-4.1"],
+}
+```
+
+Candidates may be model-name strings or framework-specific LLM instances, as long as your agent wrapper consumes them.
+
+### 4. Selector method — decision table
+
+`ModelSelector(...)` is a factory function; `method=` picks the algorithm. Pass method-specific knobs as kwargs to `ModelSelector(...)`.
+
+| method | when to use | key kwargs |
+|---|---|---|
+| `auto` | **Default.** Aliases `arm_elimination`. Start here. | — |
+| `arm_elimination` | Best-arm identification with statistical elimination. | `n_initial`, `growth_factor`, `confidence` |
+| `brute_force` | Small combo space; exhaustive baseline. | — |
+| `random` | Cheap exploratory scan over a large space. | `sample_fraction`, `seed` |
+| `hill_climbing` | Local search; combos have smooth structure. | `max_iterations`, `num_restarts`, `patience`, `seed`, `batch_size` |
+| `epsilon_lucb` | Find any combo within ε of the best. | `epsilon`, `n_initial`, `confidence` |
+| `threshold` | Classify combos above/below a quality bar. | `threshold`, `n_initial`, `confidence` |
+| `matrix_ucb` | UCB over a node × model matrix; structured spaces. | see `docs/api/selectors.md` |
+| `matrix_ucb_lrf` | Low-rank-factorization variant of matrix UCB. | see `docs/api/selectors.md` |
+| `lm_proposal` | Ask a proposer LLM to pick a combo, then evaluate it. | `proposer_model`, `proposer_client`, `objective`, `dataset_preview_size`, `node_descriptions` |
+| `bayesian` | Surrogate-model-guided search over medium/large spaces. | `batch_size`, `sample_fraction` |
+
+Other `ModelSelector` kwargs: `model_prices` (custom token pricing), `tracker` (e.g. `LLMTracker(cache_dir=...)` for disk-cache reuse), `node_descriptions` (used by `lm_proposal`).
+
+### 5. Concurrency
+
+`select_best(parallel=True, max_concurrent=N)` — `max_concurrent` is the **total in-flight API call budget across all combos × datapoints**, not per-combo.
+
+Internal split (see `src/agentopt/model_selection/base.py:1055-1090`):
+
+```
+dp_concurrent = min(max(max_concurrent, 1), batch_size)
+n_combo       = max(max_concurrent, 1) // dp_concurrent
+# guarantee: n_combo * dp_concurrent <= max_concurrent
+```
+
+Raise `max_concurrent` for more throughput; bound by provider rate limits and local runtime.
+
+### 6. Results & export
+
+`select_best` returns a `SelectionResults` with:
+
+- `print_summary()` — ranked table to stdout.
+- `to_csv(path)` — full ranking (accuracy, latency, tokens, cost per combo).
+- `export_config(path)` — best combo as YAML, ready for production.
+- `get_best_combo()` → `dict[str, str]`.
+- `plot_pareto(path=None)` — quality-vs-cost Pareto front.
+- `selection_cost` — total USD spent on the run.
+- `selection_wall_time_seconds` — wall clock.
+
+For run metadata:
 
 ```python
 from datetime import datetime, timezone
 import json
 
-results.to_csv("artifacts/results.csv")
-results.export_config("artifacts/best_config.yaml")
-
-meta = {
-    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-    "method": "auto",
-    "parallel": True,
-    "max_concurrent": 40,
-    "dataset_size": len(dataset),
-    "selection_wall_time_seconds": results.selection_wall_time_seconds,
-    "best_combo": results.get_best_combo(),
-}
 with open("artifacts/run_metadata.json", "w", encoding="utf-8") as f:
-    json.dump(meta, f, indent=2)
+    json.dump({
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "method": "auto",
+        "parallel": True,
+        "max_concurrent": 40,
+        "dataset_size": len(dataset),
+        "selection_wall_time_seconds": results.selection_wall_time_seconds,
+        "selection_cost_usd": results.selection_cost,
+        "best_combo": results.get_best_combo(),
+    }, f, indent=2)
 ```
 
-For external benchmark submission/repro checks, include:
-- commit SHA,
-- environment (package versions),
-- random seed (if applicable),
-- exact dataset split ID/version.
-
-## 5.1) Benchmark submission packet (recommended)
-
-Create one directory per benchmark run:
-
-```text
-artifacts/
-  <benchmark_name>/<run_id>/
-    results.csv
-    best_config.yaml
-    run_metadata.json
-    dataset_manifest.json
-    README_submission.md
-```
-
-`dataset_manifest.json` should include dataset source + labeling policy:
-
-```json
-{
-  "name": "my_offline_eval_v1",
-  "num_samples": 120,
-  "format": "jsonl(input, expected)",
-  "split": "offline_eval",
-  "label_policy": "human_verified",
-  "created_at_utc": "2026-04-02T00:00:00Z"
-}
-```
-
-`README_submission.md` should state:
-- benchmark/task name,
-- method and all key params (`parallel`, `max_concurrent`, method kwargs),
-- best combo and headline metrics,
-- reproducibility commands.
-
-Submission channel depends on project policy:
-- if using GitHub: upload packet in PR/issue comment and link commit SHA,
-- if using external benchmark portal: upload the same packet unchanged.
+For external benchmark submission packets (directory layout, manifest schema, README template), see `docs/benchmark-submission.md`.
 
 ---
 
-## 6) Troubleshooting Checklist
+## Verification
 
-- **`TypeError` on dataset**: ensure `(input, expected)` tuple elements and non-empty sequence.
-- **No token/cost tracking**: ensure LLM calls happen through supported HTTP stack (AgentOpt tracker uses transport interception).
-- **Too slow**: increase `max_concurrent`, reduce candidate space, or switch from `brute_force` to `auto`.
-- **Unstable rankings**: increase dataset size and/or enforce deterministic prompts where possible.
-- **High rerun cost**: use `LLMTracker(cache_dir=...)` for disk cache reuse.
+After a run, confirm:
 
----
+1. The script exits 0 and `results.print_summary()` prints a ranked table with one row per evaluated combo.
+2. `artifacts/results.csv` exists and has `> 1` data row (header + combos).
+3. `artifacts/best_config.yaml` exists and parses as YAML with the expected node keys.
+4. `results.get_best_combo()` returns a dict whose keys match the `models` dict.
+5. `results.selection_cost` is a non-negative float; if zero on a non-cached run, token tracking is not wired up — see Troubleshooting.
 
-## Repo Pointers
+## Troubleshooting
 
-- Core API: `src/agentopt/__init__.py`
-- Selector internals + concurrency split: `src/agentopt/model_selection/base.py`
-- Brute force reference: `src/agentopt/model_selection/brute_force.py`
-- Quickstart docs: `docs/getting-started/quickstart.md`
-- Selector docs: `docs/api/selectors.md`
-- End-to-end examples: `examples/*.py`
+- **`TypeError` on dataset**: elements must unpack as `(input, expected)`; sequence must be non-empty.
+- **No token/cost tracking**: LLM calls must go through a supported HTTP stack — `LLMTracker` uses transport interception.
+- **Too slow**: raise `max_concurrent`, shrink the combo space, or switch `brute_force` → `auto`.
+- **Unstable rankings**: grow the dataset; enforce deterministic prompts (temperature=0) where feasible.
+- **Expensive reruns**: pass `tracker=LLMTracker(cache_dir=".agentopt_cache")` to `ModelSelector` for on-disk call cache.
 
-## Verification checklist (for agents)
+## Repo pointers
 
-After implementing AgentOpt in a target app, verify:
-- run completes without selector/runtime errors,
-- `run_metadata.json` contains method + concurrency + dataset size + best combo,
-- `results.csv` and `best_config.yaml` are present and non-empty.
+- Public API: `src/agentopt/__init__.py`
+- Selector base + concurrency split: `src/agentopt/model_selection/base.py`
+- Method implementations: `src/agentopt/model_selection/`
+- Quickstart: `docs/getting-started/quickstart.md`
+- Selector reference: `docs/api/selectors.md`
+- End-to-end examples: `examples/`

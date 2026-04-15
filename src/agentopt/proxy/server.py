@@ -178,7 +178,12 @@ class ProxyServer:
                 else None
             )
 
-        server = await asyncio.start_server(_on_connect, self._host, 0)
+        # reuse_address=True lets us bind a fresh ephemeral port immediately
+        # even when a recently closed one is still in TIME_WAIT — prevents
+        # port exhaustion during long sweeps with many sessions.
+        server = await asyncio.start_server(
+            _on_connect, self._host, 0, reuse_address=True,
+        )
         port = server.sockets[0].getsockname()[1]
         self._session_listeners[session_id] = (server, port)
         logger.debug("Session %s listening on port %d", session_id, port)
@@ -471,8 +476,20 @@ class ProxyServer:
                     resp_body = resp.read()
                     conn.close()
                 except Exception as exc:
+                    latency = time.monotonic() - t0
                     logger.warning(
                         "Upstream request to %s failed: %s", upstream_url, exc
+                    )
+                    # Record the failed attempt for metrics.
+                    self._record_call(
+                        session=session,
+                        request_body=request_body,
+                        response_body_bytes=None,
+                        request_url=upstream_url,
+                        latency=latency,
+                        cached=False,
+                        status_code=0,
+                        error=str(exc),
                     )
                     error_body = json.dumps({"error": str(exc)}).encode()
                     wfile.write(_build_http_response(502, {}, error_body))
@@ -480,25 +497,27 @@ class ProxyServer:
                     continue
                 latency = time.monotonic() - t0
 
-                if resp_status == 200:
-                    self._record_call(
-                        session=session,
-                        request_body=request_body,
-                        response_body_bytes=resp_body,
-                        request_url=upstream_url,
-                        latency=latency,
-                        cached=False,
+                # Always record — 2xx, 4xx, 5xx all count toward cost/latency.
+                self._record_call(
+                    session=session,
+                    request_body=request_body,
+                    response_body_bytes=resp_body,
+                    request_url=upstream_url,
+                    latency=latency,
+                    cached=False,
+                    status_code=resp_status,
+                    error=None if resp_status == 200 else f"HTTP {resp_status}",
+                )
+                if resp_status == 200 and self._cache is not None and request_body:
+                    cache_key = _make_cache_key(request_body)
+                    self._cache.put(
+                        cache_key,
+                        CacheEntry(
+                            response_bytes=resp_body,
+                            response_headers=dict(resp_headers),
+                            latency_seconds=latency,
+                        ),
                     )
-                    if self._cache is not None and request_body:
-                        cache_key = _make_cache_key(request_body)
-                        self._cache.put(
-                            cache_key,
-                            CacheEntry(
-                                response_bytes=resp_body,
-                                response_headers=dict(resp_headers),
-                                latency_seconds=latency,
-                            ),
-                        )
 
                 safe_headers = {
                     k: v
@@ -615,7 +634,19 @@ class ProxyServer:
                 method, upstream_url, fwd_headers, body, is_streaming,
             )
         except Exception as exc:
+            latency = time.monotonic() - t0
             logger.warning("Upstream request failed: %s", exc)
+            # Record the failed attempt so latency / error counts show up in metrics.
+            self._record_call(
+                session=session,
+                request_body=request_body,
+                response_body_bytes=None,
+                request_url=upstream_url,
+                latency=latency,
+                cached=False,
+                status_code=0,
+                error=str(exc),
+            )
             resp = json.dumps({"error": f"upstream error: {exc}"}).encode()
             writer.write(
                 _build_http_response(502, {"content-type": "application/json"}, resp)
@@ -635,25 +666,27 @@ class ProxyServer:
                 latency=latency,
             )
         else:
-            if status == 200:
-                self._record_call(
-                    session=session,
-                    request_body=request_body,
-                    response_body_bytes=resp_body,
-                    request_url=upstream_url,
-                    latency=latency,
-                    cached=False,
+            # Always record — 2xx, 4xx, 5xx all count toward cost/latency.
+            self._record_call(
+                session=session,
+                request_body=request_body,
+                response_body_bytes=resp_body,
+                request_url=upstream_url,
+                latency=latency,
+                cached=False,
+                status_code=status,
+                error=None if status == 200 else f"HTTP {status}",
+            )
+            if status == 200 and self._cache is not None and request_body:
+                cache_key = _make_cache_key(request_body)
+                self._cache.put(
+                    cache_key,
+                    CacheEntry(
+                        response_bytes=resp_body,
+                        response_headers=dict(resp_headers),
+                        latency_seconds=latency,
+                    ),
                 )
-                if self._cache is not None and request_body:
-                    cache_key = _make_cache_key(request_body)
-                    self._cache.put(
-                        cache_key,
-                        CacheEntry(
-                            response_bytes=resp_body,
-                            response_headers=dict(resp_headers),
-                            latency_seconds=latency,
-                        ),
-                    )
 
             safe_headers = {
                 k: v
@@ -671,33 +704,53 @@ class ProxyServer:
         self,
         session: Any,
         request_body: dict,
-        response_body_bytes: bytes,
+        response_body_bytes: Optional[bytes],
         request_url: str,
         latency: float,
         cached: bool,
+        status_code: int = 200,
+        error: Optional[str] = None,
     ) -> None:
-        """Parse a non-streaming response and record a ``CallRecord``."""
-        try:
-            resp_body = json.loads(response_body_bytes)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return
-        parsed = _parse_usage(resp_body)
-        if parsed is None:
-            return
-        model = request_body.get("model") or parsed["model"]
+        """Record a ``CallRecord`` for any outcome (success or failure).
+
+        Token counts are populated if the response body parses and contains
+        a ``usage`` object; otherwise they default to 0.  Failed requests
+        (non-200, connection errors) are still recorded so cost/latency
+        metrics reflect real work done.
+        """
+        prompt_tokens = 0
+        completion_tokens = 0
+        resp_body: Dict[str, Any] = {}
+        model = request_body.get("model", "unknown")
+
+        if response_body_bytes:
+            try:
+                parsed_body = json.loads(response_body_bytes)
+                if isinstance(parsed_body, dict):
+                    resp_body = parsed_body
+                    parsed = _parse_usage(parsed_body)
+                    if parsed is not None:
+                        prompt_tokens = parsed["prompt_tokens"]
+                        completion_tokens = parsed["completion_tokens"]
+                        model = request_body.get("model") or parsed["model"]
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+
         record = CallRecord(
             data_id=session.data_id,
             combo_id=session.combo_id,
             agent_id=session.agent_id,
             model=model,
-            prompt_tokens=parsed["prompt_tokens"],
-            completion_tokens=parsed["completion_tokens"],
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             latency_seconds=latency,
             request_url=request_url,
             request_body=request_body,
             response_body=resp_body,
             timestamp=datetime.now(timezone.utc).isoformat(),
             cached=cached,
+            status_code=status_code,
+            error=error,
         )
         self.session_manager.add_record(session.session_id, record)
 
@@ -760,12 +813,11 @@ class ProxyServer:
 
 def _build_http_response(status: int, headers: Dict[str, str], body: bytes,) -> bytes:
     """Build a raw HTTP/1.1 response as bytes."""
-    status_text = {
-        200: "OK",
-        400: "Bad Request",
-        404: "Not Found",
-        502: "Bad Gateway",
-    }.get(status, "Unknown")
+    from http import HTTPStatus
+    try:
+        status_text = HTTPStatus(status).phrase
+    except ValueError:
+        status_text = "Unknown"
     lines: List[str] = [f"HTTP/1.1 {status} {status_text}"]
     header_lower = {k.lower(): v for k, v in headers.items()}
     if "content-length" not in header_lower:
@@ -783,11 +835,16 @@ async def _forward_https(
     """Forward an HTTP request to an upstream HTTPS URL."""
     import aiohttp
 
-    # trust_env=False prevents aiohttp from reading HTTPS_PROXY, which
-    # would loop back into our own proxy.
-    async with aiohttp.ClientSession(trust_env=False) as session:
+    # Keep trust_env=True so aiohttp picks up user's SSL_CERT_FILE /
+    # REQUESTS_CA_BUNDLE (needed behind corporate MITM).  Override proxy
+    # per-request to None so our own HTTPS_PROXY doesn't loop back.
+    async with aiohttp.ClientSession() as session:
         async with session.request(
-            method=method, url=url, headers=headers, data=body if body else None,
+            method=method,
+            url=url,
+            headers=headers,
+            data=body if body else None,
+            proxy=None,
         ) as resp:
             resp_body = await resp.read()
             resp_headers = {k: v for k, v in resp.headers.items()}

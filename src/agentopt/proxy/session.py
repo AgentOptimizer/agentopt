@@ -36,7 +36,10 @@ class SessionManager:
 
     def __init__(self) -> None:
         self._active: Dict[str, SessionInfo] = {}
-        self._ended: List[SessionInfo] = []
+        # Ordered dict of archived sessions — preserves insertion order for
+        # ``get_all_records``, allows O(1) lookup for late-arriving records
+        # from blocking threads that finish after ``end_session``.
+        self._ended: Dict[str, SessionInfo] = {}
         self._lock = threading.Lock()
 
     def create_session(
@@ -66,7 +69,7 @@ class SessionManager:
         with self._lock:
             session = self._active.pop(session_id, None)
             if session is not None:
-                self._ended.append(session)
+                self._ended[session_id] = session
         return session
 
     def get_session(self, session_id: str) -> Optional[SessionInfo]:
@@ -75,16 +78,21 @@ class SessionManager:
             return self._active.get(session_id)
 
     def add_record(self, session_id: str, record: CallRecord) -> None:
-        """Append a ``CallRecord`` to the session (thread-safe)."""
+        """Append a ``CallRecord`` to the session (thread-safe).
+
+        Looks in both active and ended sessions — a blocking upstream
+        request may finish after ``end_session`` has moved the session to
+        the ended set.  Without this fallback those records would be lost.
+        """
         with self._lock:
-            session = self._active.get(session_id)
+            session = self._active.get(session_id) or self._ended.get(session_id)
         if session is not None:
             session.add_record(record)
 
     def get_all_records(self) -> List[CallRecord]:
         """Return every record from all ended sessions."""
         with self._lock:
-            ended = list(self._ended)
+            ended = list(self._ended.values())
         records: List[CallRecord] = []
         for session in ended:
             with session._lock:
@@ -97,6 +105,6 @@ class SessionManager:
         Called during ``ProxyServer.stop()`` to ensure no records are lost.
         """
         with self._lock:
-            for session in self._active.values():
-                self._ended.append(session)
+            for sid, session in self._active.items():
+                self._ended[sid] = session
             self._active.clear()

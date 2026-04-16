@@ -1,8 +1,8 @@
 ---
 name: agentopt
-description: Use when the user wants to pick the best LLM model (or combination of models) for a multi-step agent pipeline by running offline evaluation over a labeled dataset. Trigger phrases include "which model should I use", "benchmark my planner/solver", "compare GPT-4o vs GPT-4o-mini for my agent", "model selection for my agent", "offline eval of model combos".
+description: Use when the user wants to pick the best LLM model (or combination of models) for a multi-step agent pipeline by running offline evaluation, including when no eval dataset exists yet and one must be generated. Trigger phrases include "which model should I use", "benchmark my planner/solver", "compare GPT-4o vs GPT-4o-mini for my agent", "model selection for my agent", "offline eval of model combos", "generate an eval dataset".
 metadata:
-  short-description: Pick the best LLM model combo for a multi-node agent using offline labeled evaluation
+  short-description: Pick model combos and create offline eval data when needed
 ---
 
 # AgentOpt
@@ -15,14 +15,15 @@ Trigger when the user asks to:
 - tune a concurrency/cost budget for an evaluation run,
 - produce shareable artifacts (ranked CSV, best config YAML) from a model-selection run.
 
-Do not trigger for: online A/B testing, prompt optimization without labeled data, single-model evaluation.
+Do not trigger for: online A/B testing, pure prompt optimization, single-model evaluation.
 
 ## Prerequisites
 
 - Python `>=3.10` (declared in `pyproject.toml`).
 - Install: `uv pip install agentopt-py` (or `pip install agentopt-py`).
 - API keys in env for each provider the candidate models use (e.g. `OPENAI_API_KEY`).
-- Labeled offline dataset: a sequence of `(input_data, expected_answer)` pairs. If production traces lack ground truth, label them (human or rubric) first.
+- Preferred: labeled offline dataset as `(input_data, expected_answer)` pairs.
+- If no dataset exists: generate a draft eval dataset with the workflow in "Create an eval dataset from scratch" before running model selection.
 
 ## Minimal end-to-end example
 
@@ -118,6 +119,82 @@ def load_offline_dataset(path, limit=None):
         raise ValueError("No labeled rows found.")
     return rows
 ```
+
+### 2a. Create an eval dataset from scratch
+
+Use this when the user has no labeled eval dataset. The goal is not to create a perfect benchmark automatically; it is to create a usable first offline eval set that can be inspected, refined, and versioned.
+
+Workflow:
+
+1. Ask the user for the task contract:
+   - what the agent is supposed to do,
+   - input fields,
+   - output format,
+   - success criteria,
+   - known hard cases.
+
+2. Use an LLM to generate diverse candidate inputs:
+   - include easy, medium, hard, and edge-case examples,
+   - avoid near-duplicates,
+   - include realistic failure modes,
+   - create at least 30 examples for a smoke eval and 100+ for a more useful eval.
+
+3. Use an LLM to generate a scoring rubric:
+   - exact-match fields when possible,
+   - semantic criteria when exact match is too strict,
+   - disqualifying errors,
+   - optional partial-credit scale from `0.0` to `1.0`.
+
+4. Run a strong reference model or agent to obtain expected outputs:
+   - use the strongest available model (for example Opus 4.6 if available, GPT-4.1/4o class, or the user's current best model),
+   - store both the raw reference output and the normalized expected answer.
+
+5. Iterate once on inputs and rubric:
+   - remove trivial examples the reference model solves too easily,
+   - add harder cases where outputs expose ambiguity,
+   - tighten rubric criteria where scoring is unclear,
+   - keep a small sample for human inspection.
+
+6. Save JSONL artifacts:
+   - `eval_dataset.jsonl` with `input`, `expected`, `rubric`, and `id`,
+   - `dataset_manifest.json` with generator model, reference model, date, size, and labeling policy.
+
+Recommended JSONL row:
+
+```json
+{"id":"synthetic-0001","input":{"question":"..."},"expected":"...","rubric":{"score_type":"semantic","criteria":["..."],"disqualifiers":["..."]},"source":"synthetic_llm_generated","reference_model":"best_available"}
+```
+
+Loader:
+
+```python
+def load_generated_eval(path, limit=None):
+    rows = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        obj = json.loads(line)
+        rows.append((obj["input"], {"expected": obj["expected"], "rubric": obj.get("rubric", {})}))
+        if limit and len(rows) >= limit:
+            break
+    if not rows:
+        raise ValueError("No generated eval rows found.")
+    return rows
+```
+
+Rubric-aware `eval_fn` pattern:
+
+```python
+def eval_fn(expected_obj, actual):
+    expected = expected_obj["expected"] if isinstance(expected_obj, dict) else expected_obj
+    text = actual.get("answer", str(actual)) if isinstance(actual, dict) else str(actual)
+    return 1.0 if str(expected).lower() in text.lower() else 0.0
+```
+
+Important safeguards:
+
+- Mark generated datasets clearly as synthetic; do not present them as human-labeled benchmarks.
+- Keep generated inputs, rubric, and reference outputs so the dataset can be audited.
+- Prefer human review for a small sample before using results to make expensive model decisions.
+- Do not let the same weak candidate model generate labels for its own evaluation.
 
 ### 3. Model space
 

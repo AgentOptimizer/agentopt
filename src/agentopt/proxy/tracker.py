@@ -4,7 +4,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .cache import ResponseCache
 from .certs import CertificateAuthority
@@ -47,6 +47,7 @@ class LLMTracker:
         self,
         cache: bool = True,
         cache_dir: Optional[Union[str, Path]] = _DEFAULT_CACHE_DIR,
+        router: Optional[Any] = None,
     ) -> None:
         self._records: List[CallRecord] = []
         self._lock = threading.Lock()
@@ -54,6 +55,7 @@ class LLMTracker:
         self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
         self._ca = CertificateAuthority()
         self._server: Optional[ProxyServer] = None
+        self._router = router
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -63,7 +65,9 @@ class LLMTracker:
         """Launch the proxy server and install the httpx redirect."""
         if self._active:
             return
-        self._server = ProxyServer(cache=self._response_cache, ca=self._ca)
+        self._server = ProxyServer(
+            cache=self._response_cache, ca=self._ca, router=self._router,
+        )
         self._server.start()
         install_redirect()
         self._active = True

@@ -37,6 +37,7 @@ from .providers import (
     INTERCEPT_PATTERNS,
     TARGET_HEADER,
     ProviderConfig,
+    detect_provider,
     resolve_target,
 )
 from .session import SessionInfo, SessionManager
@@ -88,11 +89,13 @@ class ProxyServer:
         cache: Optional[ResponseCache] = None,
         ca: Optional[CertificateAuthority] = None,
         providers: Optional[Dict[str, ProviderConfig]] = None,
+        router: Optional[Any] = None,
     ) -> None:
         self.session_manager = SessionManager()
         self._host = host
         self._cache = cache
         self._ca = ca
+        self._router = router
         self._providers: Dict[str, ProviderConfig] = dict(
             providers or DEFAULT_PROVIDERS
         )
@@ -433,6 +436,11 @@ class ProxyServer:
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     request_body = {}
 
+                # Routing hook — may swap model + re-encode body.
+                request_body, body, requested_model = self._apply_router(
+                    request_body, body, path, session,
+                )
+
                 is_streaming = request_body.get("stream", False)
                 upstream_url = f"https://{hostname}{path}"
 
@@ -448,6 +456,7 @@ class ProxyServer:
                             request_url=upstream_url,
                             latency=entry.latency_seconds,
                             cached=True,
+                            requested_model=requested_model,
                         )
                         wfile.write(
                             _build_http_response(
@@ -490,6 +499,7 @@ class ProxyServer:
                         cached=False,
                         status_code=0,
                         error=str(exc),
+                        requested_model=requested_model,
                     )
                     error_body = json.dumps({"error": str(exc)}).encode()
                     wfile.write(_build_http_response(502, {}, error_body))
@@ -507,6 +517,7 @@ class ProxyServer:
                     cached=False,
                     status_code=resp_status,
                     error=None if resp_status == 200 else f"HTTP {resp_status}",
+                    requested_model=requested_model,
                 )
                 if resp_status == 200 and self._cache is not None and request_body:
                     cache_key = _make_cache_key(request_body)
@@ -580,6 +591,11 @@ class ProxyServer:
         except (json.JSONDecodeError, UnicodeDecodeError):
             request_body = {}
 
+        # Routing hook — may swap model + re-encode body.
+        request_body, body, requested_model = self._apply_router(
+            request_body, body, raw_path, session,
+        )
+
         is_streaming = request_body.get("stream", False)
 
         # Resolve upstream target.
@@ -609,6 +625,7 @@ class ProxyServer:
                     request_url=upstream_url,
                     latency=entry.latency_seconds,
                     cached=True,
+                    requested_model=requested_model,
                 )
                 resp_headers = {
                     k: v
@@ -646,6 +663,7 @@ class ProxyServer:
                 cached=False,
                 status_code=0,
                 error=str(exc),
+                requested_model=requested_model,
             )
             resp = json.dumps({"error": f"upstream error: {exc}"}).encode()
             writer.write(
@@ -664,6 +682,7 @@ class ProxyServer:
                 raw_sse=resp_body,
                 request_url=upstream_url,
                 latency=latency,
+                requested_model=requested_model,
             )
         else:
             # Always record — 2xx, 4xx, 5xx all count toward cost/latency.
@@ -676,6 +695,7 @@ class ProxyServer:
                 cached=False,
                 status_code=status,
                 error=None if status == 200 else f"HTTP {status}",
+                requested_model=requested_model,
             )
             if status == 200 and self._cache is not None and request_body:
                 cache_key = _make_cache_key(request_body)
@@ -697,6 +717,76 @@ class ProxyServer:
             await writer.drain()
 
     # ------------------------------------------------------------------
+    # Routing hook
+    # ------------------------------------------------------------------
+
+    def _apply_router(
+        self, request_body: dict, body: bytes, path: str, session: SessionInfo,
+    ) -> Tuple[dict, bytes, Optional[str]]:
+        """Ask the configured router to (optionally) swap the model.
+
+        Returns ``(request_body, body, requested_model)`` — the (possibly
+        mutated) parsed body, (possibly re-encoded) body bytes, and the
+        client's original model string for recording.  If no router is
+        configured, the body fails to parse, or the router declines
+        (returns ``None``), nothing is mutated and ``requested_model`` is
+        ``None``.
+
+        A router exception is caught and logged — it never breaks the
+        user's request flow.  A ``RouteDecision`` that sets ``provider``
+        or ``api_key`` raises ``NotImplementedError`` (cross-provider
+        routing is reserved for a future release).
+        """
+        if self._router is None:
+            return request_body, body, None
+
+        requested_model = request_body.get("model")
+        if not isinstance(requested_model, str) or not requested_model:
+            return request_body, body, None
+
+        # Lazy import to avoid a hard dependency cycle at module load.
+        from agentopt.routing.base import RouteContext
+
+        prov = detect_provider(path, self._providers)
+        provider_name = prov.name if prov is not None else "unknown"
+
+        ctx = RouteContext(
+            request_body=request_body,
+            provider=provider_name,
+            requested_model=requested_model,
+            session_data_id=session.data_id,
+            session_combo_id=session.combo_id,
+            session_agent_id=session.agent_id,
+            history=tuple(session.records),
+        )
+
+        try:
+            decision = self._router.route(ctx)
+        except Exception as exc:
+            logger.warning(
+                "Router raised; proceeding without routing: %s", exc,
+            )
+            return request_body, body, None
+
+        if decision is None:
+            return request_body, body, None
+
+        if decision.provider is not None or decision.api_key is not None:
+            raise NotImplementedError(
+                "cross-provider routing (RouteDecision.provider / api_key) "
+                "is not supported yet — this release is same-provider only"
+            )
+
+        if decision.model == requested_model:
+            # Router ran but kept the same model — record the fact but
+            # skip the body re-encode.
+            return request_body, body, requested_model
+
+        request_body["model"] = decision.model
+        body = json.dumps(request_body).encode("utf-8")
+        return request_body, body, requested_model
+
+    # ------------------------------------------------------------------
     # Recording helpers
     # ------------------------------------------------------------------
 
@@ -710,6 +800,7 @@ class ProxyServer:
         cached: bool,
         status_code: int = 200,
         error: Optional[str] = None,
+        requested_model: Optional[str] = None,
     ) -> None:
         """Record a ``CallRecord`` for any outcome (success or failure).
 
@@ -751,6 +842,7 @@ class ProxyServer:
             cached=cached,
             status_code=status_code,
             error=error,
+            requested_model=requested_model,
         )
         self.session_manager.add_record(session.session_id, record)
 
@@ -761,6 +853,7 @@ class ProxyServer:
         raw_sse: bytes,
         request_url: str,
         latency: float,
+        requested_model: Optional[str] = None,
     ) -> None:
         """Best-effort usage extraction from accumulated SSE data."""
         text = raw_sse.decode("utf-8", errors="replace")
@@ -802,6 +895,7 @@ class ProxyServer:
             response_body={},
             timestamp=datetime.now(timezone.utc).isoformat(),
             cached=False,
+            requested_model=requested_model,
         )
         self.session_manager.add_record(session.session_id, record)
 
@@ -814,6 +908,7 @@ class ProxyServer:
 def _build_http_response(status: int, headers: Dict[str, str], body: bytes,) -> bytes:
     """Build a raw HTTP/1.1 response as bytes."""
     from http import HTTPStatus
+
     try:
         status_text = HTTPStatus(status).phrase
     except ValueError:

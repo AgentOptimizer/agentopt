@@ -46,6 +46,7 @@ def get_current_session_env() -> dict:
 
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
+from .routing import RandomRouter, RouteContext, RouteDecision, Router
 from .model_selection import (
     ArmEliminationModelSelector,
     BaseModelSelector,
@@ -156,4 +157,9 @@ __all__ = [
     # Proxy / session helpers
     "SessionInfo",
     "get_current_session_env",
+    # Routing
+    "Router",
+    "RouteContext",
+    "RouteDecision",
+    "RandomRouter",
 ]

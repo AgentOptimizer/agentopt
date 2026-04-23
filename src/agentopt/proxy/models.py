@@ -30,3 +30,8 @@ class CallRecord:
     status_code: int = 200
     # Populated when the upstream call failed (non-2xx, connection error, etc.).
     error: Optional[str] = None
+    # Model the client originally asked for, when a Router swapped it.
+    # ``None`` means no router was configured or the router chose not to act.
+    # If set and equal to ``model``, the router ran but kept the same model.
+    # If set and different from ``model``, the router swapped it.
+    requested_model: Optional[str] = None

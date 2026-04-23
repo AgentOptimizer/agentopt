@@ -8,15 +8,17 @@ without disturbing the abstraction in ``base.py``.
 import random
 from typing import Optional, Sequence
 
-from .base import RouteContext, RouteDecision
+from .base import RouteContext, RouteDecision, Router
 
 
-class RandomRouter:
-    """Uniform random pick from a fixed model pool."""
+class RandomRouter(Router):
+    """Uniform random pick from a fixed pool of candidate models."""
 
-    def __init__(self, models: Sequence[str], seed: Optional[int] = None,) -> None:
-        assert len(models) > 0, "RandomRouter requires at least one model"
-        self._models = tuple(models)
+    def __init__(
+        self, model_candidates: Sequence[str], seed: Optional[int] = None,
+    ) -> None:
+        assert len(model_candidates) > 0, "RandomRouter requires at least one model"
+        self._models = tuple(model_candidates)
         self._rng = random.Random(seed)
 
     def route(self, ctx: RouteContext) -> Optional[RouteDecision]:

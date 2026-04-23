@@ -443,3 +443,95 @@ def test_cache_keyed_on_routed_model_not_requested(echo_upstream, tmp_path):
     # Upstream got exactly one more call for model-b (cache miss).
     assert len(echo_upstream.seen_bodies) == upstream_calls_after_t1 + 1
     assert echo_upstream.seen_bodies[-1]["model"] == "model-b"
+
+
+# ---------------------------------------------------------------------------
+# Public ``with router:`` API — no LLMTracker exposure.
+# ---------------------------------------------------------------------------
+
+
+class _StaticRouterCM(_StaticRouter):
+    """Same behaviour as _StaticRouter but inherits Router so it's a ctx mgr."""
+
+    def __init__(self, target: str) -> None:
+        super().__init__(target)
+
+    # _StaticRouter doesn't inherit Router, so wrap via a class that does.
+
+
+from agentopt import Router  # noqa: E402
+
+
+class _StaticRouterWithBase(Router):
+    def __init__(self, target: str) -> None:
+        self.target = target
+
+    def route(self, ctx):
+        return RouteDecision(model=self.target)
+
+
+def test_with_router_activates_and_deactivates(echo_upstream):
+    """`with router:` routes all LLM calls in the block; deactivates cleanly."""
+    router = _StaticRouterWithBase("gpt-4o-mini")
+
+    with router:
+        resp = httpx.Client(base_url=echo_upstream.base_url).post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}],},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["_echoed_request"]["model"] == "gpt-4o-mini"
+
+    # Outside the block the redirect contextvar is cleared — new httpx calls
+    # would not hit our singleton session.  We don't assert the upstream
+    # sees new calls (nothing to send), just that the router's handle has
+    # been released.
+    assert getattr(router, "_routing_handle", None) is None
+
+
+def test_with_router_random_policy_seeded_end_to_end(echo_upstream):
+    """RandomRouter built via model_candidates= drives the upstream swap."""
+    router = RandomRouter(model_candidates=["alpha", "beta"], seed=0)
+
+    with router:
+        for _ in range(4):
+            httpx.Client(base_url=echo_upstream.base_url).post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+
+    seen_models = [b["model"] for b in echo_upstream.seen_bodies]
+    assert len(seen_models) == 4
+    # Every call got routed to one of the candidates.
+    assert set(seen_models) <= {"alpha", "beta"}
+
+
+def test_with_router_is_not_reentrant_on_same_instance():
+    router = _StaticRouterWithBase("gpt-4o-mini")
+    with router:
+        with pytest.raises(RuntimeError, match="not re-entrant"):
+            with router:
+                pass
+    # After the error the outer scope still exits cleanly.
+    assert getattr(router, "_routing_handle", None) is None
+
+
+def test_sequential_with_blocks_on_same_router_work(echo_upstream):
+    """Exiting and re-entering the same router instance works fine."""
+    router = _StaticRouterWithBase("gpt-4o-mini")
+
+    for _ in range(3):
+        with router:
+            httpx.Client(base_url=echo_upstream.base_url).post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+    assert len(echo_upstream.seen_bodies) == 3
+    for b in echo_upstream.seen_bodies:
+        assert b["model"] == "gpt-4o-mini"

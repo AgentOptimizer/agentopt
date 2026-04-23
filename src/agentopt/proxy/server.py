@@ -96,6 +96,9 @@ class ProxyServer:
         self._cache = cache
         self._ca = ca
         self._router = router
+        # Per-session router overrides — populated by the Router context
+        # manager.  A session with an entry here wins over self._router.
+        self._session_routers: Dict[str, Any] = {}
         self._providers: Dict[str, ProviderConfig] = dict(
             providers or DEFAULT_PROVIDERS
         )
@@ -142,6 +145,18 @@ class ProxyServer:
         if hostname in self._intercept_hosts:
             return True
         return any(fnmatch.fnmatch(hostname, pat) for pat in self._intercept_patterns)
+
+    # ------------------------------------------------------------------
+    # Per-session router overrides
+    # ------------------------------------------------------------------
+
+    def set_session_router(self, session_id: str, router: Any) -> None:
+        """Attach *router* to *session_id* — wins over the global router."""
+        self._session_routers[session_id] = router
+
+    def clear_session_router(self, session_id: str) -> None:
+        """Remove the per-session router, if any."""
+        self._session_routers.pop(session_id, None)
 
     # ------------------------------------------------------------------
     # Session ports
@@ -737,7 +752,8 @@ class ProxyServer:
         or ``api_key`` raises ``NotImplementedError`` (cross-provider
         routing is reserved for a future release).
         """
-        if self._router is None:
+        router = self._session_routers.get(session.session_id, self._router)
+        if router is None:
             return request_body, body, None
 
         requested_model = request_body.get("model")
@@ -761,7 +777,7 @@ class ProxyServer:
         )
 
         try:
-            decision = self._router.route(ctx)
+            decision = router.route(ctx)
         except Exception as exc:
             logger.warning(
                 "Router raised; proceeding without routing: %s", exc,

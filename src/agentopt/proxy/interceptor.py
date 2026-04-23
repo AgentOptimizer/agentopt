@@ -27,6 +27,10 @@ _session_port_var: ContextVar[Optional[int]] = ContextVar(
 _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
 _installed = False
+# Reference count — multiple callers (e.g. a tracker *and* the routing
+# singleton) can independently request the redirect.  We only tear down
+# when the last caller releases.
+_install_refcount: int = 0
 
 # URL path patterns that indicate LLM API endpoints.
 _LLM_PATH_PATTERNS = (
@@ -80,10 +84,12 @@ def install_redirect() -> None:
     """Monkey-patch ``httpx`` to redirect LLM requests through the proxy.
 
     Non-LLM requests and requests outside an active tracking session are
-    passed through unmodified.
+    passed through unmodified.  Safe to call from multiple independent
+    subsystems (tracker + routing singleton) — ref-counted internally.
     """
-    global _original_sync_send, _original_async_send, _installed
+    global _original_sync_send, _original_async_send, _installed, _install_refcount
 
+    _install_refcount += 1
     if _installed:
         return
 
@@ -114,10 +120,18 @@ def install_redirect() -> None:
 
 
 def uninstall_redirect() -> None:
-    """Restore the original ``httpx.Client.send`` methods."""
-    global _original_sync_send, _original_async_send, _installed
+    """Release one reference to the httpx redirect.
+
+    The original ``httpx.Client.send`` / ``AsyncClient.send`` are restored
+    only when every caller that installed has also uninstalled.
+    """
+    global _original_sync_send, _original_async_send, _installed, _install_refcount
 
     if not _installed:
+        return
+
+    _install_refcount -= 1
+    if _install_refcount > 0:
         return
 
     if _original_sync_send is not None:
@@ -128,3 +142,4 @@ def uninstall_redirect() -> None:
     _original_sync_send = None
     _original_async_send = None
     _installed = False
+    _install_refcount = 0

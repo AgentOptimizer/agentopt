@@ -31,6 +31,11 @@ DEFAULT_PROVIDERS: Dict[str, ProviderConfig] = {
         base_url="https://generativelanguage.googleapis.com",
         path_patterns=("/v1beta/models", "/v1/models",),
     ),
+    "gemini-cli-oauth": ProviderConfig(
+        name="gemini-cli-oauth",
+        base_url="https://cloudcode-pa.googleapis.com",
+        path_patterns=("/v1internal:generateContent", "/v1internal:streamGenerateContent",),
+    ),
 }
 
 # Header name used by the httpx monkey-patch to pass the original base URL.
@@ -46,6 +51,7 @@ INTERCEPT_HOSTS: Set[str] = {
     "api.openai.com",
     "api.anthropic.com",
     "generativelanguage.googleapis.com",
+    "cloudcode-pa.googleapis.com",
     "api.mistral.ai",
     "api.groq.com",
     "api.together.xyz",

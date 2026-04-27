@@ -35,6 +35,8 @@ _LLM_PATH_PATTERNS = (
     "/v1/responses",
     "/v1beta/models",
     "/v1/models",
+    "/v1internal:generateContent",
+    "/v1internal:streamGenerateContent",
 )
 
 

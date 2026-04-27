@@ -50,6 +50,8 @@ def test_default_hosts_still_intercepted(tracker):
     """Built-in providers stay intercepted after init."""
     assert tracker._server._should_intercept("api.openai.com")
     assert tracker._server._should_intercept("api.anthropic.com")
+    assert tracker._server._should_intercept("generativelanguage.googleapis.com")
+    assert tracker._server._should_intercept("cloudcode-pa.googleapis.com")
 
 
 def test_wildcard_patterns_work(tracker):

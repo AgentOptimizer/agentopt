@@ -34,6 +34,34 @@ tracker = LLMTracker(
 !!! note "Automatic lifecycle"
     When using a selector, the tracker is managed automatically — `start()` is called in the constructor and `stop()` is called when `select_best()` returns.
 
+### Example: Gemini CLI (subprocess)
+
+```python
+import os
+import subprocess
+
+from agentopt.proxy import LLMTracker
+
+tracker = LLMTracker(cache=False)
+tracker.start()
+
+try:
+    with tracker.track(data_id="dp_1", combo_id="gemini-cli") as session:
+        env = {**os.environ, **tracker.get_session_env(session)}
+        subprocess.run(
+            ["gemini", "prompt", "Write one sentence about model selection."],
+            env=env,
+            check=True,
+        )
+
+    records = tracker.get_records(data_id="dp_1", combo_id="gemini-cli")
+    print("calls:", len(records))
+    for r in records:
+        print(r.model, r.prompt_tokens, r.completion_tokens, f"{r.latency_seconds:.2f}s")
+finally:
+    tracker.stop()
+```
+
 ---
 
 ## CallRecord

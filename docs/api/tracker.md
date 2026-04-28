@@ -34,6 +34,14 @@ tracker = LLMTracker(
 !!! note "Automatic lifecycle"
     When using a selector, the tracker is managed automatically — `start()` is called in the constructor and `stop()` is called when `select_best()` returns.
 
+### Runnable example
+
+Use the Gemini CLI tracker example:
+
+```bash
+python examples/gemini_cli_example.py
+```
+
 ---
 
 ## CallRecord

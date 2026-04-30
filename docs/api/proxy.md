@@ -115,36 +115,38 @@ Traffic on 59198 → combo A. Traffic on 59205 → combo B. No ambiguity, no heu
 
 Here's everything that happens end-to-end when you run an evaluation:
 
-**Startup**: `tracker.start()` launches a background thread running an asyncio event loop. No ports are bound yet.
+**Startup**: `tracker.start()` constructs the proxy server and installs the httpx monkey-patch. No ports are bound yet — listeners are per-session.
 
-**Session creation**: `tracker.track(data_id="dp_1", combo_id="gpt4o")` creates a session, opens a new TCP port for it, sets the ContextVar (for in-process), and returns session env vars (for subprocess).
+**Session creation**: `tracker.track(data_id="dp_1", combo_id="gpt4o")` creates a session, binds a new TCP port for it (each port gets its own listener thread), sets the ContextVar (for in-process), and returns session env vars (for subprocess).
 
 **In-process path**: The agent calls the OpenAI SDK → SDK calls `httpx.Client.send()` → the monkey-patch intercepts, reads the ContextVar to get the port, rewrites the URL to `http://localhost:{port}/path`, adds the `X-AgentOpt-Target` header → sends plaintext HTTP to the proxy → proxy reads the request, forwards to real OpenAI over HTTPS, records the response → returns response to the agent.
 
 **Subprocess path**: The agent runs as a child process with `HTTPS_PROXY` and `SSL_CERT_FILE` set → the agent's HTTP library connects to the proxy port and sends CONNECT → proxy responds 200 → agent starts TLS handshake → proxy impersonates the API server using a fake certificate signed by our CA → agent accepts (our CA is in its trust store via `SSL_CERT_FILE`) → agent sends the API request through the encrypted channel → proxy decrypts, reads, forwards to real API server over a separate HTTPS connection → gets response, records token counts and latency → re-encrypts and returns to agent.
 
-**Session teardown**: `track()` scope exits → ContextVar is reset, environment is restored, the session's TCP port is unbound, and all recorded calls are archived.
+**Session teardown**: `track()` scope exits → ContextVar is reset, the session's listener socket is closed (in-flight connection threads finish on their own and write into the archived session), and all recorded calls are archived.
 
-**Shutdown**: `tracker.stop()` restores the original `httpx.Client.send`, stops the event loop, and flushes the cache.
+**Shutdown**: `tracker.stop()` restores the original `httpx.Client.send`, closes any remaining listener sockets, and flushes the cache.
 
 ## Session lifecycle
 
 ```
 tracker.start()
-  └── ProxyServer starts (background thread with asyncio event loop)
-      └── No ports bound yet — just an event loop waiting
+  └── ProxyServer constructed; httpx monkey-patch installed
+      └── No listener threads, no ports bound — per-session only
 
 tracker.track(data_id="dp_1", combo_id="gpt4o+haiku")
   └── Creates a SessionInfo
   └── Binds a NEW TCP port (e.g. 59198) for this session
+  └── Spawns a listener thread that accepts on that port
   └── Sets ContextVar: _session_port_var = 59198
   └── Returns session env vars for subprocess use
   └── ALL traffic on port 59198 → attributed to this session
 
 track() exit:
   └── Restore ContextVar
-  └── Close session port (cancel pending tasks, unbind)
-  └── End session (archive records)
+  └── Close session listener socket; listener thread exits on next accept()
+  └── In-flight connection threads finish and write to the archived session
+  └── End session (move from active → ended in SessionManager)
 ```
 
 ### In-process path detail
@@ -188,47 +190,47 @@ track(combo_id="gpt4o+gpt4o-mini") → port 59205
 
 ## What lives where
 
-### agentproxy (the proxy server)
+### `agentopt.proxy` (the proxy server)
 
-- asyncio TCP server, one listening socket per active session
-- CONNECT tunnel handling with TLS termination
-- Direct mode: read `X-AgentOpt-Target` header for upstream routing
-- CA certificate generation and caching (`cryptography` library)
-- Hostname filter: only MITM known LLM API hosts, passthrough everything else
-- Forward request to real provider over HTTPS
-- Parse response: extract model, token counts, latency
-- Fire `on_send` / `on_record` hooks
-- Response cache (SQLite-backed, optional)
-- Store call records per session
+Sync, blocking I/O, thread-per-connection.  No asyncio.  Modules:
 
-### agentopt (the optimization layer)
+- **`server.py`** — `ProxyServer`.  Per-session listener threads, one connection thread per accept.  Single `_process_and_respond` lifecycle (cache → forward → record → respond) shared by both arrival modes.  `http.client` for upstream forwarding; `ssl.SSLContext.wrap_socket` for CONNECT-mode TLS termination.
+- **`providers.py`** — `Provider` dataclass and `ProviderRegistry`.  One per `ProxyServer` instance, so registrations don't leak between trackers.  Defines path patterns (direct-mode auto-routing) and the hostname intercept set (CONNECT-mode MITM filter).
+- **`usage.py`** — pure token-extraction functions for OpenAI / Anthropic / Gemini response shapes (JSON object, JSON array, SSE).  Raises `UsageExtractionError` with a structured diagnostic on miss; never reports zero tokens silently.
+- **`certs.py`** — local CA at `~/.agentopt/ca/`.  Generates a self-signed root on first run; mints per-hostname leaf certs on demand (cached in memory).  Builds a merged `bundle.pem` (system CAs + ours) so subprocesses can still reach non-LLM HTTPS hosts.
+- **`cache.py`** — `ResponseCache`.  In-memory dict, optionally persisted to SQLite via a daemon flush thread.  Keyed by a hash of the request body (excluding `stream`).
+- **`session.py`** — `SessionManager`.  Active and archived sessions; `add_record` checks both so a slow upstream that finishes after `end_session` doesn't drop its record.
+- **`interceptor.py`** — the httpx monkey-patch.  Path-pattern set is mutable so `LLMTracker.register_provider` can extend it for runtime-registered providers.
 
-- Selector algorithms (BruteForce, ArmElimination, Bayesian, etc.)
-- Combo generation and scheduling
-- `agent_maker()` factory pattern
-- Evaluation and scoring
-- `tracker.track()` for session management
-- `tracker.get_session_env()` for subprocess environment
+### `agentopt.proxy.LLMTracker` (the public surface)
 
-### The httpx patch (4 lines, no logic)
+- `tracker.start()` / `tracker.stop()` lifecycle
+- `tracker.track(data_id, combo_id, agent_id)` context manager — opens a session port and sets the ContextVar
+- `tracker.get_session_env(session)` — env-var dict for subprocess agents
+- `tracker.register_provider(name, base_url, path_patterns)` — extends the per-server registry, the CONNECT-mode hostname set, and the in-process httpx-patch path set, all at once
+- `tracker.get_records(...)`, `tracker.get_usage(...)` — query recorded calls
 
-- Check if request is an LLM API call
-- Read session port from ContextVar
+### The httpx patch (one function, no business logic)
+
+- `_is_llm_request(request)`: POST + path matches a known LLM endpoint
+- Read session port from `ContextVar`
 - Rewrite URL to `http://localhost:{port}/path`
 - Add `X-AgentOpt-Target` header with original base URL
 
-### The subprocess redirect (2 env vars, no logic)
+### The subprocess redirect (env vars, no logic)
 
 - `HTTPS_PROXY=http://127.0.0.1:{port}`
 - `SSL_CERT_FILE=~/.agentopt/ca/bundle.pem`
+- `REQUESTS_CA_BUNDLE=...`, `NODE_EXTRA_CA_CERTS=...` for non-stdlib clients
 
 ## Known LLM API hostnames
 
-The proxy only intercepts CONNECT requests to these hostnames (passthrough for everything else):
+The proxy only intercepts CONNECT requests to these hostnames (everything else is tunnelled raw, no MITM):
 
 - `api.openai.com`
 - `api.anthropic.com`
 - `generativelanguage.googleapis.com`
+- `cloudcode-pa.googleapis.com` (Gemini CLI OAuth)
 - `bedrock-runtime.*.amazonaws.com`
 - `*.openai.azure.com`
 - `api.mistral.ai`
@@ -236,7 +238,17 @@ The proxy only intercepts CONNECT requests to these hostnames (passthrough for e
 - `api.together.xyz`
 - `api.deepseek.com`
 
-Configurable via `agentproxy.intercept_hosts`.
+Extend at runtime with:
+
+```python
+tracker.register_provider(
+    name="openrouter",
+    base_url="https://openrouter.ai",
+    path_patterns=("/api/v1/chat/completions",),
+)
+```
+
+This updates three places at once: the per-server provider registry (direct-mode routing), the CONNECT-mode hostname set (subprocess MITM filter), and the in-process httpx-patch path set (so `_is_llm_request` returns true for the new path).
 
 ## Why each piece exists
 
@@ -251,15 +263,24 @@ Every layer of complexity is forced by a real constraint, not a design choice:
 
 ## Scoping constraints
 
-1. **Python only** — both agentopt and agentproxy are Python. CA trust configuration targets Python HTTP clients (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`).
-2. **HTTP only** — no gRPC, no WebSocket. HTTP/HTTPS covers 99%+ of current LLM API traffic.
-3. **Build CONNECT tunneling from scratch** — no mitmproxy dependency. A minimal CONNECT handler for known LLM API hostnames is ~200 lines of Python on top of `asyncio`.
-4. **Docker uses sidecar proxy** — `agentproxy` runs inside the container. Self-contained, no host networking dependency.
+1. **Python only** — the proxy is Python.  CA trust config targets Python and Node HTTP clients (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`).
+2. **HTTP only** — no gRPC, no WebSocket.  HTTP/HTTPS covers 99%+ of current LLM API traffic.
+3. **Build CONNECT tunneling from scratch** — no mitmproxy dependency.  A minimal CONNECT handler for known LLM API hostnames is a few hundred lines of stdlib (`socket`, `ssl`, `http.client`).
+4. **Docker uses sidecar proxy** — the proxy runs inside the container.  Self-contained, no host networking dependency.
+
+## Implementation notes
+
+A few non-obvious correctness invariants the implementation has to honour:
+
+- **CONNECT prelude reads must not be buffered.**  If the proxy's CONNECT-line / header parser uses `socket.makefile()`, the `BufferedReader` can pull bytes beyond the header terminator into user space — and on a fast or pipelined client, those over-read bytes include the start of the TLS ClientHello.  Those bytes would never reach `ssl_ctx.wrap_socket` and the handshake fails intermittently.  The implementation reads the prelude with one-byte `recv` calls, only switching to `makefile` after `wrap_socket` is up.
+- **`Content-Length` must be parsed strictly.**  Silently defaulting a missing or malformed header to 0 either truncates the body upstream *or* desynchronizes the keep-alive parser (the unread body bytes get misread as the next request line, corrupting every subsequent request on the connection).  The implementation raises on missing/invalid Content-Length for body-bearing methods.
+- **Token-usage extraction must not silently report zero.**  A successful (HTTP 200) call whose usage we can't parse is a real proxy gap, not a 0-token call.  `usage.py` raises `UsageExtractionError` with a diagnostic naming exactly which keys it searched and which were present; the server attaches that to `CallRecord.error` and uses a `<parse-failed>` sentinel for the model name so the failure surfaces in result summaries.
+- **Late records must not be dropped.**  A blocking upstream request can finish *after* the session's `track()` scope exits.  `SessionManager.add_record` looks up both active and ended sessions so the late record lands in the archive instead of being lost.
 
 ## Open questions
 
-1. **CA certificate compatibility**: do any Python LLM SDKs override `SSL_CERT_FILE` or pin certificates? Need to test against `openai`, `anthropic`, `google-generativeai`, `boto3`.
+1. **CA certificate compatibility**: do any Python LLM SDKs override `SSL_CERT_FILE` or pin certificates?  Need to test against `openai`, `anthropic`, `google-generativeai`, `boto3`.
 
-2. **Agents that bypass HTTPS_PROXY**: some SDK versions may hardcode direct connections. Mitigation: maintain a compatibility matrix per SDK version.
+2. **Agents that bypass `HTTPS_PROXY`**: some SDK versions may hardcode direct connections.  Mitigation: maintain a compatibility matrix per SDK version.
 
-3. **Streaming responses**: most LLM APIs use SSE streaming. The proxy needs to handle `Transfer-Encoding: chunked` and `text/event-stream` responses correctly — forwarding chunks as they arrive rather than buffering the full response. Token counting may need to happen on the accumulated stream.
+3. **Real-time streaming forwarding**: SSE / `Transfer-Encoding: chunked` responses are *parsed* correctly today (the SSE token-extractor handles Anthropic's split `message_start` / `message_delta` usage events and Gemini's `usageMetadata`), but the proxy currently buffers the full upstream response before sending it back to the client — so the client doesn't see chunks land in real time.  For evaluation workflows this is fine (you read the final result anyway).  For interactive use you'd want chunk-by-chunk forwarding while still accumulating SSE frames for token extraction.

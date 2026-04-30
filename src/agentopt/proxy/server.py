@@ -57,6 +57,24 @@ _HOP_BY_HOP = frozenset(
 )
 
 
+# OpenAI-compatible chat/completions paths. Used to detect the streaming
+# `stream_options.include_usage` quirk (Anthropic uses `/v1/messages` and
+# always emits usage, so it's excluded).
+_OPENAI_COMPAT_PATHS = ("/v1/chat/completions", "/v1/completions", "/chat/completions")
+
+
+def _is_openai_compatible_url(url: str) -> bool:
+    """True when *url* targets an OpenAI-style chat/completions endpoint."""
+    path = urlparse(url).path or ""
+    return any(path.endswith(p) for p in _OPENAI_COMPAT_PATHS)
+
+
+def _has_include_usage(request_body: dict) -> bool:
+    """True when the request opts in to streaming usage frames."""
+    opts = request_body.get("stream_options")
+    return isinstance(opts, dict) and opts.get("include_usage") is True
+
+
 def _parse_usage(body: dict) -> Optional[dict]:
     """Extract model and token usage from an LLM API response body."""
     model = body.get("model")
@@ -100,6 +118,10 @@ class ProxyServer:
         # register_provider() extends this with hostnames from custom providers.
         self._intercept_hosts: Set[str] = set(INTERCEPT_HOSTS)
         self._intercept_patterns: List[str] = list(INTERCEPT_PATTERNS)
+
+        # Hostnames we've already warned about for the OpenAI streaming
+        # `stream_options.include_usage` quirk. Deduped to avoid log spam.
+        self._openai_stream_usage_warned: Set[str] = set()
 
         # Lifecycle
         self._thread: Optional[threading.Thread] = None
@@ -848,6 +870,29 @@ class ProxyServer:
             cached=cached,
         )
         self.session_manager.add_record(session.session_id, record)
+
+        # Warn once per hostname when an OpenAI-compatible streaming call
+        # comes back with 0 tokens because the request is missing
+        # `stream_options.include_usage: true`. OpenAI-style endpoints omit
+        # the final usage frame by default, so the proxy has nothing to
+        # parse. Anthropic streams aren't affected (they always emit usage).
+        if (
+            prompt_tokens == 0
+            and completion_tokens == 0
+            and _is_openai_compatible_url(request_url)
+            and request_body.get("stream") is True
+            and not _has_include_usage(request_body)
+        ):
+            hostname = urlparse(request_url).hostname or request_url
+            if hostname not in self._openai_stream_usage_warned:
+                self._openai_stream_usage_warned.add(hostname)
+                logger.warning(
+                    "agentopt: streaming request to %s returned 0 tokens. "
+                    "OpenAI-compatible streams omit usage by default — set "
+                    '`stream_options={"include_usage": True}` on the request '
+                    "to enable token tracking. (Anthropic streams are unaffected.)",
+                    hostname,
+                )
 
 
 # ======================================================================

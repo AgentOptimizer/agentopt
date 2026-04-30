@@ -34,7 +34,10 @@ DEFAULT_PROVIDERS: Dict[str, ProviderConfig] = {
     "gemini-cli-oauth": ProviderConfig(
         name="gemini-cli-oauth",
         base_url="https://cloudcode-pa.googleapis.com",
-        path_patterns=("/v1internal:generateContent", "/v1internal:streamGenerateContent",),
+        path_patterns=(
+            "/v1internal:generateContent",
+            "/v1internal:streamGenerateContent",
+        ),
     ),
 }
 

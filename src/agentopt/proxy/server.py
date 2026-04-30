@@ -63,6 +63,13 @@ _HOP_BY_HOP = frozenset(
 _OPENAI_COMPAT_PATHS = ("/v1/chat/completions", "/v1/completions", "/chat/completions")
 
 
+# Sentinel used as the model name on a record when we successfully
+# intercepted a 200 response but could not extract token usage from its
+# body. Surfaces in result summaries as `tokens: {<parse-failed>: ...}`
+# alongside a logged warning and a populated CallRecord.error.
+PARSE_FAILED_MODEL = "<parse-failed>"
+
+
 def _is_openai_compatible_url(url: str) -> bool:
     """True when *url* targets an OpenAI-style chat/completions endpoint."""
     path = urlparse(url).path or ""
@@ -75,15 +82,63 @@ def _has_include_usage(request_body: dict) -> bool:
     return isinstance(opts, dict) and opts.get("include_usage") is True
 
 
+def _is_streaming_request(request_body: dict, path_or_url: str) -> bool:
+    """True when the request is asking for a streaming response.
+
+    Detects:
+    * OpenAI / Anthropic style — ``"stream": true`` in the request body.
+    * Google Gemini — ``:streamGenerateContent`` endpoint, optionally with
+      ``?alt=sse`` query param.  Gemini does not put a ``stream`` flag in
+      the request body, so URL-based detection is the only signal.
+    """
+    if request_body.get("stream") is True:
+        return True
+    if "streamGenerateContent" in path_or_url or "alt=sse" in path_or_url:
+        return True
+    return False
+
+
+def _gemini_completion_tokens(usage: dict) -> int:
+    """Compute output token count for Gemini's ``usageMetadata``.
+
+    Gemini's thinking models report visible output under
+    ``candidatesTokenCount`` and reasoning tokens separately under
+    ``thoughtsTokenCount``. Both bill as output, so the proxy reports
+    the sum. Falls back to ``totalTokenCount - promptTokenCount`` when
+    individual fields aren't broken out.
+    """
+    candidates = usage.get("candidatesTokenCount") or 0
+    thoughts = usage.get("thoughtsTokenCount") or 0
+    if candidates or thoughts:
+        return candidates + thoughts
+    total = usage.get("totalTokenCount")
+    prompt = usage.get("promptTokenCount") or 0
+    if isinstance(total, int) and total > prompt:
+        return total - prompt
+    return 0
+
+
 def _parse_usage(body: dict) -> Optional[dict]:
-    """Extract model and token usage from an LLM API response body."""
-    model = body.get("model")
-    usage = body.get("usage")
+    """Extract model and token usage from an LLM API response body.
+
+    Supports OpenAI/Anthropic (``model`` + ``usage``) and Google Gemini
+    (``modelVersion`` + ``usageMetadata``).  For Gemini thinking models,
+    ``thoughtsTokenCount`` is folded into the completion token count.
+    """
+    model = body.get("model") or body.get("modelVersion")
+    usage = body.get("usage") or body.get("usageMetadata")
     if not model or not usage:
         return None
-    prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+    prompt_tokens = (
+        usage.get("prompt_tokens")
+        or usage.get("input_tokens")
+        or usage.get("promptTokenCount")
+        or 0
+    )
     completion_tokens = (
-        usage.get("completion_tokens") or usage.get("output_tokens") or 0
+        usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or _gemini_completion_tokens(usage)
     )
     return {
         "model": model,
@@ -455,8 +510,8 @@ class ProxyServer:
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     request_body = {}
 
-                is_streaming = request_body.get("stream", False)
                 upstream_url = f"https://{hostname}{path}"
+                is_streaming = _is_streaming_request(request_body, path)
 
                 # Cache check.
                 if self._cache is not None and request_body:
@@ -621,7 +676,7 @@ class ProxyServer:
         except (json.JSONDecodeError, UnicodeDecodeError):
             request_body = {}
 
-        is_streaming = request_body.get("stream", False)
+        is_streaming = _is_streaming_request(request_body, raw_path)
 
         # Resolve upstream target.
         try:
@@ -772,20 +827,96 @@ class ProxyServer:
         prompt_tokens = 0
         completion_tokens = 0
         resp_body: Dict[str, Any] = {}
-        model = request_body.get("model", "unknown")
+        model: Optional[str] = request_body.get("model")
+        usage_extracted = False
+        parse_failure_reason: Optional[str] = None
 
         if response_body_bytes:
             try:
                 parsed_body = json.loads(response_body_bytes)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                parse_failure_reason = (
+                    f"response body is not valid JSON ({type(exc).__name__}); "
+                    f"first 200 bytes: {response_body_bytes[:200]!r}"
+                )
+            else:
                 if isinstance(parsed_body, dict):
                     resp_body = parsed_body
                     parsed = _parse_usage(parsed_body)
                     if parsed is not None:
                         prompt_tokens = parsed["prompt_tokens"]
                         completion_tokens = parsed["completion_tokens"]
-                        model = request_body.get("model") or parsed["model"]
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
+                        model = model or parsed["model"]
+                        usage_extracted = True
+                    else:
+                        parse_failure_reason = (
+                            "response body is a JSON object but has no "
+                            "recognized usage/model fields "
+                            "(expected one of: usage, usageMetadata, "
+                            "input_tokens/output_tokens, "
+                            "prompt_tokens/completion_tokens, "
+                            "promptTokenCount/candidatesTokenCount). "
+                            f"keys present: {sorted(parsed_body.keys())[:10]}"
+                        )
+                elif isinstance(parsed_body, list):
+                    # Gemini's `streamGenerateContent` (without alt=sse)
+                    # returns a JSON array of partial chunks; the final
+                    # one carries `usageMetadata`.
+                    for chunk in parsed_body:
+                        if not isinstance(chunk, dict):
+                            continue
+                        parsed = _parse_usage(chunk)
+                        if parsed is None:
+                            continue
+                        if parsed["prompt_tokens"] > prompt_tokens:
+                            prompt_tokens = parsed["prompt_tokens"]
+                        if parsed["completion_tokens"] > completion_tokens:
+                            completion_tokens = parsed["completion_tokens"]
+                        model = model or parsed["model"]
+                        usage_extracted = True
+                    if parsed_body and isinstance(parsed_body[-1], dict):
+                        resp_body = parsed_body[-1]
+                    if not usage_extracted:
+                        parse_failure_reason = (
+                            f"response body is a JSON array of {len(parsed_body)} "
+                            "items but none carried recognized usage/model fields"
+                        )
+                else:
+                    parse_failure_reason = (
+                        f"response body is JSON but neither object nor array "
+                        f"(got {type(parsed_body).__name__})"
+                    )
+        else:
+            parse_failure_reason = "response body was empty"
+
+        # Loud surfacing of token-extraction failures — silent fallbacks
+        # mask real proxy gaps (e.g. unrecognized provider response shapes).
+        # Only flag on successful (200) calls; non-2xx records already have
+        # an HTTP error attached.
+        if (
+            not usage_extracted
+            and status_code == 200
+            and not error
+            and parse_failure_reason is not None
+        ):
+            error = (
+                f"agentopt proxy could not extract token usage: "
+                f"{parse_failure_reason}. URL={request_url}"
+            )
+            logger.warning(
+                "agentopt: %s call to %s succeeded (200) but token usage "
+                "could not be extracted — %s",
+                model or "<unknown>",
+                request_url,
+                parse_failure_reason,
+            )
+            if not model:
+                model = PARSE_FAILED_MODEL
+        elif not model:
+            # Fallback for non-200 / pre-200 cases where we never learned
+            # the model — keep the legacy "unknown" so result summaries
+            # don't break, but only when an explicit error is already set.
+            model = "unknown"
 
         record = CallRecord(
             data_id=session.data_id,
@@ -816,9 +947,11 @@ class ProxyServer:
     ) -> None:
         """Best-effort usage extraction from accumulated SSE data."""
         text = raw_sse.decode("utf-8", errors="replace")
-        model = request_body.get("model", "unknown")
+        model: Optional[str] = request_body.get("model")
         prompt_tokens = 0
         completion_tokens = 0
+        usage_extracted = False
+        sse_lines_seen = 0
 
         # Scan all SSE lines to find usage from both message_start (input)
         # and message_delta (output).  Anthropic splits usage across events:
@@ -827,6 +960,7 @@ class ProxyServer:
         for line in text.splitlines():
             if not line.startswith("data: "):
                 continue
+            sse_lines_seen += 1
             payload = line[len("data: ") :]
             if payload.strip() == "[DONE]":
                 continue
@@ -835,25 +969,81 @@ class ProxyServer:
             except json.JSONDecodeError:
                 continue
 
-            # Check top-level usage (message_delta)
-            usage = chunk.get("usage")
-            # Also check message.usage (message_start)
+            # OpenAI top-level `usage`; Anthropic message.usage on message_start;
+            # Gemini top-level `usageMetadata` on the final chunk.
+            usage = chunk.get("usage") or chunk.get("usageMetadata")
             msg = chunk.get("message")
             if isinstance(msg, dict) and msg.get("usage"):
                 usage = usage or msg["usage"]
 
             if usage:
                 inp = (
-                    (usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+                    (
+                        usage.get("prompt_tokens")
+                        or usage.get("input_tokens")
+                        or usage.get("promptTokenCount")
+                        or 0
+                    )
                     + (usage.get("cache_read_input_tokens") or 0)
                     + (usage.get("cache_creation_input_tokens") or 0)
                 )
-                out = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                out = (
+                    usage.get("completion_tokens")
+                    or usage.get("output_tokens")
+                    or _gemini_completion_tokens(usage)
+                )
                 if inp > prompt_tokens:
                     prompt_tokens = inp
                 if out > completion_tokens:
                     completion_tokens = out
-                model = chunk.get("model", model)
+                model = model or chunk.get("model") or chunk.get("modelVersion")
+                if inp or out:
+                    usage_extracted = True
+
+        # Surface streaming-parse failures explicitly. The OpenAI
+        # `stream_options.include_usage` quirk gets a more actionable
+        # message; everything else gets the generic diagnostic.
+        record_error: Optional[str] = None
+        if not usage_extracted:
+            if (
+                _is_openai_compatible_url(request_url)
+                and request_body.get("stream") is True
+                and not _has_include_usage(request_body)
+            ):
+                detail = (
+                    "OpenAI-compatible streams omit usage by default — set "
+                    '`stream_options={"include_usage": True}` on the request '
+                    "to enable token tracking. (Anthropic streams are unaffected.)"
+                )
+            elif sse_lines_seen == 0:
+                detail = (
+                    f"streaming response had no `data: ...` SSE frames "
+                    f"(body length={len(raw_sse)} bytes, "
+                    f"first 200 bytes={raw_sse[:200]!r}). "
+                    "If this is a non-SSE chunked stream (e.g. Gemini's "
+                    "`streamGenerateContent` without `alt=sse`), the "
+                    "non-streaming code path handles JSON arrays; "
+                    "otherwise this provider's streaming format may need "
+                    "explicit support in the proxy parser."
+                )
+            else:
+                detail = (
+                    f"streaming response had {sse_lines_seen} SSE frames "
+                    "but none carried recognized usage/model fields"
+                )
+            record_error = f"agentopt proxy could not extract token usage: {detail}"
+            hostname = urlparse(request_url).hostname or request_url
+            if hostname not in self._openai_stream_usage_warned:
+                self._openai_stream_usage_warned.add(hostname)
+                logger.warning(
+                    "agentopt: streaming call to %s yielded no token usage — %s",
+                    hostname,
+                    detail,
+                )
+            if not model:
+                model = PARSE_FAILED_MODEL
+        elif not model:
+            model = "unknown"
 
         record = CallRecord(
             data_id=session.data_id,
@@ -868,31 +1058,9 @@ class ProxyServer:
             response_body={},
             timestamp=datetime.now(timezone.utc).isoformat(),
             cached=cached,
+            error=record_error,
         )
         self.session_manager.add_record(session.session_id, record)
-
-        # Warn once per hostname when an OpenAI-compatible streaming call
-        # comes back with 0 tokens because the request is missing
-        # `stream_options.include_usage: true`. OpenAI-style endpoints omit
-        # the final usage frame by default, so the proxy has nothing to
-        # parse. Anthropic streams aren't affected (they always emit usage).
-        if (
-            prompt_tokens == 0
-            and completion_tokens == 0
-            and _is_openai_compatible_url(request_url)
-            and request_body.get("stream") is True
-            and not _has_include_usage(request_body)
-        ):
-            hostname = urlparse(request_url).hostname or request_url
-            if hostname not in self._openai_stream_usage_warned:
-                self._openai_stream_usage_warned.add(hostname)
-                logger.warning(
-                    "agentopt: streaming request to %s returned 0 tokens. "
-                    "OpenAI-compatible streams omit usage by default — set "
-                    '`stream_options={"include_usage": True}` on the request '
-                    "to enable token tracking. (Anthropic streams are unaffected.)",
-                    hostname,
-                )
 
 
 # ======================================================================

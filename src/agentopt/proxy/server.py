@@ -233,14 +233,18 @@ class ProxyServer:
     def _handle_connection(
         self, client_sock: socket.socket, session: SessionInfo,
     ) -> None:
-        """Per-connection top-level: peek first line, dispatch to mode."""
-        rfile = wfile = None
+        """Per-connection top-level: peek first line, dispatch to mode.
+
+        The first line is read with unbuffered ``recv`` rather than via
+        ``makefile``.  A BufferedReader can pull whatever's currently in
+        the kernel buffer into user space (typically up to 8 KB), and on
+        the CONNECT path those over-read bytes can include the start of
+        the client's TLS ClientHello — which would then be invisible to
+        ``ssl_ctx.wrap_socket`` and cause intermittent handshake failures.
+        """
         try:
             client_sock.settimeout(120)
-            rfile = client_sock.makefile("rb")
-            wfile = client_sock.makefile("wb")
-
-            first_line = rfile.readline()
+            first_line = _recv_line_raw(client_sock)
             if not first_line:
                 return
             line = first_line.decode("utf-8", errors="replace").strip()
@@ -249,20 +253,25 @@ class ProxyServer:
                 return
 
             if parts[0].upper() == "CONNECT":
-                self._handle_connect(client_sock, rfile, wfile, line, session)
+                # Stay on raw I/O through the prelude + TLS upgrade.
+                self._handle_connect(client_sock, line, session)
             else:
-                self._direct_request_loop(rfile, wfile, first_line, session)
+                # Plaintext direct mode — no upgrade, buffered I/O is safe.
+                rfile = client_sock.makefile("rb")
+                wfile = client_sock.makefile("wb")
+                try:
+                    self._direct_request_loop(rfile, wfile, first_line, session)
+                finally:
+                    for f in (rfile, wfile):
+                        try:
+                            f.close()
+                        except Exception:
+                            pass
         except (ConnectionError, OSError, ssl.SSLError, socket.timeout):
             pass
         except Exception:
             logger.exception("connection handler crashed")
         finally:
-            for f in (rfile, wfile):
-                if f is not None:
-                    try:
-                        f.close()
-                    except Exception:
-                        pass
             _close_quietly(client_sock)
 
     # ==================================================================
@@ -270,14 +279,16 @@ class ProxyServer:
     # ==================================================================
 
     def _handle_connect(
-        self,
-        client_sock: socket.socket,
-        rfile: BinaryIO,
-        wfile: BinaryIO,
-        request_line: str,
-        session: SessionInfo,
+        self, client_sock: socket.socket, request_line: str, session: SessionInfo,
     ) -> None:
-        """Handle an HTTP CONNECT tunnel — passthrough or MITM."""
+        """Handle an HTTP CONNECT tunnel — passthrough or MITM.
+
+        The prelude (CONNECT line + headers + ``200 Connection Established``)
+        is transacted with unbuffered socket I/O so no client bytes leak
+        into a user-space buffer before ``wrap_socket`` takes over.  Once
+        TLS is up the SSL layer frames the byte stream cleanly, so it's
+        safe to switch back to ``makefile`` for the inner request loop.
+        """
         target = request_line.split()[1]
         if ":" in target:
             host_part, port_part = target.rsplit(":", 1)
@@ -286,22 +297,23 @@ class ProxyServer:
             except ValueError:
                 remote_port = -1
             if not host_part or not (0 < remote_port < 65536):
-                _write_response(
-                    wfile,
-                    400,
-                    {"content-type": "application/json"},
-                    json.dumps(
-                        {"error": f"malformed CONNECT target: {target!r}"}
-                    ).encode(),
+                client_sock.sendall(
+                    _build_response(
+                        400,
+                        {"content-type": "application/json"},
+                        json.dumps(
+                            {"error": f"malformed CONNECT target: {target!r}"}
+                        ).encode(),
+                    )
                 )
                 return
             hostname = host_part
         else:
             hostname, remote_port = target, 443
 
-        # Drain CONNECT headers.
+        # Drain CONNECT headers — raw, no buffered read-ahead.
         while True:
-            h = rfile.readline()
+            h = _recv_line_raw(client_sock)
             if h in (b"\r\n", b"\n", b""):
                 break
 
@@ -309,9 +321,10 @@ class ProxyServer:
             self._connect_passthrough(client_sock, hostname, remote_port)
             return
 
-        # Establish tunnel, then upgrade to TLS.
-        wfile.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        wfile.flush()
+        # Confirm the tunnel and immediately upgrade.  Crucially, no
+        # bytes have been pulled into a user-space buffer up to this
+        # point, so wrap_socket sees the full TLS handshake stream.
+        client_sock.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
 
         ssl_ctx = self._ca.get_server_context(hostname)
         try:
@@ -320,6 +333,8 @@ class ProxyServer:
             logger.warning("TLS handshake failed for %s: %s", hostname, exc)
             return
 
+        # SSL handles framing — buffered reads on the TLS socket can't
+        # leak ciphertext out of band, so makefile is fine here.
         tls_rfile = tls_sock.makefile("rb")
         tls_wfile = tls_sock.makefile("wb")
         try:
@@ -764,6 +779,30 @@ def _safe_response_headers(headers: Dict[str, str]) -> Dict[str, str]:
         for k, v in headers.items()
         if k.lower() not in ("transfer-encoding", "content-encoding")
     }
+
+
+def _recv_line_raw(sock: socket.socket, max_len: int = 8192) -> bytes:
+    """Read up to (and including) the next ``\\n`` using unbuffered ``recv``.
+
+    Used for the CONNECT prelude: if we read those lines via a
+    ``BufferedReader`` (``socket.makefile``), the buffer can pull whatever's
+    currently in the kernel's receive queue — typically up to 8 KB —
+    which on the CONNECT path may include the start of the client's TLS
+    ClientHello.  Those over-read bytes would then be invisible to
+    ``ssl_ctx.wrap_socket`` and break the handshake intermittently.
+
+    Per-byte ``recv`` is fine here: the prelude is at most a handful of
+    short lines (well under 1 KB total) and runs once per tunnel.
+    """
+    buf = bytearray()
+    while len(buf) < max_len:
+        chunk = sock.recv(1)
+        if not chunk:
+            return bytes(buf)
+        buf += chunk
+        if chunk == b"\n":
+            return bytes(buf)
+    raise ValueError(f"line exceeded {max_len} bytes without LF")
 
 
 def _bidirectional_relay(a: socket.socket, b: socket.socket) -> None:

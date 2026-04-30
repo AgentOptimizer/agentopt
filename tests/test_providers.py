@@ -12,8 +12,7 @@ def test_detect_provider_gemini_cli_oauth_path():
 
 def test_resolve_target_gemini_cli_oauth_path_without_header():
     target_base, upstream_path = resolve_target(
-        "/v1internal:streamGenerateContent",
-        headers={},
+        "/v1internal:streamGenerateContent", headers={},
     )
     assert target_base == "https://cloudcode-pa.googleapis.com"
     assert upstream_path == "/v1internal:streamGenerateContent"

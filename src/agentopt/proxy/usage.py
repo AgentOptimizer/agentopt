@@ -7,10 +7,10 @@ Three input shapes are handled:
   (returned without ``alt=sse``).
 * SSE stream — ``data: {...}`` frames from any provider's streaming API.
 
-All extraction returns ``(ParsedUsage | None, parse_failure_reason | None)``.
-The proxy uses the failure reason to attach a structured error to the
-``CallRecord`` so a successful call with unparseable usage isn't silently
-reported as zero tokens.
+Failure mode: the extractors raise :class:`UsageExtractionError` with a
+message describing exactly what was searched and what keys were present.
+No silent zeros — a successful HTTP call whose usage we can't parse is a
+proxy gap that should surface, not a 0-token record.
 """
 
 from __future__ import annotations
@@ -32,6 +32,20 @@ _OPENAI_COMPAT_PATHS = (
     "/v1/completions",
     "/chat/completions",
 )
+
+
+# Recognized token-count keys, in priority order.
+_PROMPT_KEYS = ("prompt_tokens", "input_tokens", "promptTokenCount")
+_COMPLETION_KEYS = ("completion_tokens", "output_tokens")
+_GEMINI_COMPLETION_KEYS = ("candidatesTokenCount", "thoughtsTokenCount")
+
+
+class UsageExtractionError(ValueError):
+    """Raised when token usage can't be parsed from an LLM response.
+
+    The exception message is suitable for attaching to a ``CallRecord.error``
+    so a proxy gap is visible without combing through logs.
+    """
 
 
 @dataclass(frozen=True)
@@ -81,47 +95,75 @@ def _gemini_completion_tokens(usage: dict) -> int:
     """Sum visible output and reasoning tokens for Gemini thinking models.
 
     Gemini reports ``candidatesTokenCount`` (visible) and
-    ``thoughtsTokenCount`` (reasoning) separately; both bill as output, so
-    callers want the sum.  Falls back to ``totalTokenCount - promptTokenCount``
-    if individual fields aren't broken out.
+    ``thoughtsTokenCount`` (reasoning) separately; both bill as output.
+    Falls back to ``totalTokenCount - promptTokenCount`` when individual
+    fields aren't broken out.
+
+    Raises :class:`UsageExtractionError` if no recognized completion field
+    is present.
     """
-    candidates = usage.get("candidatesTokenCount") or 0
-    thoughts = usage.get("thoughtsTokenCount") or 0
-    if candidates or thoughts:
-        return candidates + thoughts
+    candidates = usage.get("candidatesTokenCount")
+    thoughts = usage.get("thoughtsTokenCount")
+    if candidates is not None or thoughts is not None:
+        return (candidates or 0) + (thoughts or 0)
+
     total = usage.get("totalTokenCount")
-    prompt = usage.get("promptTokenCount") or 0
-    if isinstance(total, int) and total > prompt:
+    prompt = usage.get("promptTokenCount")
+    if isinstance(total, int) and isinstance(prompt, int) and total > prompt:
         return total - prompt
-    return 0
+
+    raise UsageExtractionError(
+        f"no Gemini completion-token field in usage dict — searched "
+        f"{list(_GEMINI_COMPLETION_KEYS)} (or totalTokenCount > "
+        f"promptTokenCount). keys present: {sorted(usage.keys())}"
+    )
 
 
 def _extract_usage_dict(usage: dict) -> Tuple[int, int]:
-    """``(prompt_tokens, completion_tokens)`` from any provider's usage dict."""
-    prompt = (
-        usage.get("prompt_tokens")
-        or usage.get("input_tokens")
-        or usage.get("promptTokenCount")
-        or 0
-    )
-    completion = (
-        usage.get("completion_tokens")
-        or usage.get("output_tokens")
-        or _gemini_completion_tokens(usage)
-    )
+    """Return ``(prompt_tokens, completion_tokens)`` from a usage dict.
+
+    Raises :class:`UsageExtractionError` if a prompt-style or completion-style
+    key cannot be found.  Both axes must be present — silent zero-fill would
+    mask broken responses.
+    """
+    prompt = next((usage[k] for k in _PROMPT_KEYS if k in usage), None)
+    if prompt is None:
+        raise UsageExtractionError(
+            f"no prompt-token field in usage dict — searched "
+            f"{list(_PROMPT_KEYS)}. keys present: {sorted(usage.keys())}"
+        )
+
+    completion = next((usage[k] for k in _COMPLETION_KEYS if k in usage), None)
+    if completion is None:
+        # Gemini's usageMetadata uses different keys.  This raises with
+        # its own diagnostic if neither standard nor Gemini fields match.
+        completion = _gemini_completion_tokens(usage)
+
     return prompt, completion
 
 
 def _parse_chunk(chunk: dict) -> Optional[ParsedUsage]:
-    """Pull usage from a single response object (any provider)."""
+    """Extract usage from one response object.
+
+    Returns ``None`` when the chunk has no usage section at all (a normal
+    state for, e.g., a Gemini chunk that's only carrying content).  Raises
+    :class:`UsageExtractionError` when usage IS present but its fields
+    can't be read — that's a real provider-shape mismatch.
+    """
     model = chunk.get("model") or chunk.get("modelVersion")
     usage = chunk.get("usage") or chunk.get("usageMetadata")
     msg = chunk.get("message")
     if not usage and isinstance(msg, dict):
         usage = msg.get("usage")
         model = model or msg.get("model")
-    if not model or not usage:
+    if not usage:
         return None
+    if not model:
+        raise UsageExtractionError(
+            f"usage dict present but no `model` / `modelVersion` field. "
+            f"chunk keys: {sorted(chunk.keys())}"
+        )
+
     prompt, completion = _extract_usage_dict(usage)
     return ParsedUsage(
         model=model,
@@ -136,51 +178,51 @@ def _parse_chunk(chunk: dict) -> Optional[ParsedUsage]:
 # ---------------------------------------------------------------------------
 
 
-def extract_usage(body_bytes: bytes,) -> Tuple[Optional[ParsedUsage], Optional[str]]:
+def extract_usage(body_bytes: bytes) -> ParsedUsage:
     """Parse usage from a non-streaming response body.
 
-    Returns ``(usage, parse_failure_reason)``: exactly one is non-None.
+    Raises :class:`UsageExtractionError` on any failure — empty body,
+    invalid JSON, unrecognized shape, or missing token-count keys.  The
+    exception message names exactly what was searched and what was found.
     """
     if not body_bytes:
-        return None, "response body was empty"
+        raise UsageExtractionError("response body was empty")
 
     try:
         parsed = json.loads(body_bytes)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        return (
-            None,
-            (
-                f"response body is not valid JSON ({type(exc).__name__}); "
-                f"first 200 bytes: {body_bytes[:200]!r}"
-            ),
-        )
+        raise UsageExtractionError(
+            f"response body is not valid JSON ({type(exc).__name__}); "
+            f"first 200 bytes: {body_bytes[:200]!r}"
+        ) from exc
 
     if isinstance(parsed, dict):
         usage = _parse_chunk(parsed)
         if usage is None:
-            return (
-                None,
-                (
-                    "response body is a JSON object but has no recognized "
-                    "usage/model fields (expected one of: usage, usageMetadata, "
-                    "input_tokens/output_tokens, prompt_tokens/completion_tokens, "
-                    "promptTokenCount/candidatesTokenCount). "
-                    f"keys present: {sorted(parsed.keys())[:10]}"
-                ),
+            raise UsageExtractionError(
+                "response body is a JSON object but has no recognized "
+                "usage section (expected one of: usage, usageMetadata, "
+                "or message.usage). "
+                f"keys present: {sorted(parsed.keys())[:10]}"
             )
-        return usage, None
+        return usage
 
     if isinstance(parsed, list):
         # Gemini's streamGenerateContent without alt=sse returns a JSON
-        # array of partial chunks; usage is on the final chunk(s).
+        # array of partial chunks; usage typically lands on the final ones.
         best_model: Optional[str] = None
         best_prompt = 0
         best_completion = 0
         any_extracted = False
+        last_error: Optional[UsageExtractionError] = None
         for chunk in parsed:
             if not isinstance(chunk, dict):
                 continue
-            u = _parse_chunk(chunk)
+            try:
+                u = _parse_chunk(chunk)
+            except UsageExtractionError as exc:
+                last_error = exc
+                continue
             if u is None:
                 continue
             any_extracted = True
@@ -189,44 +231,41 @@ def extract_usage(body_bytes: bytes,) -> Tuple[Optional[ParsedUsage], Optional[s
                 best_prompt = u.prompt_tokens
             if u.completion_tokens > best_completion:
                 best_completion = u.completion_tokens
-        last_obj = parsed[-1] if parsed and isinstance(parsed[-1], dict) else {}
         if not any_extracted:
-            return (
-                None,
-                (
-                    f"response body is a JSON array of {len(parsed)} items but "
-                    "none carried recognized usage/model fields"
-                ),
+            detail = (
+                f" (last per-chunk error: {last_error})"
+                if last_error is not None
+                else ""
             )
-        return (
-            ParsedUsage(
-                model=best_model,
-                prompt_tokens=best_prompt,
-                completion_tokens=best_completion,
-                response_body=last_obj,
-            ),
-            None,
+            raise UsageExtractionError(
+                f"response body is a JSON array of {len(parsed)} items but "
+                f"none carried recognized usage/model fields{detail}"
+            )
+        last_obj = parsed[-1] if parsed and isinstance(parsed[-1], dict) else {}
+        return ParsedUsage(
+            model=best_model,
+            prompt_tokens=best_prompt,
+            completion_tokens=best_completion,
+            response_body=last_obj,
         )
 
-    return (
-        None,
-        (
-            f"response body is JSON but neither object nor array "
-            f"(got {type(parsed).__name__})"
-        ),
+    raise UsageExtractionError(
+        f"response body is JSON but neither object nor array "
+        f"(got {type(parsed).__name__})"
     )
 
 
 def extract_usage_streaming(
     raw_sse: bytes, request_body: dict, request_url: str,
-) -> Tuple[Optional[ParsedUsage], Optional[str]]:
+) -> ParsedUsage:
     """Parse token usage from accumulated SSE bytes.
 
-    Anthropic splits usage across events (``message_start`` carries
-    input, ``message_delta`` carries output), so we scan all frames and
-    take the max of each axis.
+    Anthropic splits usage across events (``message_start`` carries input,
+    ``message_delta`` carries output), so we scan all frames and take the
+    max of each axis.  Per-frame missing fields are NOT errors — only the
+    aggregate result is checked.
 
-    Returns ``(usage, parse_failure_reason)``: exactly one is non-None.
+    Raises :class:`UsageExtractionError` if no frame yielded usable usage.
     """
     text = raw_sse.decode("utf-8", errors="replace")
     prompt_tokens = 0
@@ -256,22 +295,10 @@ def extract_usage_streaming(
         if not usage:
             continue
 
-        # Anthropic counts cache_read/creation against input.
-        prompt_axis = (
-            (
-                usage.get("prompt_tokens")
-                or usage.get("input_tokens")
-                or usage.get("promptTokenCount")
-                or 0
-            )
-            + (usage.get("cache_read_input_tokens") or 0)
-            + (usage.get("cache_creation_input_tokens") or 0)
-        )
-        completion_axis = (
-            usage.get("completion_tokens")
-            or usage.get("output_tokens")
-            or _gemini_completion_tokens(usage)
-        )
+        # Per-chunk reads stay tolerant: a frame may legitimately carry
+        # only one direction (Anthropic message_start has input only).
+        # The aggregate is what's checked at the end.
+        prompt_axis, completion_axis = _streaming_chunk_axes(usage)
         if prompt_axis > prompt_tokens:
             prompt_tokens = prompt_axis
         if completion_axis > completion_tokens:
@@ -281,17 +308,14 @@ def extract_usage_streaming(
             found_usage = True
 
     if found_usage:
-        return (
-            ParsedUsage(
-                model=model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                response_body={},
-            ),
-            None,
+        return ParsedUsage(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            response_body={},
         )
 
-    # Diagnose.
+    # No frame produced usage — diagnose with the most actionable message.
     if (
         is_openai_compatible_url(request_url)
         and request_body.get("stream") is True
@@ -317,4 +341,33 @@ def extract_usage_streaming(
             f"streaming response had {sse_lines_seen} SSE frames "
             "but none carried recognized usage/model fields"
         )
-    return None, reason
+    raise UsageExtractionError(reason)
+
+
+def _streaming_chunk_axes(usage: dict) -> Tuple[int, int]:
+    """Lenient per-chunk read for streaming.
+
+    Streaming chunks legitimately carry only one direction at a time, so
+    missing keys here fall through to ``0``.  The aggregate ``found_usage``
+    check in :func:`extract_usage_streaming` decides whether the *whole*
+    response was unparseable.
+    """
+    prompt_axis = (
+        (
+            usage.get("prompt_tokens")
+            or usage.get("input_tokens")
+            or usage.get("promptTokenCount")
+            or 0
+        )
+        + (usage.get("cache_read_input_tokens") or 0)
+        + (usage.get("cache_creation_input_tokens") or 0)
+    )
+    # Anthropic counts cache_read/creation against input (above).  For
+    # completion, prefer explicit fields; fall through to Gemini-style.
+    completion_axis = (
+        usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or (usage.get("candidatesTokenCount") or 0)
+        + (usage.get("thoughtsTokenCount") or 0)
+    )
+    return prompt_axis, completion_axis

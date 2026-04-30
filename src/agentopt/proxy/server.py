@@ -52,6 +52,7 @@ from .providers import (
 from .session import SessionInfo, SessionManager
 from .usage import (
     PARSE_FAILED_MODEL,
+    UsageExtractionError,
     extract_usage,
     extract_usage_streaming,
     is_streaming_request,
@@ -528,12 +529,16 @@ class ProxyServer:
         if response_body is None:
             # Failure path — caller already supplied the error message.
             pass
-        elif is_streaming and status_code == 200:
-            usage, parse_err = extract_usage_streaming(
-                response_body, req.json_body, request_url,
-            )
         else:
-            usage, parse_err = extract_usage(response_body)
+            try:
+                if is_streaming and status_code == 200:
+                    usage = extract_usage_streaming(
+                        response_body, req.json_body, request_url,
+                    )
+                else:
+                    usage = extract_usage(response_body)
+            except UsageExtractionError as exc:
+                parse_err = str(exc)
 
         model: Optional[str] = req.json_body.get("model")
         prompt_tokens = 0
@@ -626,7 +631,7 @@ def _read_request(
             k, v = decoded.split(":", 1)
             headers[k.strip().lower()] = v.strip()
 
-    content_length = int(headers.get("content-length", "0") or "0")
+    content_length = _parse_content_length(headers, method)
     body = rfile.read(content_length) if content_length > 0 else b""
 
     json_body: Dict[str, Any] = {}
@@ -641,6 +646,36 @@ def _read_request(
     return _Request(
         method=method, path=path, headers=headers, body=body, json_body=json_body,
     )
+
+
+def _parse_content_length(headers: Dict[str, str], method: str) -> int:
+    """Strict Content-Length parse.
+
+    HTTP framing must not be guessed.  Silently defaulting to 0 on a missing
+    or malformed header would either truncate the request body (sending a
+    broken request upstream) or desynchronize the keep-alive parser, since
+    the unread body bytes would be misread as the next request line.
+
+    Raises ``ValueError`` if:
+    * the header is absent on a body-bearing method (POST/PUT/PATCH)
+    * the value isn't a non-negative integer
+    """
+    raw = headers.get("content-length")
+    if raw is None:
+        if method.upper() in ("POST", "PUT", "PATCH"):
+            raise ValueError(
+                f"{method} request is missing Content-Length header "
+                f"(header keys present: {sorted(headers)})"
+            )
+        return 0
+
+    try:
+        n = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"Content-Length is not an integer: {raw!r}") from exc
+    if n < 0:
+        raise ValueError(f"Content-Length is negative: {n}")
+    return n
 
 
 def _build_forward_headers(

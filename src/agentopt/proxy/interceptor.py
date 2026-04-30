@@ -11,7 +11,7 @@ untouched.
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Iterable, Optional, Set
 
 import httpx
 
@@ -28,19 +28,32 @@ _session_port_var: ContextVar[Optional[int]] = ContextVar(
 
 
 # ---------------------------------------------------------------------------
-# Path-pattern detection — derived from the provider registry so the
-# patch and the proxy stay in sync as new providers are added.
+# Path-pattern detection
 # ---------------------------------------------------------------------------
+# Mutable so ``LLMTracker.register_provider`` can extend it.  Without that
+# hook, paths from a runtime-registered provider would never match here,
+# the patch would skip the redirect, and the proxy would never see those
+# in-process calls — silent loss of tracking for any custom provider.
+#
+# The set is process-wide rather than per-tracker because the ContextVar
+# port already handles per-session isolation — we only decide WHETHER to
+# redirect here, not WHERE.
+
+_LLM_PATH_PATTERNS: Set[str] = {
+    pattern
+    for provider in DEFAULT_PROVIDERS.values()
+    for pattern in provider.path_patterns
+}
 
 
-def _collect_llm_path_patterns() -> Tuple[str, ...]:
-    patterns: list[str] = []
-    for provider in DEFAULT_PROVIDERS.values():
-        patterns.extend(provider.path_patterns)
-    return tuple(patterns)
+def register_extra_llm_paths(patterns: Iterable[str]) -> None:
+    """Add path patterns the interceptor should treat as LLM endpoints.
 
-
-_LLM_PATH_PATTERNS: Tuple[str, ...] = _collect_llm_path_patterns()
+    Called by :meth:`LLMTracker.register_provider` so in-process httpx
+    calls to runtime-registered providers get redirected through the
+    proxy like the built-ins.
+    """
+    _LLM_PATH_PATTERNS.update(patterns)
 
 
 def _is_llm_request(request: httpx.Request) -> bool:

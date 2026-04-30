@@ -8,7 +8,12 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from .cache import ResponseCache
 from .certs import CertificateAuthority
-from .interceptor import _session_port_var, install_redirect, uninstall_redirect
+from .interceptor import (
+    _session_port_var,
+    install_redirect,
+    register_extra_llm_paths,
+    uninstall_redirect,
+)
 from .models import CallRecord
 from .server import ProxyServer
 from .session import SessionInfo
@@ -156,9 +161,18 @@ class LLMTracker:
     def register_provider(
         self, name: str, base_url: str, path_patterns: tuple,
     ) -> None:
-        """Add or replace a provider in the proxy's registry."""
+        """Add or replace a provider in the proxy's registry.
+
+        Updates three places at once so the new provider works for both
+        agent shapes:
+        * the proxy's per-instance registry (direct-mode resolution)
+        * the proxy's CONNECT-mode intercept-host set (subprocess agents)
+        * the in-process httpx patch's path-pattern set, so direct-mode
+          calls to the new provider get redirected at all.
+        """
         assert self._server is not None, "call tracker.start() first"
         self._server.register_provider(name, base_url, path_patterns)
+        register_extra_llm_paths(path_patterns)
 
     # ------------------------------------------------------------------
     # Cache management

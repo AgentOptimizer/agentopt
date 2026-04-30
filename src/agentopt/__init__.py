@@ -8,41 +8,72 @@ model combination.
 
 __version__ = "0.1.0"
 
+from dataclasses import dataclass
+from typing import Optional
+
 from agentopt.proxy import CallRecord, LLMTracker, SessionInfo
 
 
-def get_current_session_env() -> dict:
-    """Return env vars that route a subprocess through the current session's port.
+@dataclass(frozen=True)
+class SessionProxy:
+    """Proxy connection details for the current tracking session.
 
-    Call inside ``agent.run()`` to get ``HTTPS_PROXY`` and CA-bundle vars
-    for subprocess agents::
+    Returned by :func:`get_current_session_proxy`. Subprocess agents use
+    these primitives to route LLM traffic through agentopt's tracking proxy.
 
-        import agentopt, os, subprocess
-        env = {**os.environ, **agentopt.get_current_session_env()}
-        subprocess.run(["gemini", "cli", ...], env=env)
+    For tools that respect ``HTTPS_PROXY`` env vars, call :meth:`env_dict`
+    for a ready-to-spread mapping. For tools like OpenClaw that ignore
+    env vars and need config-file injection, read ``url`` and ``ca_pem``
+    directly.
+    """
+
+    url: str
+    port: int
+    ca_pem: str
+    ca_bundle_path: str
+
+    def env_dict(self) -> dict:
+        """Env-var-shaped form for ``HTTPS_PROXY``-respecting subprocesses.
+
+        Spread into ``subprocess.run`` env::
+
+            proxy = agentopt.get_current_session_proxy()
+            env = {**os.environ, **(proxy.env_dict() if proxy else {})}
+            subprocess.run(["gemini", "cli", ...], env=env)
+        """
+        return {
+            "HTTPS_PROXY": self.url,
+            "SSL_CERT_FILE": self.ca_bundle_path,
+            "REQUESTS_CA_BUNDLE": self.ca_bundle_path,
+            "NODE_EXTRA_CA_CERTS": self.ca_bundle_path,
+        }
+
+
+def get_current_session_proxy() -> Optional[SessionProxy]:
+    """Return proxy details for the current tracking session, or ``None``.
 
     Each :meth:`LLMTracker.track` scope has its own port (via ContextVar),
-    so this is safe for parallel evaluation.
-
-    Returns an empty dict if no tracking session is active.
+    so this is safe for parallel evaluation. Returns ``None`` when no
+    tracking session is active.
     """
     from agentopt.proxy.interceptor import _session_port_var
 
     port = _session_port_var.get()
     if port is None:
-        return {}
+        return None
 
     from agentopt.proxy.certs import CertificateAuthority
 
     ca = CertificateAuthority()
-    ca_bundle = ca.ca_bundle_path
-    proxy_url = f"http://127.0.0.1:{port}"
-    return {
-        "HTTPS_PROXY": proxy_url,
-        "SSL_CERT_FILE": ca_bundle,
-        "REQUESTS_CA_BUNDLE": ca_bundle,
-        "NODE_EXTRA_CA_CERTS": ca_bundle,
-    }
+    with open(ca.ca_cert_path) as f:
+        ca_pem = f.read().strip()
+
+    return SessionProxy(
+        url=f"http://127.0.0.1:{port}",
+        port=port,
+        ca_pem=ca_pem,
+        ca_bundle_path=ca.ca_bundle_path,
+    )
 
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
@@ -155,5 +186,6 @@ __all__ = [
     "ModelsConfig",
     # Proxy / session helpers
     "SessionInfo",
-    "get_current_session_env",
+    "SessionProxy",
+    "get_current_session_proxy",
 ]

@@ -1,59 +1,63 @@
-"""httpx monkey-patching — redirect LLM requests through the proxy server.
+"""httpx monkey-patch — redirect in-process LLM calls to the session proxy.
 
-Thin URL rewrite + header injection.  The session port (from a ContextVar)
-determines which session-specific proxy port to target.  All logic lives
-in the proxy server.
+The active session's ephemeral proxy port lives in a ``ContextVar`` set by
+``LLMTracker.track()``.  When httpx is about to send a POST whose URL
+matches a known LLM endpoint, we rewrite it to
+``http://127.0.0.1:{port}/...`` and forward the original base URL through
+the ``X-AgentOpt-Target`` header.  Everything else is passed through
+untouched.
 """
 
+from __future__ import annotations
+
 from contextvars import ContextVar
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 import httpx
 
-from .providers import TARGET_HEADER
+from .providers import DEFAULT_PROVIDERS, TARGET_HEADER
+
 
 # ---------------------------------------------------------------------------
-# ContextVar — the active session's proxy port (set by LLMTracker.track())
+# Active-session port — set by ``LLMTracker.track()``
 # ---------------------------------------------------------------------------
 
 _session_port_var: ContextVar[Optional[int]] = ContextVar(
-    "agentopt_session_port", default=None
+    "agentopt_session_port", default=None,
 )
 
+
 # ---------------------------------------------------------------------------
-# State
+# Path-pattern detection — derived from the provider registry so the
+# patch and the proxy stay in sync as new providers are added.
 # ---------------------------------------------------------------------------
 
-_original_sync_send: Optional[Callable] = None
-_original_async_send: Optional[Callable] = None
-_installed = False
 
-# URL path patterns that indicate LLM API endpoints.
-_LLM_PATH_PATTERNS = (
-    "/chat/completions",
-    "/v1/messages",
-    "/v1/responses",
-    "/v1beta/models",
-    "/v1/models",
-    "/v1internal:generateContent",
-    "/v1internal:streamGenerateContent",
-)
+def _collect_llm_path_patterns() -> Tuple[str, ...]:
+    patterns: list[str] = []
+    for provider in DEFAULT_PROVIDERS.values():
+        patterns.extend(provider.path_patterns)
+    return tuple(patterns)
+
+
+_LLM_PATH_PATTERNS: Tuple[str, ...] = _collect_llm_path_patterns()
 
 
 def _is_llm_request(request: httpx.Request) -> bool:
-    """Check if this request targets a known LLM API endpoint."""
+    """True if *request* targets a known LLM API endpoint via POST."""
     if request.method != "POST":
         return False
     path = request.url.raw_path.decode("ascii", errors="ignore")
     return any(pattern in path for pattern in _LLM_PATH_PATTERNS)
 
 
-def _rewrite_request(request: httpx.Request, session_port: int) -> httpx.Request:
-    """Create a new ``httpx.Request`` pointing at the session proxy port.
+# ---------------------------------------------------------------------------
+# URL rewrite
+# ---------------------------------------------------------------------------
 
-    The original base URL is forwarded as ``X-AgentOpt-Target`` so the
-    proxy knows where to route upstream.
-    """
+
+def _rewrite_request(request: httpx.Request, session_port: int) -> httpx.Request:
+    """Build a localhost-targeted clone of *request* for the proxy."""
     original_url = request.url
     original_base = f"{original_url.scheme}://{original_url.host}"
     if original_url.port and original_url.port not in (80, 443):
@@ -63,13 +67,14 @@ def _rewrite_request(request: httpx.Request, session_port: int) -> httpx.Request
     if original_url.query:
         remaining += "?" + original_url.query.decode("ascii", errors="ignore")
 
-    new_url = f"http://127.0.0.1:{session_port}{remaining}"
-
     headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
     headers[TARGET_HEADER] = original_base
 
     return httpx.Request(
-        method=request.method, url=new_url, headers=headers, content=request.content,
+        method=request.method,
+        url=f"http://127.0.0.1:{session_port}{remaining}",
+        headers=headers,
+        content=request.content,
     )
 
 
@@ -77,15 +82,18 @@ def _rewrite_request(request: httpx.Request, session_port: int) -> httpx.Request
 # Install / uninstall
 # ---------------------------------------------------------------------------
 
+_original_sync_send: Optional[Callable] = None
+_original_async_send: Optional[Callable] = None
+_installed = False
+
 
 def install_redirect() -> None:
-    """Monkey-patch ``httpx`` to redirect LLM requests through the proxy.
+    """Monkey-patch ``httpx.Client.send`` and ``AsyncClient.send``.
 
-    Non-LLM requests and requests outside an active tracking session are
-    passed through unmodified.
+    Idempotent.  Requests outside an active tracking session, or whose
+    URL doesn't look like an LLM call, are passed through unmodified.
     """
     global _original_sync_send, _original_async_send, _installed
-
     if _installed:
         return
 
@@ -93,7 +101,7 @@ def install_redirect() -> None:
     _original_async_send = httpx.AsyncClient.send
 
     def _patched_sync_send(
-        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any
+        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any,
     ) -> httpx.Response:
         if _is_llm_request(request):
             port = _session_port_var.get()
@@ -102,7 +110,7 @@ def install_redirect() -> None:
         return _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
 
     async def _patched_async_send(
-        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any
+        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any,
     ) -> httpx.Response:
         if _is_llm_request(request):
             port = _session_port_var.get()
@@ -116,9 +124,8 @@ def install_redirect() -> None:
 
 
 def uninstall_redirect() -> None:
-    """Restore the original ``httpx.Client.send`` methods."""
+    """Restore the original ``httpx`` send methods."""
     global _original_sync_send, _original_async_send, _installed
-
     if not _installed:
         return
 

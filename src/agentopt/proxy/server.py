@@ -1,49 +1,67 @@
-"""Dual-mode HTTP proxy server for transparent LLM call interception.
+"""Dual-mode HTTP proxy for transparent LLM call interception.
 
-Runs as a background daemon thread.  Each tracking session gets its own
-TCP port — the port IS the session identity.  This eliminates session-ID
-parsing from URLs and makes both in-process and subprocess agents work
-through the same mechanism.
+Each tracking session gets its own ephemeral TCP port — the port IS the
+session identity, so no session IDs in URLs or ContextVars are needed.
 
-Two modes per session port:
+Two arrival modes per port:
 
-* **Direct mode** — in-process agents.  The httpx patch rewrites URLs to
-  ``http://127.0.0.1:{session_port}/...`` with an ``X-AgentOpt-Target``
-  header.  Traffic arrives as plaintext HTTP.
-
-* **CONNECT mode** — subprocess/Docker agents.  The agent's HTTP client
-  honours ``HTTPS_PROXY=http://127.0.0.1:{session_port}`` and sends
-  ``CONNECT hostname:443``.  The proxy terminates TLS using a per-hostname
+* **Direct** — in-process agents whose ``httpx`` calls have been rewritten
+  by :mod:`agentopt.proxy.interceptor` to ``http://127.0.0.1:{port}/...``
+  with an ``X-AgentOpt-Target`` header.  Plaintext.
+* **CONNECT** — subprocess agents driving traffic through
+  ``HTTPS_PROXY=http://127.0.0.1:{port}``.  The proxy answers
+  ``CONNECT host:443`` by TLS-terminating the tunnel using a per-hostname
   certificate from the local CA.
+
+Once a request is parsed, both modes share a single lifecycle:
+``cache → forward → record → respond``.
+
+Implementation: blocking I/O, one thread per accepted connection.  Keeps
+the code linear and lets us use stdlib ``http.client`` for forwarding —
+no asyncio / aiohttp.
 """
 
-import asyncio
-import fnmatch
+from __future__ import annotations
+
+import http.client
 import json
 import logging
+import socket
 import ssl
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple
+from http import HTTPStatus
+from typing import Any, BinaryIO, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .certs import CertificateAuthority
 from .models import CallRecord
 from .providers import (
-    DEFAULT_PROVIDERS,
-    INTERCEPT_HOSTS,
-    INTERCEPT_PATTERNS,
+    DEFAULT_PROVIDERS,  # re-exported for back-compat
+    INTERCEPT_HOSTS,  # re-exported for back-compat
+    INTERCEPT_PATTERNS,  # re-exported for back-compat
+    Provider,
+    ProviderConfig,  # re-exported for back-compat
+    ProviderRegistry,
     TARGET_HEADER,
-    ProviderConfig,
-    resolve_target,
+    resolve_target,  # re-exported for back-compat
 )
 from .session import SessionInfo, SessionManager
+from .usage import (
+    PARSE_FAILED_MODEL,
+    extract_usage,
+    extract_usage_streaming,
+    is_streaming_request,
+)
 
 logger = logging.getLogger(__name__)
 
-# Headers that must not be forwarded to the upstream provider.
+
+# Headers we strip before forwarding to upstream — connection-management
+# meta plus our own routing header.
 _HOP_BY_HOP = frozenset(
     {
         "host",
@@ -57,1053 +75,676 @@ _HOP_BY_HOP = frozenset(
 )
 
 
-# OpenAI-compatible chat/completions paths. Used to detect the streaming
-# `stream_options.include_usage` quirk (Anthropic uses `/v1/messages` and
-# always emits usage, so it's excluded).
-_OPENAI_COMPAT_PATHS = ("/v1/chat/completions", "/v1/completions", "/chat/completions")
+# ---------------------------------------------------------------------------
+# Parsed-request value type
+# ---------------------------------------------------------------------------
 
 
-# Sentinel used as the model name on a record when we successfully
-# intercepted a 200 response but could not extract token usage from its
-# body. Surfaces in result summaries as `tokens: {<parse-failed>: ...}`
-# alongside a logged warning and a populated CallRecord.error.
-PARSE_FAILED_MODEL = "<parse-failed>"
+@dataclass
+class _Request:
+    """One parsed HTTP/1.1 request."""
+
+    method: str
+    path: str
+    headers: Dict[str, str]
+    body: bytes
+    json_body: Dict[str, Any]
 
 
-def _is_openai_compatible_url(url: str) -> bool:
-    """True when *url* targets an OpenAI-style chat/completions endpoint."""
-    path = urlparse(url).path or ""
-    return any(path.endswith(p) for p in _OPENAI_COMPAT_PATHS)
-
-
-def _has_include_usage(request_body: dict) -> bool:
-    """True when the request opts in to streaming usage frames."""
-    opts = request_body.get("stream_options")
-    return isinstance(opts, dict) and opts.get("include_usage") is True
-
-
-def _is_streaming_request(request_body: dict, path_or_url: str) -> bool:
-    """True when the request is asking for a streaming response.
-
-    Detects:
-    * OpenAI / Anthropic style — ``"stream": true`` in the request body.
-    * Google Gemini — ``:streamGenerateContent`` endpoint, optionally with
-      ``?alt=sse`` query param.  Gemini does not put a ``stream`` flag in
-      the request body, so URL-based detection is the only signal.
-    """
-    if request_body.get("stream") is True:
-        return True
-    if "streamGenerateContent" in path_or_url or "alt=sse" in path_or_url:
-        return True
-    return False
-
-
-def _gemini_completion_tokens(usage: dict) -> int:
-    """Compute output token count for Gemini's ``usageMetadata``.
-
-    Gemini's thinking models report visible output under
-    ``candidatesTokenCount`` and reasoning tokens separately under
-    ``thoughtsTokenCount``. Both bill as output, so the proxy reports
-    the sum. Falls back to ``totalTokenCount - promptTokenCount`` when
-    individual fields aren't broken out.
-    """
-    candidates = usage.get("candidatesTokenCount") or 0
-    thoughts = usage.get("thoughtsTokenCount") or 0
-    if candidates or thoughts:
-        return candidates + thoughts
-    total = usage.get("totalTokenCount")
-    prompt = usage.get("promptTokenCount") or 0
-    if isinstance(total, int) and total > prompt:
-        return total - prompt
-    return 0
-
-
-def _parse_usage(body: dict) -> Optional[dict]:
-    """Extract model and token usage from an LLM API response body.
-
-    Supports OpenAI/Anthropic (``model`` + ``usage``) and Google Gemini
-    (``modelVersion`` + ``usageMetadata``).  For Gemini thinking models,
-    ``thoughtsTokenCount`` is folded into the completion token count.
-    """
-    model = body.get("model") or body.get("modelVersion")
-    usage = body.get("usage") or body.get("usageMetadata")
-    if not model or not usage:
-        return None
-    prompt_tokens = (
-        usage.get("prompt_tokens")
-        or usage.get("input_tokens")
-        or usage.get("promptTokenCount")
-        or 0
-    )
-    completion_tokens = (
-        usage.get("completion_tokens")
-        or usage.get("output_tokens")
-        or _gemini_completion_tokens(usage)
-    )
-    return {
-        "model": model,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-    }
+# ---------------------------------------------------------------------------
+# Server
+# ---------------------------------------------------------------------------
 
 
 class ProxyServer:
-    """Dual-mode (Direct + CONNECT) HTTP proxy for LLM API calls.
+    """Synchronous, thread-per-connection proxy.
 
-    Each tracking session gets a dedicated TCP port via
-    :meth:`open_session_port`.  All traffic on that port is attributed
-    to the session — no session IDs in URLs or ContextVars needed.
+    One listener thread per session port; each accepted connection runs
+    in its own thread and handles either CONNECT (TLS termination + LLM
+    request loop) or direct (plaintext + LLM request loop).
     """
 
     def __init__(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         cache: Optional[ResponseCache] = None,
         ca: Optional[CertificateAuthority] = None,
-        providers: Optional[Dict[str, ProviderConfig]] = None,
+        providers: Optional[Dict[str, Provider]] = None,
     ) -> None:
         self.session_manager = SessionManager()
         self._host = host
         self._cache = cache
         self._ca = ca
-        self._providers: Dict[str, ProviderConfig] = dict(
-            providers or DEFAULT_PROVIDERS
-        )
-        # Per-instance CONNECT intercept set — seeded from module defaults.
-        # register_provider() extends this with hostnames from custom providers.
-        self._intercept_hosts: Set[str] = set(INTERCEPT_HOSTS)
-        self._intercept_patterns: List[str] = list(INTERCEPT_PATTERNS)
+
+        self._registry = ProviderRegistry()
+        if providers:
+            for p in providers.values():
+                self._registry.register(p.name, p.base_url, p.path_patterns)
+        # Back-compat: tests inspect ``_providers`` for membership.
+        self._providers = self._registry.providers
+
+        # session_id -> (listen_sock, listener_thread, port)
+        self._listeners: Dict[str, Tuple[socket.socket, threading.Thread, int]] = {}
+        self._listeners_lock = threading.Lock()
 
         # Hostnames we've already warned about for the OpenAI streaming
-        # `stream_options.include_usage` quirk. Deduped to avoid log spam.
-        self._openai_stream_usage_warned: Set[str] = set()
-
-        # Lifecycle
-        self._thread: Optional[threading.Thread] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._shutdown_event: Optional[asyncio.Event] = None
-        self._started = threading.Event()
-
-        # Per-session listeners: session_id -> (asyncio.Server, port)
-        self._session_listeners: Dict[str, Tuple[asyncio.Server, int]] = {}
-        # Per-session connection tasks for clean cancellation.
-        self._session_tasks: Dict[str, List[asyncio.Task]] = {}
-
-    # ------------------------------------------------------------------
-    # Public helpers
-    # ------------------------------------------------------------------
-
-    def register_provider(
-        self, name: str, base_url: str, path_patterns: tuple,
-    ) -> None:
-        """Add or replace a provider in the registry.
-
-        Registers the provider for both modes:
-        * **Direct mode** — adds to path-pattern auto-detection registry.
-        * **CONNECT mode** — adds the hostname from *base_url* to the
-          CONNECT intercept set, so subprocess agents routing through
-          ``HTTPS_PROXY`` get TLS-terminated and tracked.
-        """
-        self._providers[name] = ProviderConfig(
-            name=name, base_url=base_url, path_patterns=path_patterns,
-        )
-        hostname = urlparse(base_url).hostname
-        if hostname:
-            self._intercept_hosts.add(hostname)
-
-    def _should_intercept(self, hostname: str) -> bool:
-        """Return ``True`` if CONNECT traffic to *hostname* should be intercepted."""
-        if hostname in self._intercept_hosts:
-            return True
-        return any(fnmatch.fnmatch(hostname, pat) for pat in self._intercept_patterns)
-
-    # ------------------------------------------------------------------
-    # Session ports
-    # ------------------------------------------------------------------
-
-    def open_session_port(self, session_id: str) -> int:
-        """Bind a new port for *session_id*.  Returns the port number.
-
-        Thread-safe — can be called from the main thread while the proxy
-        event loop runs in its background thread.
-        """
-        assert self._loop is not None, "call start() first"
-        future = asyncio.run_coroutine_threadsafe(
-            self._open_session_port_async(session_id), self._loop,
-        )
-        return future.result(timeout=5)
-
-    def close_session_port(self, session_id: str) -> None:
-        """Close the port for *session_id*.  Thread-safe."""
-        assert self._loop is not None
-        future = asyncio.run_coroutine_threadsafe(
-            self._close_session_port_async(session_id), self._loop,
-        )
-        future.result(timeout=5)
-
-    async def _open_session_port_async(self, session_id: str) -> int:
-        session = self.session_manager.get_session(session_id)
-        assert session is not None, f"session {session_id} not found"
-        self._session_tasks[session_id] = []
-
-        def _on_connect(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
-            task = asyncio.ensure_future(self._handle_session_connection(session, r, w))
-            self._session_tasks.get(session_id, []).append(task)
-            task.add_done_callback(
-                lambda t: self._session_tasks.get(session_id, []).remove(t)
-                if t in self._session_tasks.get(session_id, [])
-                else None
-            )
-
-        # reuse_address=True lets us bind a fresh ephemeral port immediately
-        # even when a recently closed one is still in TIME_WAIT — prevents
-        # port exhaustion during long sweeps with many sessions.
-        server = await asyncio.start_server(
-            _on_connect, self._host, 0, reuse_address=True,
-        )
-        port = server.sockets[0].getsockname()[1]
-        self._session_listeners[session_id] = (server, port)
-        logger.debug("Session %s listening on port %d", session_id, port)
-        return port
-
-    async def _close_session_port_async(self, session_id: str) -> None:
-        entry = self._session_listeners.pop(session_id, None)
-        if entry is not None:
-            server, port = entry
-            server.close()
-            await server.wait_closed()
-            # Cancel any pending connection tasks (e.g. keep-alive waits).
-            for task in self._session_tasks.pop(session_id, []):
-                task.cancel()
-            logger.debug("Session %s port %d closed", session_id, port)
+        # `stream_options.include_usage` quirk.  Deduped to avoid log spam.
+        self._stream_warned_hosts: set = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Start the proxy in a background daemon thread."""
-        if self._thread is not None:
-            return
-        self._started.clear()
-        self._thread = threading.Thread(
-            target=self._run_loop, daemon=True, name="agentopt-proxy",
-        )
-        self._thread.start()
-        if not self._started.wait(timeout=10):
-            raise RuntimeError("Proxy server failed to start within 10 s")
+        """No-op.  Listeners are bound per-session in ``open_session_port``."""
 
     def stop(self) -> None:
-        """Shut down the proxy server and collect remaining sessions."""
-        if self._loop is None or self._shutdown_event is None:
-            return
+        """Close every listener socket and archive remaining sessions."""
         self.session_manager.force_end_all()
-        self._loop.call_soon_threadsafe(self._shutdown_event.set)
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
-
-    def _run_loop(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
-
-    async def _serve(self) -> None:
-        self._shutdown_event = asyncio.Event()
-        self._started.set()
-        logger.info("Proxy server started")
-        await self._shutdown_event.wait()
-
-        # Close all session listeners.
-        for session_id in list(self._session_listeners):
-            await self._close_session_port_async(session_id)
+        with self._listeners_lock:
+            entries = list(self._listeners.values())
+            self._listeners.clear()
+        for sock, _, _ in entries:
+            _close_quietly(sock)
+        for _, thread, _ in entries:
+            thread.join(timeout=2)
 
     # ------------------------------------------------------------------
-    # Session connection handler
+    # Provider registry
     # ------------------------------------------------------------------
 
-    async def _handle_session_connection(
-        self,
-        session: SessionInfo,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
+    def register_provider(
+        self, name: str, base_url: str, path_patterns: tuple,
     ) -> None:
-        """Handle a connection on a session port.
+        """Add or replace a provider in this server's registry."""
+        self._registry.register(name, base_url, path_patterns)
 
-        Dispatches to Direct or CONNECT mode.  Loops for HTTP keep-alive.
-        """
+    def _should_intercept(self, hostname: str) -> bool:
+        """Whether CONNECT traffic to *hostname* should be TLS-terminated."""
+        return self._registry.should_intercept(hostname)
+
+    # ------------------------------------------------------------------
+    # Session ports
+    # ------------------------------------------------------------------
+
+    def open_session_port(self, session_id: str) -> int:
+        """Bind a fresh ephemeral port for *session_id* and start accepting."""
+        session = self.session_manager.get_session(session_id)
+        assert session is not None, f"session {session_id} not found"
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self._host, 0))
+        sock.listen(64)
+        port = sock.getsockname()[1]
+
+        thread = threading.Thread(
+            target=self._listen_loop,
+            args=(sock, session),
+            daemon=True,
+            name=f"agentopt-listener-{session_id}",
+        )
+        with self._listeners_lock:
+            self._listeners[session_id] = (sock, thread, port)
+        thread.start()
+        logger.debug("Session %s listening on port %d", session_id, port)
+        return port
+
+    def close_session_port(self, session_id: str) -> None:
+        """Close *session_id*'s listener.  Connection threads exit on their own."""
+        with self._listeners_lock:
+            entry = self._listeners.pop(session_id, None)
+        if entry is None:
+            return
+        sock, thread, port = entry
+        _close_quietly(sock)
+        thread.join(timeout=2)
+        logger.debug("Session %s port %d closed", session_id, port)
+
+    def get_session_port(self, session_id: str) -> int:
+        """Look up the port bound to *session_id*."""
+        with self._listeners_lock:
+            entry = self._listeners.get(session_id)
+        assert entry is not None, f"no port for session {session_id}"
+        return entry[2]
+
+    # ------------------------------------------------------------------
+    # Listener + connection dispatch
+    # ------------------------------------------------------------------
+
+    def _listen_loop(self, listen_sock: socket.socket, session: SessionInfo,) -> None:
+        """Accept loop for one session port."""
         try:
             while True:
-                first_line = await reader.readline()
-                if not first_line:
-                    break
-                line = first_line.decode("utf-8", errors="replace").strip()
-                if not line:
-                    continue
-                parts = line.split()
-                if len(parts) < 2:
-                    break
-                method = parts[0].upper()
-                if method == "CONNECT":
-                    await self._handle_connect(session, line, reader, writer)
-                    break
-                else:
-                    await self._handle_direct(session, first_line, reader, writer)
-        except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
+                try:
+                    client_sock, _ = listen_sock.accept()
+                except OSError:
+                    return  # listener closed
+                threading.Thread(
+                    target=self._handle_connection,
+                    args=(client_sock, session),
+                    daemon=True,
+                    name=f"agentopt-conn-{session.session_id}",
+                ).start()
+        except Exception:
+            logger.exception("listener loop crashed")
+
+    def _handle_connection(
+        self, client_sock: socket.socket, session: SessionInfo,
+    ) -> None:
+        """Per-connection top-level: peek first line, dispatch to mode."""
+        rfile = wfile = None
+        try:
+            client_sock.settimeout(120)
+            rfile = client_sock.makefile("rb")
+            wfile = client_sock.makefile("wb")
+
+            first_line = rfile.readline()
+            if not first_line:
+                return
+            line = first_line.decode("utf-8", errors="replace").strip()
+            parts = line.split()
+            if len(parts) < 2:
+                return
+
+            if parts[0].upper() == "CONNECT":
+                self._handle_connect(client_sock, rfile, wfile, line, session)
+            else:
+                self._direct_request_loop(rfile, wfile, first_line, session)
+        except (ConnectionError, OSError, ssl.SSLError, socket.timeout):
             pass
         except Exception:
-            logger.exception("Error handling connection")
+            logger.exception("connection handler crashed")
         finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
+            for f in (rfile, wfile):
+                if f is not None:
+                    try:
+                        f.close()
+                    except Exception:
+                        pass
+            _close_quietly(client_sock)
 
     # ==================================================================
-    # CONNECT MODE
+    # CONNECT mode
     # ==================================================================
 
-    async def _handle_connect(
+    def _handle_connect(
         self,
-        session: SessionInfo,
+        client_sock: socket.socket,
+        rfile: BinaryIO,
+        wfile: BinaryIO,
         request_line: str,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
+        session: SessionInfo,
     ) -> None:
-        """Handle an HTTP CONNECT tunnel request."""
-        parts = request_line.split()
-        if len(parts) < 2:
-            writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-            await writer.drain()
-            return
-
-        target = parts[1]
+        """Handle an HTTP CONNECT tunnel — passthrough or MITM."""
+        target = request_line.split()[1]
         if ":" in target:
-            hostname, port_str = target.rsplit(":", 1)
-            remote_port = int(port_str)
+            host_part, port_part = target.rsplit(":", 1)
+            hostname, remote_port = host_part, int(port_part)
         else:
-            hostname = target
-            remote_port = 443
+            hostname, remote_port = target, 443
 
-        # Drain remaining headers.
+        # Drain CONNECT headers.
         while True:
-            header_line = await reader.readline()
-            if header_line in (b"\r\n", b"\n", b""):
+            h = rfile.readline()
+            if h in (b"\r\n", b"\n", b""):
                 break
 
         if not self._should_intercept(hostname) or self._ca is None:
-            await self._connect_passthrough(hostname, remote_port, reader, writer)
+            self._connect_passthrough(client_sock, hostname, remote_port)
             return
 
-        # Respond 200 to establish the tunnel.
-        writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        await writer.drain()
+        # Establish tunnel, then upgrade to TLS.
+        wfile.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        wfile.flush()
 
-        # TLS termination in a blocking thread.
         ssl_ctx = self._ca.get_server_context(hostname)
-        raw_sock = writer.transport.get_extra_info("socket").dup()
-        writer.transport.close()
-
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            self._handle_connect_blocking,
-            raw_sock,
-            ssl_ctx,
-            hostname,
-            remote_port,
-            session,
-        )
-
-    async def _connect_passthrough(
-        self,
-        hostname: str,
-        port: int,
-        client_reader: asyncio.StreamReader,
-        client_writer: asyncio.StreamWriter,
-    ) -> None:
-        """Tunnel traffic through without TLS termination."""
         try:
-            upstream_reader, upstream_writer = await asyncio.open_connection(
-                hostname, port,
-            )
-        except Exception as exc:
-            client_writer.write(f"HTTP/1.1 502 Bad Gateway\r\n\r\n{exc}".encode())
-            await client_writer.drain()
+            tls_sock = ssl_ctx.wrap_socket(client_sock, server_side=True)
+        except (ssl.SSLError, OSError) as exc:
+            logger.warning("TLS handshake failed for %s: %s", hostname, exc)
             return
 
-        client_writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        await client_writer.drain()
-
-        async def _relay(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
-            try:
-                while True:
-                    data = await src.read(65536)
-                    if not data:
-                        break
-                    dst.write(data)
-                    await dst.drain()
-            except Exception:
-                pass
-            finally:
+        tls_rfile = tls_sock.makefile("rb")
+        tls_wfile = tls_sock.makefile("wb")
+        try:
+            while True:
+                req = _read_request(tls_rfile)
+                if req is None:
+                    break
+                upstream_url = f"https://{hostname}{req.path}"
+                self._process_and_respond(
+                    session=session,
+                    req=req,
+                    wfile=tls_wfile,
+                    upstream_url=upstream_url,
+                    upstream_hostname=hostname,
+                    upstream_port=remote_port,
+                    upstream_path=req.path,
+                    scheme="https",
+                )
+        finally:
+            for f in (tls_rfile, tls_wfile):
                 try:
-                    dst.close()
+                    f.close()
                 except Exception:
                     pass
+            _close_quietly(tls_sock)
 
-        await asyncio.gather(
-            _relay(client_reader, upstream_writer),
-            _relay(upstream_reader, client_writer),
-        )
-
-    def _handle_connect_blocking(
-        self,
-        raw_sock,
-        ssl_ctx: ssl.SSLContext,
-        hostname: str,
-        remote_port: int,
-        session: SessionInfo,
+    def _connect_passthrough(
+        self, client_sock: socket.socket, hostname: str, port: int,
     ) -> None:
-        """Handle a CONNECT tunnel using blocking I/O in a thread."""
-        import http.client
-
-        raw_sock.setblocking(True)
+        """Tunnel raw bytes through to non-LLM hosts without inspection."""
         try:
-            ssl_sock = ssl_ctx.wrap_socket(raw_sock, server_side=True)
-        except (ssl.SSLError, ConnectionError, OSError) as exc:
-            logger.warning("TLS handshake failed for %s: %s", hostname, exc)
-            raw_sock.close()
-            return
-
-        try:
-            rfile = ssl_sock.makefile("rb")
-            wfile = ssl_sock.makefile("wb")
-
-            while True:
-                request_line = rfile.readline()
-                if not request_line:
-                    break
-                line = request_line.decode("utf-8", errors="replace").strip()
-                if not line:
-                    break
-
-                parts = line.split(" ", 2)
-                if len(parts) < 2:
-                    break
-                method, path = parts[0], parts[1]
-
-                headers: Dict[str, str] = {}
-                while True:
-                    hdr = rfile.readline()
-                    if hdr in (b"\r\n", b"\n", b""):
-                        break
-                    decoded = hdr.decode("utf-8", errors="replace").strip()
-                    if ":" in decoded:
-                        k, v = decoded.split(":", 1)
-                        headers[k.strip().lower()] = v.strip()
-
-                content_length = int(headers.get("content-length", "0"))
-                body = rfile.read(content_length) if content_length > 0 else b""
-
-                try:
-                    request_body = json.loads(body) if body else {}
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    request_body = {}
-
-                upstream_url = f"https://{hostname}{path}"
-                is_streaming = _is_streaming_request(request_body, path)
-
-                # Cache check.
-                if self._cache is not None and request_body:
-                    cache_key = _make_cache_key(request_body)
-                    entry = self._cache.get(cache_key)
-                    if entry is not None:
-                        if is_streaming:
-                            self._record_streaming_call(
-                                session=session,
-                                request_body=request_body,
-                                raw_sse=entry.response_bytes,
-                                request_url=upstream_url,
-                                latency=entry.latency_seconds,
-                                cached=True,
-                            )
-                        else:
-                            self._record_call(
-                                session=session,
-                                request_body=request_body,
-                                response_body_bytes=entry.response_bytes,
-                                request_url=upstream_url,
-                                latency=entry.latency_seconds,
-                                cached=True,
-                            )
-                        wfile.write(
-                            _build_http_response(
-                                200, entry.response_headers, entry.response_bytes,
-                            )
-                        )
-                        wfile.flush()
-                        continue
-
-                fwd_headers = {
-                    k: v
-                    for k, v in headers.items()
-                    if k not in _HOP_BY_HOP and k != "accept-encoding"
-                }
-                fwd_headers["host"] = hostname
-
-                t0 = time.monotonic()
-                try:
-                    conn = http.client.HTTPSConnection(
-                        hostname, remote_port, timeout=120
-                    )
-                    conn.request(method, path, body=body or None, headers=fwd_headers)
-                    resp = conn.getresponse()
-                    resp_status = resp.status
-                    resp_headers = {k.lower(): v for k, v in resp.getheaders()}
-                    resp_body = resp.read()
-                    conn.close()
-                except Exception as exc:
-                    latency = time.monotonic() - t0
-                    logger.warning(
-                        "Upstream request to %s failed: %s", upstream_url, exc
-                    )
-                    # Record the failed attempt for metrics.
-                    self._record_call(
-                        session=session,
-                        request_body=request_body,
-                        response_body_bytes=None,
-                        request_url=upstream_url,
-                        latency=latency,
-                        cached=False,
-                        status_code=0,
-                        error=str(exc),
-                    )
-                    error_body = json.dumps({"error": str(exc)}).encode()
-                    wfile.write(_build_http_response(502, {}, error_body))
-                    wfile.flush()
-                    continue
-                latency = time.monotonic() - t0
-
-                # Always record — 2xx, 4xx, 5xx all count toward cost/latency.
-                if is_streaming and resp_status == 200:
-                    self._record_streaming_call(
-                        session=session,
-                        request_body=request_body,
-                        raw_sse=resp_body,
-                        request_url=upstream_url,
-                        latency=latency,
-                    )
-                else:
-                    self._record_call(
-                        session=session,
-                        request_body=request_body,
-                        response_body_bytes=resp_body,
-                        request_url=upstream_url,
-                        latency=latency,
-                        cached=False,
-                        status_code=resp_status,
-                        error=None if resp_status == 200 else f"HTTP {resp_status}",
-                    )
-                if resp_status == 200 and self._cache is not None and request_body:
-                    cache_key = _make_cache_key(request_body)
-                    self._cache.put(
-                        cache_key,
-                        CacheEntry(
-                            response_bytes=resp_body,
-                            response_headers=dict(resp_headers),
-                            latency_seconds=latency,
-                        ),
-                    )
-
-                safe_headers = {
-                    k: v
-                    for k, v in resp_headers.items()
-                    if k not in ("transfer-encoding", "content-encoding")
-                }
-                wfile.write(_build_http_response(resp_status, safe_headers, resp_body))
-                wfile.flush()
-
-        except (ConnectionError, OSError, BrokenPipeError):
-            pass
-        finally:
+            upstream = socket.create_connection((hostname, port), timeout=30)
+        except Exception as exc:
             try:
-                ssl_sock.close()
+                client_sock.sendall(f"HTTP/1.1 502 Bad Gateway\r\n\r\n{exc}".encode())
             except Exception:
                 pass
+            return
+
+        try:
+            client_sock.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            _bidirectional_relay(client_sock, upstream)
+        finally:
+            _close_quietly(upstream)
 
     # ==================================================================
-    # DIRECT MODE
+    # Direct mode
     # ==================================================================
 
-    async def _handle_direct(
-        self,
-        session: SessionInfo,
-        first_line: bytes,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
+    def _direct_request_loop(
+        self, rfile: BinaryIO, wfile: BinaryIO, first_line: bytes, session: SessionInfo,
     ) -> None:
-        """Handle a plaintext HTTP request (direct mode from httpx patch)."""
-        line = first_line.decode("utf-8", errors="replace").strip()
-        parts = line.split(" ", 2)
-        if len(parts) < 2:
-            writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-            await writer.drain()
-            return
-
-        method = parts[0]
-        raw_path = parts[1]  # e.g. /v1/chat/completions
-
-        # Read headers.
-        headers: Dict[str, str] = {}
+        """Handle plaintext direct-mode requests, looping for keep-alive."""
+        pending_first_line: Optional[bytes] = first_line
         while True:
-            header_line = await reader.readline()
-            if header_line in (b"\r\n", b"\n", b""):
-                break
-            decoded = header_line.decode("utf-8", errors="replace").strip()
-            if ":" in decoded:
-                key, val = decoded.split(":", 1)
-                headers[key.strip().lower()] = val.strip()
-
-        # Read body.
-        content_length = int(headers.get("content-length", "0"))
-        body = b""
-        if content_length > 0:
-            body = await reader.readexactly(content_length)
-
-        # Parse body.
-        try:
-            request_body = json.loads(body) if body else {}
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            request_body = {}
-
-        is_streaming = _is_streaming_request(request_body, raw_path)
-
-        # Resolve upstream target.
-        try:
-            target_base, upstream_path = resolve_target(
-                raw_path, headers, self._providers,
-            )
-        except ValueError as exc:
-            resp = json.dumps({"error": str(exc)}).encode()
-            writer.write(
-                _build_http_response(502, {"content-type": "application/json"}, resp)
-            )
-            await writer.drain()
-            return
-
-        upstream_url = target_base.rstrip("/") + upstream_path
-
-        # Cache check.
-        if self._cache is not None and request_body:
-            cache_key = _make_cache_key(request_body)
-            entry = self._cache.get(cache_key)
-            if entry is not None:
-                if is_streaming:
-                    self._record_streaming_call(
-                        session=session,
-                        request_body=request_body,
-                        raw_sse=entry.response_bytes,
-                        request_url=upstream_url,
-                        latency=entry.latency_seconds,
-                        cached=True,
-                    )
-                else:
-                    self._record_call(
-                        session=session,
-                        request_body=request_body,
-                        response_body_bytes=entry.response_bytes,
-                        request_url=upstream_url,
-                        latency=entry.latency_seconds,
-                        cached=True,
-                    )
-                resp_headers = {
-                    k: v
-                    for k, v in entry.response_headers.items()
-                    if k.lower() not in ("content-encoding", "transfer-encoding")
-                }
-                writer.write(
-                    _build_http_response(200, resp_headers, entry.response_bytes)
-                )
-                await writer.drain()
+            req = _read_request(rfile, first_line=pending_first_line)
+            pending_first_line = None
+            if req is None:
                 return
 
-        # Build upstream headers.
-        fwd_headers: Dict[str, str] = {}
-        for k, v in headers.items():
-            if k not in _HOP_BY_HOP:
-                fwd_headers[k] = v
+            try:
+                base, upstream_path = self._registry.resolve_target(
+                    req.path, req.headers,
+                )
+            except ValueError as exc:
+                _write_response(
+                    wfile,
+                    502,
+                    {"content-type": "application/json"},
+                    json.dumps({"error": str(exc)}).encode(),
+                )
+                continue
 
-        # Forward request.
+            base_url = urlparse(base)
+            scheme = base_url.scheme or "https"
+            hostname = base_url.hostname or ""
+            port = base_url.port or (443 if scheme == "https" else 80)
+            self._process_and_respond(
+                session=session,
+                req=req,
+                wfile=wfile,
+                upstream_url=base.rstrip("/") + upstream_path,
+                upstream_hostname=hostname,
+                upstream_port=port,
+                upstream_path=upstream_path,
+                scheme=scheme,
+            )
+
+    # ==================================================================
+    # Shared request lifecycle
+    # ==================================================================
+
+    def _process_and_respond(
+        self,
+        *,
+        session: SessionInfo,
+        req: _Request,
+        wfile: BinaryIO,
+        upstream_url: str,
+        upstream_hostname: str,
+        upstream_port: int,
+        upstream_path: str,
+        scheme: str,
+    ) -> None:
+        """Cache check → forward → record → respond.
+
+        Used by both direct and CONNECT modes once their request is parsed.
+        """
+        is_streaming = is_streaming_request(req.json_body, req.path)
+
+        # 1. Cache.
+        if self._cache is not None and req.json_body:
+            cache_key = _make_cache_key(req.json_body)
+            entry = self._cache.get(cache_key)
+            if entry is not None:
+                self._record(
+                    session,
+                    req,
+                    entry.response_bytes,
+                    upstream_url,
+                    entry.latency_seconds,
+                    cached=True,
+                    is_streaming=is_streaming,
+                )
+                _write_response(
+                    wfile,
+                    200,
+                    _safe_response_headers(entry.response_headers),
+                    entry.response_bytes,
+                )
+                return
+
+        # 2. Forward.
+        fwd_headers = _build_forward_headers(
+            req.headers, upstream_hostname, upstream_port
+        )
         t0 = time.monotonic()
         try:
-            status, resp_headers, resp_body = await _forward_https(
-                method, upstream_url, fwd_headers, body, is_streaming,
+            status, resp_headers, resp_body = _forward(
+                method=req.method,
+                scheme=scheme,
+                hostname=upstream_hostname,
+                port=upstream_port,
+                path=upstream_path,
+                headers=fwd_headers,
+                body=req.body,
             )
         except Exception as exc:
             latency = time.monotonic() - t0
-            logger.warning("Upstream request failed: %s", exc)
-            # Record the failed attempt so latency / error counts show up in metrics.
-            self._record_call(
-                session=session,
-                request_body=request_body,
-                response_body_bytes=None,
-                request_url=upstream_url,
-                latency=latency,
+            logger.warning("upstream %s failed: %s", upstream_url, exc)
+            self._record(
+                session,
+                req,
+                None,
+                upstream_url,
+                latency,
                 cached=False,
+                is_streaming=is_streaming,
                 status_code=0,
                 error=str(exc),
             )
-            resp = json.dumps({"error": f"upstream error: {exc}"}).encode()
-            writer.write(
-                _build_http_response(502, {"content-type": "application/json"}, resp)
+            _write_response(
+                wfile,
+                502,
+                {"content-type": "application/json"},
+                json.dumps({"error": f"upstream error: {exc}"}).encode(),
             )
-            await writer.drain()
             return
         latency = time.monotonic() - t0
 
-        if is_streaming:
-            writer.write(_build_http_response(status, resp_headers, resp_body))
-            await writer.drain()
-            self._record_streaming_call(
-                session=session,
-                request_body=request_body,
-                raw_sse=resp_body,
-                request_url=upstream_url,
-                latency=latency,
-            )
-        else:
-            # Always record — 2xx, 4xx, 5xx all count toward cost/latency.
-            self._record_call(
-                session=session,
-                request_body=request_body,
-                response_body_bytes=resp_body,
-                request_url=upstream_url,
-                latency=latency,
-                cached=False,
-                status_code=status,
-                error=None if status == 200 else f"HTTP {status}",
-            )
-            if status == 200 and self._cache is not None and request_body:
-                cache_key = _make_cache_key(request_body)
-                self._cache.put(
-                    cache_key,
-                    CacheEntry(
-                        response_bytes=resp_body,
-                        response_headers=dict(resp_headers),
-                        latency_seconds=latency,
-                    ),
-                )
+        # 3. Record (every status — 2xx, 4xx, 5xx all count as work).
+        self._record(
+            session,
+            req,
+            resp_body,
+            upstream_url,
+            latency,
+            cached=False,
+            is_streaming=is_streaming,
+            status_code=status,
+            error=None if status == 200 else f"HTTP {status}",
+        )
 
-            safe_headers = {
-                k: v
-                for k, v in resp_headers.items()
-                if k.lower() not in ("transfer-encoding", "content-encoding")
-            }
-            writer.write(_build_http_response(status, safe_headers, resp_body))
-            await writer.drain()
+        # 4. Cache successful responses.
+        if status == 200 and self._cache is not None and req.json_body:
+            self._cache.put(
+                _make_cache_key(req.json_body),
+                CacheEntry(
+                    response_bytes=resp_body,
+                    response_headers=dict(resp_headers),
+                    latency_seconds=latency,
+                ),
+            )
+
+        # 5. Respond.
+        _write_response(
+            wfile, status, _safe_response_headers(resp_headers), resp_body,
+        )
 
     # ------------------------------------------------------------------
-    # Recording helpers
+    # Recording
     # ------------------------------------------------------------------
 
-    def _record_call(
+    def _record(
         self,
-        session: Any,
-        request_body: dict,
-        response_body_bytes: Optional[bytes],
+        session: SessionInfo,
+        req: _Request,
+        response_body: Optional[bytes],
         request_url: str,
         latency: float,
+        *,
         cached: bool,
+        is_streaming: bool,
         status_code: int = 200,
         error: Optional[str] = None,
     ) -> None:
-        """Record a ``CallRecord`` for any outcome (success or failure).
+        """Build a ``CallRecord`` and hand it to the session manager."""
+        usage = None
+        parse_err: Optional[str] = None
 
-        Token counts are populated if the response body parses and contains
-        a ``usage`` object; otherwise they default to 0.  Failed requests
-        (non-200, connection errors) are still recorded so cost/latency
-        metrics reflect real work done.
-        """
-        prompt_tokens = 0
-        completion_tokens = 0
-        resp_body: Dict[str, Any] = {}
-        model: Optional[str] = request_body.get("model")
-        usage_extracted = False
-        parse_failure_reason: Optional[str] = None
-
-        if response_body_bytes:
-            try:
-                parsed_body = json.loads(response_body_bytes)
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                parse_failure_reason = (
-                    f"response body is not valid JSON ({type(exc).__name__}); "
-                    f"first 200 bytes: {response_body_bytes[:200]!r}"
-                )
-            else:
-                if isinstance(parsed_body, dict):
-                    resp_body = parsed_body
-                    parsed = _parse_usage(parsed_body)
-                    if parsed is not None:
-                        prompt_tokens = parsed["prompt_tokens"]
-                        completion_tokens = parsed["completion_tokens"]
-                        model = model or parsed["model"]
-                        usage_extracted = True
-                    else:
-                        parse_failure_reason = (
-                            "response body is a JSON object but has no "
-                            "recognized usage/model fields "
-                            "(expected one of: usage, usageMetadata, "
-                            "input_tokens/output_tokens, "
-                            "prompt_tokens/completion_tokens, "
-                            "promptTokenCount/candidatesTokenCount). "
-                            f"keys present: {sorted(parsed_body.keys())[:10]}"
-                        )
-                elif isinstance(parsed_body, list):
-                    # Gemini's `streamGenerateContent` (without alt=sse)
-                    # returns a JSON array of partial chunks; the final
-                    # one carries `usageMetadata`.
-                    for chunk in parsed_body:
-                        if not isinstance(chunk, dict):
-                            continue
-                        parsed = _parse_usage(chunk)
-                        if parsed is None:
-                            continue
-                        if parsed["prompt_tokens"] > prompt_tokens:
-                            prompt_tokens = parsed["prompt_tokens"]
-                        if parsed["completion_tokens"] > completion_tokens:
-                            completion_tokens = parsed["completion_tokens"]
-                        model = model or parsed["model"]
-                        usage_extracted = True
-                    if parsed_body and isinstance(parsed_body[-1], dict):
-                        resp_body = parsed_body[-1]
-                    if not usage_extracted:
-                        parse_failure_reason = (
-                            f"response body is a JSON array of {len(parsed_body)} "
-                            "items but none carried recognized usage/model fields"
-                        )
-                else:
-                    parse_failure_reason = (
-                        f"response body is JSON but neither object nor array "
-                        f"(got {type(parsed_body).__name__})"
-                    )
+        if response_body is None:
+            # Failure path — caller already supplied the error message.
+            pass
+        elif is_streaming and status_code == 200:
+            usage, parse_err = extract_usage_streaming(
+                response_body, req.json_body, request_url,
+            )
         else:
-            parse_failure_reason = "response body was empty"
+            usage, parse_err = extract_usage(response_body)
 
-        # Loud surfacing of token-extraction failures — silent fallbacks
-        # mask real proxy gaps (e.g. unrecognized provider response shapes).
-        # Only flag on successful (200) calls; non-2xx records already have
-        # an HTTP error attached.
-        if (
-            not usage_extracted
-            and status_code == 200
-            and not error
-            and parse_failure_reason is not None
-        ):
-            error = (
-                f"agentopt proxy could not extract token usage: "
-                f"{parse_failure_reason}. URL={request_url}"
-            )
-            logger.warning(
-                "agentopt: %s call to %s succeeded (200) but token usage "
-                "could not be extracted — %s",
-                model or "<unknown>",
-                request_url,
-                parse_failure_reason,
-            )
-            if not model:
-                model = PARSE_FAILED_MODEL
-        elif not model:
-            # Fallback for non-200 / pre-200 cases where we never learned
-            # the model — keep the legacy "unknown" so result summaries
-            # don't break, but only when an explicit error is already set.
-            model = "unknown"
-
-        record = CallRecord(
-            data_id=session.data_id,
-            combo_id=session.combo_id,
-            agent_id=session.agent_id,
-            model=model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            latency_seconds=latency,
-            request_url=request_url,
-            request_body=request_body,
-            response_body=resp_body,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            cached=cached,
-            status_code=status_code,
-            error=error,
-        )
-        self.session_manager.add_record(session.session_id, record)
-
-    def _record_streaming_call(
-        self,
-        session: Any,
-        request_body: dict,
-        raw_sse: bytes,
-        request_url: str,
-        latency: float,
-        cached: bool = False,
-    ) -> None:
-        """Best-effort usage extraction from accumulated SSE data."""
-        text = raw_sse.decode("utf-8", errors="replace")
-        model: Optional[str] = request_body.get("model")
+        model: Optional[str] = req.json_body.get("model")
         prompt_tokens = 0
         completion_tokens = 0
-        usage_extracted = False
-        sse_lines_seen = 0
+        resp_body_for_record: Dict[str, Any] = {}
+        if usage is not None:
+            model = model or usage.model
+            prompt_tokens = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
+            resp_body_for_record = usage.response_body
 
-        # Scan all SSE lines to find usage from both message_start (input)
-        # and message_delta (output).  Anthropic splits usage across events:
-        #   message_start  → message.usage (input_tokens, cache_read/creation)
-        #   message_delta  → usage (output_tokens, plus input echo)
-        for line in text.splitlines():
-            if not line.startswith("data: "):
-                continue
-            sse_lines_seen += 1
-            payload = line[len("data: ") :]
-            if payload.strip() == "[DONE]":
-                continue
-            try:
-                chunk = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-
-            # OpenAI top-level `usage`; Anthropic message.usage on message_start;
-            # Gemini top-level `usageMetadata` on the final chunk.
-            usage = chunk.get("usage") or chunk.get("usageMetadata")
-            msg = chunk.get("message")
-            if isinstance(msg, dict) and msg.get("usage"):
-                usage = usage or msg["usage"]
-
-            if usage:
-                inp = (
-                    (
-                        usage.get("prompt_tokens")
-                        or usage.get("input_tokens")
-                        or usage.get("promptTokenCount")
-                        or 0
-                    )
-                    + (usage.get("cache_read_input_tokens") or 0)
-                    + (usage.get("cache_creation_input_tokens") or 0)
-                )
-                out = (
-                    usage.get("completion_tokens")
-                    or usage.get("output_tokens")
-                    or _gemini_completion_tokens(usage)
-                )
-                if inp > prompt_tokens:
-                    prompt_tokens = inp
-                if out > completion_tokens:
-                    completion_tokens = out
-                model = model or chunk.get("model") or chunk.get("modelVersion")
-                if inp or out:
-                    usage_extracted = True
-
-        # Surface streaming-parse failures explicitly. The OpenAI
-        # `stream_options.include_usage` quirk gets a more actionable
-        # message; everything else gets the generic diagnostic.
-        record_error: Optional[str] = None
-        if not usage_extracted:
-            if (
-                _is_openai_compatible_url(request_url)
-                and request_body.get("stream") is True
-                and not _has_include_usage(request_body)
-            ):
-                detail = (
-                    "OpenAI-compatible streams omit usage by default — set "
-                    '`stream_options={"include_usage": True}` on the request '
-                    "to enable token tracking. (Anthropic streams are unaffected.)"
-                )
-            elif sse_lines_seen == 0:
-                detail = (
-                    f"streaming response had no `data: ...` SSE frames "
-                    f"(body length={len(raw_sse)} bytes, "
-                    f"first 200 bytes={raw_sse[:200]!r}). "
-                    "If this is a non-SSE chunked stream (e.g. Gemini's "
-                    "`streamGenerateContent` without `alt=sse`), the "
-                    "non-streaming code path handles JSON arrays; "
-                    "otherwise this provider's streaming format may need "
-                    "explicit support in the proxy parser."
-                )
-            else:
-                detail = (
-                    f"streaming response had {sse_lines_seen} SSE frames "
-                    "but none carried recognized usage/model fields"
-                )
-            record_error = f"agentopt proxy could not extract token usage: {detail}"
-            hostname = urlparse(request_url).hostname or request_url
-            if hostname not in self._openai_stream_usage_warned:
-                self._openai_stream_usage_warned.add(hostname)
-                logger.warning(
-                    "agentopt: streaming call to %s yielded no token usage — %s",
-                    hostname,
-                    detail,
-                )
+        record_error = error
+        # Loud surfacing of token-extraction failures on otherwise-successful
+        # calls — silent zeros mask real proxy gaps.
+        if usage is None and status_code == 200 and not error and parse_err is not None:
+            record_error = (
+                f"agentopt proxy could not extract token usage: {parse_err}. "
+                f"URL={request_url}"
+            )
+            self._maybe_warn(request_url, parse_err, model)
             if not model:
                 model = PARSE_FAILED_MODEL
         elif not model:
             model = "unknown"
 
-        record = CallRecord(
-            data_id=session.data_id,
-            combo_id=session.combo_id,
-            agent_id=session.agent_id,
-            model=model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            latency_seconds=latency,
-            request_url=request_url,
-            request_body=request_body,
-            response_body={},
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            cached=cached,
-            error=record_error,
+        self.session_manager.add_record(
+            session.session_id,
+            CallRecord(
+                data_id=session.data_id,
+                combo_id=session.combo_id,
+                agent_id=session.agent_id,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_seconds=latency,
+                request_url=request_url,
+                request_body=req.json_body,
+                response_body=resp_body_for_record,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                cached=cached,
+                status_code=status_code,
+                error=record_error,
+            ),
         )
-        self.session_manager.add_record(session.session_id, record)
+
+    def _maybe_warn(self, request_url: str, reason: str, model: Optional[str],) -> None:
+        host = urlparse(request_url).hostname or request_url
+        if host in self._stream_warned_hosts:
+            return
+        self._stream_warned_hosts.add(host)
+        logger.warning(
+            "agentopt: %s call to %s succeeded but token usage could not be "
+            "extracted — %s",
+            model or "<unknown>",
+            request_url,
+            reason,
+        )
 
 
-# ======================================================================
-# HTTP helpers
-# ======================================================================
+# ---------------------------------------------------------------------------
+# HTTP parsing / forwarding / serialization helpers
+# ---------------------------------------------------------------------------
 
 
-def _build_http_response(status: int, headers: Dict[str, str], body: bytes,) -> bytes:
-    """Build a raw HTTP/1.1 response as bytes."""
-    from http import HTTPStatus
+def _read_request(
+    rfile: BinaryIO, first_line: Optional[bytes] = None,
+) -> Optional[_Request]:
+    """Parse one HTTP/1.1 request from a binary file-like.
 
+    Returns ``None`` on EOF or a malformed request line.
+    """
+    if first_line is None:
+        first_line = rfile.readline()
+    if not first_line:
+        return None
+
+    line = first_line.decode("utf-8", errors="replace").strip()
+    parts = line.split(" ", 2)
+    if len(parts) < 2:
+        return None
+    method, path = parts[0], parts[1]
+
+    headers: Dict[str, str] = {}
+    while True:
+        h = rfile.readline()
+        if h in (b"\r\n", b"\n", b""):
+            break
+        decoded = h.decode("utf-8", errors="replace").strip()
+        if ":" in decoded:
+            k, v = decoded.split(":", 1)
+            headers[k.strip().lower()] = v.strip()
+
+    content_length = int(headers.get("content-length", "0") or "0")
+    body = rfile.read(content_length) if content_length > 0 else b""
+
+    json_body: Dict[str, Any] = {}
+    if body:
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                json_body = parsed
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
+    return _Request(
+        method=method, path=path, headers=headers, body=body, json_body=json_body,
+    )
+
+
+def _build_forward_headers(
+    incoming: Dict[str, str], hostname: str, port: int,
+) -> Dict[str, str]:
+    """Strip hop-by-hop + accept-encoding, set Host."""
+    fwd = {k: v for k, v in incoming.items() if k not in _HOP_BY_HOP}
+    # accept-encoding stripped so we don't get gzipped responses we'd have
+    # to decode just to extract usage.
+    fwd.pop("accept-encoding", None)
+    if port in (80, 443):
+        fwd["host"] = hostname
+    else:
+        fwd["host"] = f"{hostname}:{port}"
+    return fwd
+
+
+def _forward(
+    *,
+    method: str,
+    scheme: str,
+    hostname: str,
+    port: int,
+    path: str,
+    headers: Dict[str, str],
+    body: bytes,
+) -> Tuple[int, Dict[str, str], bytes]:
+    """Forward one HTTP/HTTPS request synchronously and return the full response."""
+    if scheme == "https":
+        conn = http.client.HTTPSConnection(hostname, port, timeout=120)
+    else:
+        conn = http.client.HTTPConnection(hostname, port, timeout=120)
     try:
-        status_text = HTTPStatus(status).phrase
+        conn.request(method, path, body=body or None, headers=headers)
+        resp = conn.getresponse()
+        resp_headers = {k.lower(): v for k, v in resp.getheaders()}
+        return resp.status, resp_headers, resp.read()
+    finally:
+        conn.close()
+
+
+def _build_response(status: int, headers: Dict[str, str], body: bytes,) -> bytes:
+    """Serialize an HTTP/1.1 response."""
+    try:
+        phrase = HTTPStatus(status).phrase
     except ValueError:
-        status_text = "Unknown"
-    lines: List[str] = [f"HTTP/1.1 {status} {status_text}"]
-    header_lower = {k.lower(): v for k, v in headers.items()}
-    if "content-length" not in header_lower:
-        headers["content-length"] = str(len(body))
-    for k, v in headers.items():
+        phrase = "Unknown"
+
+    out_headers = dict(headers)
+    if not any(k.lower() == "content-length" for k in out_headers):
+        out_headers["content-length"] = str(len(body))
+
+    lines = [f"HTTP/1.1 {status} {phrase}"]
+    for k, v in out_headers.items():
         lines.append(f"{k}: {v}")
     lines.append("")
     lines.append("")
     return "\r\n".join(lines).encode("utf-8") + body
 
 
-async def _forward_https(
-    method: str, url: str, headers: Dict[str, str], body: bytes, is_streaming: bool,
-) -> Tuple[int, Dict[str, str], bytes]:
-    """Forward an HTTP request to an upstream HTTPS URL."""
-    import aiohttp
+def _write_response(
+    wfile: BinaryIO, status: int, headers: Dict[str, str], body: bytes,
+) -> None:
+    wfile.write(_build_response(status, headers, body))
+    wfile.flush()
 
-    # Keep trust_env=True so aiohttp picks up user's SSL_CERT_FILE /
-    # REQUESTS_CA_BUNDLE (needed behind corporate MITM).  Override proxy
-    # per-request to None so our own HTTPS_PROXY doesn't loop back.
-    async with aiohttp.ClientSession() as session:
-        async with session.request(
-            method=method,
-            url=url,
-            headers=headers,
-            data=body if body else None,
-            proxy=None,
-        ) as resp:
-            resp_body = await resp.read()
-            resp_headers = {k: v for k, v in resp.headers.items()}
-            return resp.status, resp_headers, resp_body
+
+def _safe_response_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Strip headers that don't survive proxy retransmission."""
+    return {
+        k: v
+        for k, v in headers.items()
+        if k.lower() not in ("transfer-encoding", "content-encoding")
+    }
+
+
+def _bidirectional_relay(a: socket.socket, b: socket.socket) -> None:
+    """Pump bytes between two sockets until either side closes."""
+
+    def relay(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except Exception:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except Exception:
+                pass
+
+    t1 = threading.Thread(target=relay, args=(a, b), daemon=True)
+    t2 = threading.Thread(target=relay, args=(b, a), daemon=True)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+
+def _close_quietly(sock: Any) -> None:
+    try:
+        sock.close()
+    except Exception:
+        pass

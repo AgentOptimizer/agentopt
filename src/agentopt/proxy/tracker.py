@@ -140,13 +140,10 @@ class LLMTracker:
         is fully safe — each subprocess gets its own ``HTTPS_PROXY``.
         """
         assert self._server is not None, "call tracker.start() first"
-        entry = self._server._session_listeners.get(session.session_id)
-        assert entry is not None, f"no port for session {session.session_id}"
-        _, port = entry
+        port = self._server.get_session_port(session.session_id)
         ca_bundle = self._ca.ca_bundle_path
-        proxy_url = f"http://127.0.0.1:{port}"
         return {
-            "HTTPS_PROXY": proxy_url,
+            "HTTPS_PROXY": f"http://127.0.0.1:{port}",
             "SSL_CERT_FILE": ca_bundle,
             "REQUESTS_CA_BUNDLE": ca_bundle,
             "NODE_EXTRA_CA_CERTS": ca_bundle,

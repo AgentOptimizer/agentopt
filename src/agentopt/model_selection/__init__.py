@@ -8,13 +8,19 @@ from .hill_climbing import HillClimbingModelSelector
 from .lm_proposal import LMProposalModelSelector
 from .random_search import RandomSearchModelSelector
 from .threshold_successive_elimination import ThresholdBanditSEModelSelector
-from .matrix_ucb import MatrixUCBLRFModelSelector, MatrixUCBModelSelector
+
+# Matrix UCB is optional because it requires numpy.
+try:
+    from .matrix_ucb import MatrixUCBLRFModelSelector, MatrixUCBModelSelector
+except ImportError:
+    MatrixUCBModelSelector = None
+    MatrixUCBLRFModelSelector = None
 
 # Bayesian is optional (requires torch/botorch)
 try:
     from .bayesian_optimization import BayesianOptimizationModelSelector
 except ImportError:
-    pass
+    BayesianOptimizationModelSelector = None
 
 __all__ = [
     "BaseModelSelector",

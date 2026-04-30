@@ -150,6 +150,11 @@ def ModelSelector(
                 "Bayesian optimization requires optional dependencies: "
                 'install with `pip install "agentopt-py[bayesian]"`'
             )
+        if method in {"matrix_ucb", "matrix_ucb_lrf"}:
+            raise ImportError(
+                "Matrix UCB requires optional dependencies: "
+                'install with `pip install "agentopt-py[matrix_ucb]"`'
+            )
         raise ValueError(
             f"Unknown method {method!r}. " f"Choose from: {', '.join(_METHODS)}"
         )

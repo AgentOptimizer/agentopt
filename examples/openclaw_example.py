@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from agentopt import ModelSelector
-from agentopt.integrations.openclaw import OpenClawAgent
+from openclaw_agent import OpenClawAgent
 
 # ---------------------------------------------------------------------------
 # Step 1: Evaluation dataset — (input_data, expected_output) pairs.
@@ -52,9 +52,14 @@ dataset = [
 
 
 def eval_fn(expected, actual):
-    if "FAILED" in str(actual):
+    actual_str = str(actual)
+    if "FAILED" in actual_str:
+        print(f"  [debug] sample FAILED: {actual_str[:300]}")
         return 0.0
-    return 1.0 if expected.lower() in str(actual).lower() else 0.0
+    matched = expected.lower() in actual_str.lower()
+    if not matched:
+        print(f"  [debug] no match — expected={expected!r}, got={actual_str[:300]!r}")
+    return 1.0 if matched else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -72,21 +77,33 @@ if __name__ == "__main__":
     try:
         subprocess.run(
             ["openclaw", "--version"],
-            capture_output=True, timeout=10,
-            env={**os.environ, "PATH": f"/opt/homebrew/bin:{os.environ.get('PATH', '')}"},
+            capture_output=True,
+            timeout=10,
+            env={
+                **os.environ,
+                "PATH": f"/opt/homebrew/bin:{os.environ.get('PATH', '')}",
+            },
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         print("Error: openclaw CLI not found. Install with: npm install -g openclaw")
+        sys.exit(1)
+
+    # Verify OpenClaw has been onboarded (config file exists with at least one provider)
+    config_path = os.path.expanduser("~/.openclaw/openclaw.json")
+    if not os.path.exists(config_path):
+        print(
+            f"Error: OpenClaw config not found at {config_path}.\n"
+            "Run `openclaw onboard` to set up at least one provider first."
+        )
         sys.exit(1)
 
     selector = ModelSelector(
         agent=OpenClawAgent,
         models={
             "agent": [
+                "anthropic/claude-haiku-4-5",
                 "anthropic/claude-sonnet-4-6",
-                # Add more models to compare:
-                # "anthropic/claude-haiku-4-5",
-                # "openai/gpt-4o-mini",  # Note: OpenAI token tracking requires stream_options
+                # "openai/gpt-4o-mini",  # Requires OpenAI configured in OpenClaw + stream_options for token tracking
             ],
         },
         eval_fn=eval_fn,

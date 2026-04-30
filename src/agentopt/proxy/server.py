@@ -805,7 +805,7 @@ class ProxyServer:
         for line in text.splitlines():
             if not line.startswith("data: "):
                 continue
-            payload = line[len("data: "):]
+            payload = line[len("data: ") :]
             if payload.strip() == "[DONE]":
                 continue
             try:
@@ -858,6 +858,7 @@ class ProxyServer:
 def _build_http_response(status: int, headers: Dict[str, str], body: bytes,) -> bytes:
     """Build a raw HTTP/1.1 response as bytes."""
     from http import HTTPStatus
+
     try:
         status_text = HTTPStatus(status).phrase
     except ValueError:

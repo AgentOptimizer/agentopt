@@ -1,18 +1,18 @@
-"""OpenClaw integration for agentopt model selection.
+"""OpenClaw adapter for agentopt model selection — example, not part of the public API.
 
 Provides :class:`OpenClawAgent` — an agent wrapper that runs
 ``openclaw infer model run`` as a subprocess and routes all LLM calls
 through agentopt's tracking proxy via config-file patching.
 
-OpenClaw's gateway daemon ignores ``HTTPS_PROXY`` env vars, so the
-integration patches ``~/.openclaw/openclaw.json`` with an explicit
-proxy URL and inline CA certificate before each inference call, then
-restores the original config afterward.
+OpenClaw's gateway daemon ignores ``HTTPS_PROXY`` env vars, so this
+adapter patches ``~/.openclaw/openclaw.json`` with an explicit proxy URL
+and inline CA certificate before each inference call, then restores the
+original config afterward.
 
 Usage::
 
     from agentopt import ModelSelector
-    from agentopt.integrations.openclaw import OpenClawAgent
+    from openclaw_agent import OpenClawAgent
 
     selector = ModelSelector(
         agent=OpenClawAgent,
@@ -33,8 +33,7 @@ import shutil
 import subprocess
 from typing import Any, Dict, Optional
 
-from agentopt.proxy.certs import CertificateAuthority
-from agentopt.proxy.interceptor import _session_port_var
+from agentopt import get_current_session_proxy
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -53,22 +52,13 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
     "mistral": {"baseUrl": "https://api.mistral.ai/v1"},
 }
 
-# Shared CA instance — generates certs once, reused across all calls.
-_ca = CertificateAuthority()
-
 
 # ---------------------------------------------------------------------------
 # Config patching
 # ---------------------------------------------------------------------------
 
 
-def _read_ca_cert_pem() -> str:
-    """Read the proxy CA certificate PEM content."""
-    with open(_ca.ca_cert_path) as f:
-        return f.read().strip()
-
-
-def patch_openclaw_config(proxy_url: str, model: str) -> dict:
+def patch_openclaw_config(proxy_url: str, ca_pem: str, model: str) -> dict:
     """Patch OpenClaw config to route LLM calls through the agentopt proxy.
 
     Sets ``explicit-proxy`` mode with an inline CA cert so OpenClaw trusts
@@ -78,16 +68,22 @@ def patch_openclaw_config(proxy_url: str, model: str) -> dict:
 
     Args:
         proxy_url: The proxy URL, e.g. ``"http://127.0.0.1:54321"``.
+        ca_pem: PEM-encoded CA certificate string for inline trust.
         model: Full model string, e.g. ``"anthropic/claude-sonnet-4-6"``.
 
     Returns:
         The original config dict (deep copy) for restoration.
     """
-    # Parse provider/model_id from "provider/model_id" format.
     if "/" in model:
         provider, model_id = model.split("/", 1)
     else:
         provider, model_id = "anthropic", model
+
+    if not os.path.exists(OPENCLAW_CONFIG):
+        raise FileNotFoundError(
+            f"OpenClaw config not found at {OPENCLAW_CONFIG}. "
+            "Run `openclaw onboard` to set up at least one provider first."
+        )
 
     with open(OPENCLAW_CONFIG) as f:
         config = json.load(f)
@@ -95,37 +91,27 @@ def patch_openclaw_config(proxy_url: str, model: str) -> dict:
     shutil.copy2(OPENCLAW_CONFIG, OPENCLAW_BACKUP)
     original = json.loads(json.dumps(config))  # deep copy
 
-    # Ensure provider path exists.
     config.setdefault("models", {})
     config["models"].setdefault("providers", {})
     config["models"]["providers"].setdefault(provider, {})
 
     prov = config["models"]["providers"][provider]
 
-    # Ensure required fields exist for new providers.
     if "baseUrl" not in prov:
         defaults = PROVIDER_DEFAULTS.get(provider, {})
         prov["baseUrl"] = defaults.get("baseUrl", f"https://api.{provider}.com/v1")
     if "models" not in prov:
         prov["models"] = []
 
-    # Add model to the provider's models list if not already there.
     model_ids = [m.get("id") for m in prov["models"]]
     if model_id not in model_ids:
         prov["models"].append({"id": model_id, "name": model_id, "compat": {}})
 
-    # Inject proxy configuration with inline CA cert.
-    ca_pem = _read_ca_cert_pem()
     prov["request"] = {
-        "proxy": {
-            "mode": "explicit-proxy",
-            "url": proxy_url,
-            "tls": {"ca": ca_pem},
-        },
+        "proxy": {"mode": "explicit-proxy", "url": proxy_url, "tls": {"ca": ca_pem},},
         "allowPrivateNetwork": True,
     }
 
-    # Add model to the agent allowlist.
     config.setdefault("agents", {}).setdefault("defaults", {})
     config["agents"]["defaults"].setdefault("models", {})
     config["agents"]["defaults"]["models"][model] = {}
@@ -156,8 +142,8 @@ class OpenClawAgent:
 
     Each ``run()`` call:
 
-    1. Reads the current session port from agentopt's proxy ContextVar
-    2. Patches ``~/.openclaw/openclaw.json`` to route through that port
+    1. Reads the current session proxy from agentopt
+    2. Patches ``~/.openclaw/openclaw.json`` to route through the proxy
     3. Runs ``openclaw infer model run`` as a subprocess
     4. Restores the original config
     5. Returns the model's text output
@@ -184,16 +170,21 @@ class OpenClawAgent:
         """
         prompt = input_data if isinstance(input_data, str) else input_data["prompt"]
 
-        # Get current session port from agentopt's proxy ContextVar.
-        port = _session_port_var.get()
-        if port is not None:
-            proxy_url = f"http://127.0.0.1:{port}"
-            self._original_config = patch_openclaw_config(proxy_url, self.model)
+        proxy = get_current_session_proxy()
+        if proxy is not None:
+            self._original_config = patch_openclaw_config(
+                proxy.url, proxy.ca_pem, self.model
+            )
 
         cmd = [
-            "openclaw", "infer", "model", "run",
-            "--prompt", prompt,
-            "--model", self.model,
+            "openclaw",
+            "infer",
+            "model",
+            "run",
+            "--prompt",
+            prompt,
+            "--model",
+            self.model,
             "--json",
         ]
 
@@ -203,7 +194,10 @@ class OpenClawAgent:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                env={**os.environ, "PATH": f"/opt/homebrew/bin:{os.environ.get('PATH', '')}"},
+                env={
+                    **os.environ,
+                    "PATH": f"/opt/homebrew/bin:{os.environ.get('PATH', '')}",
+                },
             )
 
             if result.returncode != 0:

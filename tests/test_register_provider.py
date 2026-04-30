@@ -1,8 +1,10 @@
 """Tests for LLMTracker.register_provider covering Direct + CONNECT modes."""
 
+import httpx
 import pytest
 
 from agentopt.proxy import LLMTracker
+from agentopt.proxy.interceptor import _is_llm_request
 
 
 @pytest.fixture
@@ -75,3 +77,54 @@ def test_instance_isolation(tracker):
         assert not other._server._should_intercept("openrouter.ai")
     finally:
         other.stop()
+
+
+def test_register_provider_updates_interceptor_paths(tracker):
+    """register_provider must extend the httpx-patch path set too.
+
+    Without this, in-process calls to a custom provider's path would not
+    match ``_is_llm_request`` and the proxy would never see them — silent
+    loss of tracking.
+    """
+    custom_path = "/openrouter-custom/respond"
+    request = httpx.Request(
+        method="POST", url=f"https://openrouter.ai{custom_path}", json={"prompt": "hi"},
+    )
+    assert not _is_llm_request(request)  # not yet registered
+
+    tracker.register_provider(
+        name="openrouter",
+        base_url="https://openrouter.ai",
+        path_patterns=(custom_path,),
+    )
+    assert _is_llm_request(request)
+
+
+def test_register_provider_records_in_process_call(mock_upstream):
+    """End-to-end: a custom provider's call is rewritten and recorded."""
+    tracker = LLMTracker(cache=False, cache_dir=None)
+    tracker.start()
+    try:
+        # Custom path that none of the built-ins cover.
+        tracker.register_provider(
+            name="local",
+            base_url=mock_upstream.base_url,
+            path_patterns=("/custom/llm/v9/respond",),
+        )
+        with tracker.track(data_id="dp", combo_id="c"):
+            with httpx.Client(base_url=mock_upstream.base_url) as client:
+                resp = client.post(
+                    "/custom/llm/v9/respond",
+                    json={
+                        "model": "gpt-4o-mini",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                )
+                assert resp.status_code == 200
+
+        records = tracker.get_records()
+        assert len(records) == 1
+        assert records[0].request_url.endswith("/custom/llm/v9/respond")
+        assert records[0].status_code == 200
+    finally:
+        tracker.stop()

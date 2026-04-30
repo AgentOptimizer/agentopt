@@ -281,7 +281,21 @@ class ProxyServer:
         target = request_line.split()[1]
         if ":" in target:
             host_part, port_part = target.rsplit(":", 1)
-            hostname, remote_port = host_part, int(port_part)
+            try:
+                remote_port = int(port_part)
+            except ValueError:
+                remote_port = -1
+            if not host_part or not (0 < remote_port < 65536):
+                _write_response(
+                    wfile,
+                    400,
+                    {"content-type": "application/json"},
+                    json.dumps(
+                        {"error": f"malformed CONNECT target: {target!r}"}
+                    ).encode(),
+                )
+                return
+            hostname = host_part
         else:
             hostname, remote_port = target, 443
 

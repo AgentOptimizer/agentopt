@@ -39,6 +39,20 @@ DEFAULT_PROVIDERS: Dict[str, ProviderConfig] = {
             "/v1internal:streamGenerateContent",
         ),
     ),
+    "sutando": ProviderConfig(
+        name="sutando",
+        base_url="https://sutando.org",
+        path_patterns=(
+            "/docs",
+            "/docs/installation",
+            "/docs/eloquent",
+            "/docs/query-builder",
+            "/docs/migrations",
+            "/docs/relationships",
+            "/docs/collections",
+            "/docs/pagination",
+        ),
+    ),
 }
 
 # Header name used by the httpx monkey-patch to pass the original base URL.
@@ -55,6 +69,7 @@ INTERCEPT_HOSTS: Set[str] = {
     "api.anthropic.com",
     "generativelanguage.googleapis.com",
     "cloudcode-pa.googleapis.com",
+    "sutando.org",
     "api.mistral.ai",
     "api.groq.com",
     "api.together.xyz",

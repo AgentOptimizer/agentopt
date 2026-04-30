@@ -141,6 +141,7 @@ class CertificateAuthority:
         cert_pem, key_pem = self._get_leaf_cert(hostname)
 
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.set_alpn_protocols(["http/1.1"])
         ctx.load_cert_chain(
             certfile=_write_temp_pem(cert_pem, self._ca_dir, f"{hostname}.cert.pem"),
             keyfile=_write_temp_pem(key_pem, self._ca_dir, f"{hostname}.key.pem"),

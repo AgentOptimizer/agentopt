@@ -167,6 +167,7 @@ AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we 
 | AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
 | OpenAI-Compatible API SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
 | Terminal Bench | Supported | [terminal_bench_example.py](examples/terminal_bench_example.py) |
+| OpenClaw | Supported | [openclaw_example.py](examples/openclaw_example.py) |
 
 ## Selection Algorithms
 
@@ -214,6 +215,34 @@ For each model combination, AgentOpt:
 5. Reports the Pareto-optimal combinations
 
 Response caching (in-memory + SQLite on disk) is enabled by default — identical LLM calls are never repeated, making iterative experimentation fast and cheap.
+
+### Subprocess / External Agents (OpenClaw, Terminal Bench, etc.)
+
+For agents that run as **external processes** (not in-process Python), AgentOpt uses a localhost HTTP proxy with TLS interception via a local CA certificate. The subprocess's LLM calls route through the proxy, which tracks tokens, latency, and cost transparently.
+
+For most subprocess agents, `agentopt.get_current_session_env()` provides the right env vars (`HTTPS_PROXY`, `SSL_CERT_FILE`) to route calls through the proxy. For agents like **OpenClaw** that don't read env vars, AgentOpt provides a built-in integration that patches the agent's config file automatically:
+
+```python
+from agentopt import ModelSelector
+from agentopt.integrations.openclaw import OpenClawAgent
+
+selector = ModelSelector(
+    agent=OpenClawAgent,
+    models={
+        "agent": [
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-haiku-4-5",
+        ],
+    },
+    eval_fn=eval_fn,
+    dataset=dataset,
+)
+
+results = selector.select_best(parallel=False)  # sequential — shared config file
+results.print_summary()
+```
+
+See [openclaw_example.py](examples/openclaw_example.py) for a complete working example.
 
 ## Results API
 

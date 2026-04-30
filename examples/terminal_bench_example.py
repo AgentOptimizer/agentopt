@@ -20,6 +20,7 @@ Prerequisites:
 """
 
 import subprocess
+import sys
 
 from dotenv import load_dotenv
 
@@ -67,7 +68,8 @@ class TerminalBenchAgent:
         import os
         import agentopt
 
-        env = {**os.environ, **agentopt.get_current_session_env()}
+        proxy = agentopt.get_current_session_proxy()
+        env = {**os.environ, **(proxy.env_dict() if proxy else {})}
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=TB_TIMEOUT, env=env,
@@ -112,6 +114,34 @@ def eval_fn(expected, actual):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Verify Docker daemon is running — `tb run` launches a container per task
+    # and fails fast (~5s) without a clear error if Docker isn't reachable,
+    # silently scoring every task 0%.
+    try:
+        result = subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            print(
+                "Error: Docker daemon is not running.\n"
+                "Terminal Bench launches a Docker container per task. "
+                "Start Docker Desktop (or `colima start`) and try again.\n"
+                f"\ndocker info said:\n{result.stderr.strip()[:300]}"
+            )
+            sys.exit(1)
+    except FileNotFoundError:
+        print(
+            "Error: docker CLI not found. "
+            "Install Docker Desktop (https://www.docker.com/products/docker-desktop) "
+            "or another Docker-compatible runtime, then try again."
+        )
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print(
+            "Error: `docker info` timed out — the Docker daemon may be hung. Restart Docker and try again."
+        )
+        sys.exit(1)
+
     selector = ModelSelector(
         agent=TerminalBenchAgent,
         models={"agent": ["openai/gpt-4o", "openai/gpt-4o-mini",],},

@@ -57,6 +57,24 @@ _HOP_BY_HOP = frozenset(
 )
 
 
+# OpenAI-compatible chat/completions paths. Used to detect the streaming
+# `stream_options.include_usage` quirk (Anthropic uses `/v1/messages` and
+# always emits usage, so it's excluded).
+_OPENAI_COMPAT_PATHS = ("/v1/chat/completions", "/v1/completions", "/chat/completions")
+
+
+def _is_openai_compatible_url(url: str) -> bool:
+    """True when *url* targets an OpenAI-style chat/completions endpoint."""
+    path = urlparse(url).path or ""
+    return any(path.endswith(p) for p in _OPENAI_COMPAT_PATHS)
+
+
+def _has_include_usage(request_body: dict) -> bool:
+    """True when the request opts in to streaming usage frames."""
+    opts = request_body.get("stream_options")
+    return isinstance(opts, dict) and opts.get("include_usage") is True
+
+
 def _parse_usage(body: dict) -> Optional[dict]:
     """Extract model and token usage from an LLM API response body."""
     model = body.get("model")
@@ -100,6 +118,10 @@ class ProxyServer:
         # register_provider() extends this with hostnames from custom providers.
         self._intercept_hosts: Set[str] = set(INTERCEPT_HOSTS)
         self._intercept_patterns: List[str] = list(INTERCEPT_PATTERNS)
+
+        # Hostnames we've already warned about for the OpenAI streaming
+        # `stream_options.include_usage` quirk. Deduped to avoid log spam.
+        self._openai_stream_usage_warned: Set[str] = set()
 
         # Lifecycle
         self._thread: Optional[threading.Thread] = None
@@ -437,18 +459,28 @@ class ProxyServer:
                 upstream_url = f"https://{hostname}{path}"
 
                 # Cache check.
-                if not is_streaming and self._cache is not None and request_body:
+                if self._cache is not None and request_body:
                     cache_key = _make_cache_key(request_body)
                     entry = self._cache.get(cache_key)
                     if entry is not None:
-                        self._record_call(
-                            session=session,
-                            request_body=request_body,
-                            response_body_bytes=entry.response_bytes,
-                            request_url=upstream_url,
-                            latency=entry.latency_seconds,
-                            cached=True,
-                        )
+                        if is_streaming:
+                            self._record_streaming_call(
+                                session=session,
+                                request_body=request_body,
+                                raw_sse=entry.response_bytes,
+                                request_url=upstream_url,
+                                latency=entry.latency_seconds,
+                                cached=True,
+                            )
+                        else:
+                            self._record_call(
+                                session=session,
+                                request_body=request_body,
+                                response_body_bytes=entry.response_bytes,
+                                request_url=upstream_url,
+                                latency=entry.latency_seconds,
+                                cached=True,
+                            )
                         wfile.write(
                             _build_http_response(
                                 200, entry.response_headers, entry.response_bytes,
@@ -498,16 +530,25 @@ class ProxyServer:
                 latency = time.monotonic() - t0
 
                 # Always record — 2xx, 4xx, 5xx all count toward cost/latency.
-                self._record_call(
-                    session=session,
-                    request_body=request_body,
-                    response_body_bytes=resp_body,
-                    request_url=upstream_url,
-                    latency=latency,
-                    cached=False,
-                    status_code=resp_status,
-                    error=None if resp_status == 200 else f"HTTP {resp_status}",
-                )
+                if is_streaming and resp_status == 200:
+                    self._record_streaming_call(
+                        session=session,
+                        request_body=request_body,
+                        raw_sse=resp_body,
+                        request_url=upstream_url,
+                        latency=latency,
+                    )
+                else:
+                    self._record_call(
+                        session=session,
+                        request_body=request_body,
+                        response_body_bytes=resp_body,
+                        request_url=upstream_url,
+                        latency=latency,
+                        cached=False,
+                        status_code=resp_status,
+                        error=None if resp_status == 200 else f"HTTP {resp_status}",
+                    )
                 if resp_status == 200 and self._cache is not None and request_body:
                     cache_key = _make_cache_key(request_body)
                     self._cache.put(
@@ -597,19 +638,29 @@ class ProxyServer:
 
         upstream_url = target_base.rstrip("/") + upstream_path
 
-        # Cache check (non-streaming only).
-        if not is_streaming and self._cache is not None and request_body:
+        # Cache check.
+        if self._cache is not None and request_body:
             cache_key = _make_cache_key(request_body)
             entry = self._cache.get(cache_key)
             if entry is not None:
-                self._record_call(
-                    session=session,
-                    request_body=request_body,
-                    response_body_bytes=entry.response_bytes,
-                    request_url=upstream_url,
-                    latency=entry.latency_seconds,
-                    cached=True,
-                )
+                if is_streaming:
+                    self._record_streaming_call(
+                        session=session,
+                        request_body=request_body,
+                        raw_sse=entry.response_bytes,
+                        request_url=upstream_url,
+                        latency=entry.latency_seconds,
+                        cached=True,
+                    )
+                else:
+                    self._record_call(
+                        session=session,
+                        request_body=request_body,
+                        response_body_bytes=entry.response_bytes,
+                        request_url=upstream_url,
+                        latency=entry.latency_seconds,
+                        cached=True,
+                    )
                 resp_headers = {
                     k: v
                     for k, v in entry.response_headers.items()
@@ -761,6 +812,7 @@ class ProxyServer:
         raw_sse: bytes,
         request_url: str,
         latency: float,
+        cached: bool = False,
     ) -> None:
         """Best-effort usage extraction from accumulated SSE data."""
         text = raw_sse.decode("utf-8", errors="replace")
@@ -768,7 +820,11 @@ class ProxyServer:
         prompt_tokens = 0
         completion_tokens = 0
 
-        for line in reversed(text.splitlines()):
+        # Scan all SSE lines to find usage from both message_start (input)
+        # and message_delta (output).  Anthropic splits usage across events:
+        #   message_start  → message.usage (input_tokens, cache_read/creation)
+        #   message_delta  → usage (output_tokens, plus input echo)
+        for line in text.splitlines():
             if not line.startswith("data: "):
                 continue
             payload = line[len("data: ") :]
@@ -778,16 +834,26 @@ class ProxyServer:
                 chunk = json.loads(payload)
             except json.JSONDecodeError:
                 continue
+
+            # Check top-level usage (message_delta)
             usage = chunk.get("usage")
+            # Also check message.usage (message_start)
+            msg = chunk.get("message")
+            if isinstance(msg, dict) and msg.get("usage"):
+                usage = usage or msg["usage"]
+
             if usage:
-                prompt_tokens = (
-                    usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+                inp = (
+                    (usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+                    + (usage.get("cache_read_input_tokens") or 0)
+                    + (usage.get("cache_creation_input_tokens") or 0)
                 )
-                completion_tokens = (
-                    usage.get("completion_tokens") or usage.get("output_tokens") or 0
-                )
+                out = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                if inp > prompt_tokens:
+                    prompt_tokens = inp
+                if out > completion_tokens:
+                    completion_tokens = out
                 model = chunk.get("model", model)
-                break
 
         record = CallRecord(
             data_id=session.data_id,
@@ -801,9 +867,32 @@ class ProxyServer:
             request_body=request_body,
             response_body={},
             timestamp=datetime.now(timezone.utc).isoformat(),
-            cached=False,
+            cached=cached,
         )
         self.session_manager.add_record(session.session_id, record)
+
+        # Warn once per hostname when an OpenAI-compatible streaming call
+        # comes back with 0 tokens because the request is missing
+        # `stream_options.include_usage: true`. OpenAI-style endpoints omit
+        # the final usage frame by default, so the proxy has nothing to
+        # parse. Anthropic streams aren't affected (they always emit usage).
+        if (
+            prompt_tokens == 0
+            and completion_tokens == 0
+            and _is_openai_compatible_url(request_url)
+            and request_body.get("stream") is True
+            and not _has_include_usage(request_body)
+        ):
+            hostname = urlparse(request_url).hostname or request_url
+            if hostname not in self._openai_stream_usage_warned:
+                self._openai_stream_usage_warned.add(hostname)
+                logger.warning(
+                    "agentopt: streaming request to %s returned 0 tokens. "
+                    "OpenAI-compatible streams omit usage by default — set "
+                    '`stream_options={"include_usage": True}` on the request '
+                    "to enable token tracking. (Anthropic streams are unaffected.)",
+                    hostname,
+                )
 
 
 # ======================================================================
@@ -814,6 +903,7 @@ class ProxyServer:
 def _build_http_response(status: int, headers: Dict[str, str], body: bytes,) -> bytes:
     """Build a raw HTTP/1.1 response as bytes."""
     from http import HTTPStatus
+
     try:
         status_text = HTTPStatus(status).phrase
     except ValueError:

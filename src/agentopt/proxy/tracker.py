@@ -186,9 +186,21 @@ class LLMTracker:
             recorder=self._recorder,
             cache=self._response_cache,
         )
-        port = master.start()
-        with self._masters_lock:
-            self._masters[session.session_id] = master
+        try:
+            port = master.start()
+            with self._masters_lock:
+                self._masters[session.session_id] = master
+        except Exception:
+            try:
+                master.stop()
+            except Exception:
+                logger.exception(
+                    "Failed to stop SessionMaster after startup failure for session %s",
+                    session.session_id,
+                )
+            finally:
+                self._session_manager.end_session(session.session_id)
+            raise
 
         active = ActiveSession(
             session=session,

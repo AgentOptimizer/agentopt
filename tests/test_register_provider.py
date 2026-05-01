@@ -90,14 +90,32 @@ def test_register_provider_updates_interceptor_paths(tracker):
     request = httpx.Request(
         method="POST", url=f"https://openrouter.ai{custom_path}", json={"prompt": "hi"},
     )
-    assert not _is_llm_request(request)  # not yet registered
+    assert not _is_llm_request(request, tracker._registry.path_patterns)
 
     tracker.register_provider(
         name="openrouter",
         base_url="https://openrouter.ai",
         path_patterns=(custom_path,),
     )
-    assert _is_llm_request(request)
+    assert _is_llm_request(request, tracker._registry.path_patterns)
+
+
+def test_register_provider_paths_isolated_between_instances(tracker):
+    """Path patterns registered on one tracker must not leak to another."""
+    custom_path = "/openrouter-custom/respond"
+    tracker.register_provider(
+        name="openrouter",
+        base_url="https://openrouter.ai",
+        path_patterns=(custom_path,),
+    )
+    assert custom_path in tracker._registry.path_patterns
+
+    other = LLMTracker(cache=False, cache_dir=None)
+    other.start()
+    try:
+        assert custom_path not in other._registry.path_patterns
+    finally:
+        other.stop()
 
 
 def test_register_provider_records_in_process_call(mock_upstream):

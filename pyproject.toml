@@ -30,8 +30,6 @@ dependencies = [
     "aiohttp>=3.9.0",
     "mitmproxy>=12,<13",
     "numpy>=1.26",
-    "python-dotenv>=1.0",
-    "matplotlib>=3.5",
 ]
 
 [project.optional-dependencies]

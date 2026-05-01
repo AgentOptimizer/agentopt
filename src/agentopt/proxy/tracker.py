@@ -32,7 +32,6 @@ from .interceptor import (
     ActiveSession,
     _active_session_var,
     install_redirect,
-    register_extra_llm_paths,
     uninstall_redirect,
 )
 from .mitm_runner import SessionMaster
@@ -207,6 +206,7 @@ class LLMTracker:
             recorder=self._recorder,
             cache=self._response_cache,
             port=port,
+            path_patterns=self._registry.path_patterns,
         )
         token = _active_session_var.set(active)
 
@@ -256,15 +256,14 @@ class LLMTracker:
     ) -> None:
         """Add or replace a provider.
 
-        Updates two surfaces at once:
-
-        * the shared ``ProviderRegistry`` (subprocess path — addons see
-          new intercept hosts immediately via the shared reference)
-        * the in-process httpx patch's path-pattern set (so direct-mode
-          calls to the new provider are recorded)
+        The shared ``ProviderRegistry`` is updated for both interception
+        paths: the subprocess addon sees the new intercept hostname
+        immediately via the shared reference, and the in-process httpx
+        patch picks up the new path patterns at the next ``track()``
+        entry (which snapshots ``registry.path_patterns`` onto the
+        ``ActiveSession``).
         """
         self._registry.register(name, base_url, path_patterns)
-        register_extra_llm_paths(path_patterns)
 
     # ------------------------------------------------------------------
     # Cache management

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import fnmatch
 from dataclasses import dataclass
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 
@@ -108,6 +108,14 @@ class ProviderRegistry:
             p.hostname for p in self.providers.values() if p.hostname
         }
         self._intercept_patterns = list(_INTERCEPT_PATTERNS)
+        # Aggregate of all providers' path_patterns — consulted by the
+        # in-process httpx wrapper.  Rebuilt-on-write so the wrapper can
+        # iterate it lock-free.
+        self.path_patterns: FrozenSet[str] = frozenset(
+            pattern
+            for provider in self.providers.values()
+            for pattern in provider.path_patterns
+        )
 
     def register(
         self, name: str, base_url: str, path_patterns: Tuple[str, ...],
@@ -121,6 +129,9 @@ class ProviderRegistry:
         self.providers[name] = provider
         if provider.hostname:
             self._intercept_hosts.add(provider.hostname)
+        self.path_patterns = frozenset(
+            pattern for p in self.providers.values() for pattern in p.path_patterns
+        )
 
     def detect(self, path: str) -> Optional[Provider]:
         """First provider whose path pattern is a substring of *path*."""

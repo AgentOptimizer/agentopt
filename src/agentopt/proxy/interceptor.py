@@ -18,16 +18,14 @@ The httpx wrapper is a process-wide monkey-patch installed once by
 from __future__ import annotations
 
 import json
-import threading
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional
+from typing import Any, Callable, Dict, FrozenSet, Optional
 
 import httpx
 
 from .cache import CacheEntry, ResponseCache, _make_cache_key
-from .providers import DEFAULT_PROVIDERS
 from .recording import Recorder
 from .session import SessionInfo
 from .usage import is_streaming_request
@@ -40,12 +38,19 @@ from .usage import is_streaming_request
 
 @dataclass(frozen=True)
 class ActiveSession:
-    """Per-track() bundle: what the wrapper needs to record a call."""
+    """Per-track() bundle: what the wrapper needs to record a call.
+
+    ``path_patterns`` is a snapshot of the owning tracker's
+    :class:`ProviderRegistry` patterns at ``track()`` entry — consulting
+    it (rather than a process-global set) keeps registrations on one
+    tracker from leaking into other tracker instances.
+    """
 
     session: SessionInfo
     recorder: Recorder
     cache: Optional[ResponseCache]
     port: int  # ``SessionMaster`` port — for ``get_current_session_proxy``
+    path_patterns: FrozenSet[str]
 
 
 _active_session_var: ContextVar[Optional[ActiveSession]] = ContextVar(
@@ -56,37 +61,13 @@ _active_session_var: ContextVar[Optional[ActiveSession]] = ContextVar(
 # ---------------------------------------------------------------------------
 # Path-pattern detection
 # ---------------------------------------------------------------------------
-# Mutable so ``LLMTracker.register_provider`` can extend it.  We use a
-# ``frozenset`` rebuilt-on-write under a lock — set mutation during
-# iteration would be a real race in the wrapper hot path, and the
-# rebuild-then-rebind pattern is atomic under the GIL so reads need no lock.
-
-_path_patterns_lock = threading.Lock()
-_LLM_PATH_PATTERNS: FrozenSet[str] = frozenset(
-    pattern
-    for provider in DEFAULT_PROVIDERS.values()
-    for pattern in provider.path_patterns
-)
 
 
-def register_extra_llm_paths(patterns: Iterable[str]) -> None:
-    """Add path patterns the wrapper should treat as LLM endpoints.
-
-    Called by :meth:`LLMTracker.register_provider` so in-process httpx
-    calls to runtime-registered providers are recorded like the built-ins.
-    """
-    global _LLM_PATH_PATTERNS
-    with _path_patterns_lock:
-        _LLM_PATH_PATTERNS = _LLM_PATH_PATTERNS | frozenset(patterns)
-
-
-def _is_llm_request(request: httpx.Request) -> bool:
-    """True if *request* targets a known LLM API endpoint via POST."""
+def _is_llm_request(request: httpx.Request, patterns: FrozenSet[str]) -> bool:
+    """True if *request* targets an LLM endpoint listed in *patterns* via POST."""
     if request.method != "POST":
         return False
     path = request.url.raw_path.decode("ascii", errors="ignore")
-    # Single read — name binding is atomic, so we get a consistent snapshot.
-    patterns = _LLM_PATH_PATTERNS
     return any(pattern in path for pattern in patterns)
 
 
@@ -198,10 +179,8 @@ def install_redirect() -> None:
     def _patched_sync_send(
         self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any,
     ) -> httpx.Response:
-        if not _is_llm_request(request):
-            return _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
         active = _active_session_var.get()
-        if active is None:
+        if active is None or not _is_llm_request(request, active.path_patterns):
             return _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
 
         json_body = _decode_json_body(request.content)
@@ -232,10 +211,8 @@ def install_redirect() -> None:
     async def _patched_async_send(
         self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any,
     ) -> httpx.Response:
-        if not _is_llm_request(request):
-            return await _original_async_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
         active = _active_session_var.get()
-        if active is None:
+        if active is None or not _is_llm_request(request, active.path_patterns):
             return await _original_async_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
 
         json_body = _decode_json_body(request.content)

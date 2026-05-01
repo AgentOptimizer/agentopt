@@ -109,10 +109,9 @@ class AgentoptAddon:
             200, entry.response_bytes, _safe_response_headers(entry.response_headers),
         )
 
-        # Record the cached call now (we won't see the response hook —
-        # short-circuiting bypasses upstream forwarding but mitmproxy
-        # still calls `response` for synthesized responses; we
-        # de-duplicate via a metadata flag below).
+        # Mark the flow as a cache hit. mitmproxy still invokes `response`
+        # for synthesized responses, and that hook does the actual
+        # recording using this metadata and the cached latency.
         flow.metadata["agentopt.cached"] = True
         flow.metadata["agentopt.cached_latency"] = entry.latency_seconds
 

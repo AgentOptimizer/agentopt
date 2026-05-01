@@ -109,12 +109,12 @@ def _gemini_completion_tokens(usage: dict) -> int:
 
     total = usage.get("totalTokenCount")
     prompt = usage.get("promptTokenCount")
-    if isinstance(total, int) and isinstance(prompt, int) and total > prompt:
-        return total - prompt
+    if isinstance(total, int) and isinstance(prompt, int) and total >= prompt:
+        return max(0, total - prompt)
 
     raise UsageExtractionError(
         f"no Gemini completion-token field in usage dict — searched "
-        f"{list(_GEMINI_COMPLETION_KEYS)} (or totalTokenCount > "
+        f"{list(_GEMINI_COMPLETION_KEYS)} (or totalTokenCount >= "
         f"promptTokenCount). keys present: {sorted(usage.keys())}"
     )
 

@@ -102,7 +102,7 @@ class SessionManager:
     def force_end_all(self) -> None:
         """Move every active session to the ended list.
 
-        Called during ``ProxyServer.stop()`` to ensure no records are lost.
+        Called during ``LLMTracker.stop()`` to ensure no records are lost.
         """
         with self._lock:
             for sid, session in self._active.items():

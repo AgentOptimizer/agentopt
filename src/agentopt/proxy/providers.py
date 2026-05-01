@@ -1,13 +1,14 @@
 """LLM provider catalog: hostnames, base URLs, path patterns.
 
-A provider tells the proxy two things:
+A provider tells the two interception paths what to look for:
 
-* its **hostname** — CONNECT mode uses this to decide whether to MITM
-  the TLS tunnel.
-* its **path patterns** — direct mode uses these to auto-route requests
-  by URL path when no ``X-AgentOpt-Target`` header is set.
+* its **hostname** — the mitmproxy addon's ``tls_clienthello`` hook uses
+  this to decide whether to TLS-terminate the subprocess's HTTPS, or
+  pass it through encrypted.
+* its **path patterns** — the in-process httpx wrapper uses these to
+  detect LLM requests it should record.
 
-`ProviderRegistry` owns the catalog per `ProxyServer` instance, so a
+``ProviderRegistry`` owns the catalog per ``LLMTracker`` instance, so a
 ``register_provider`` call on one tracker doesn't leak to another.
 
 The free functions ``detect_provider`` / ``resolve_target`` /
@@ -23,9 +24,10 @@ from typing import Dict, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 
-# Header set by the httpx monkey-patch to carry the original base URL
-# through the localhost rewrite.  Direct-mode resolution checks for it
-# before falling back to path-pattern detection.
+# Legacy header from the previous "rewrite to localhost" interceptor
+# design.  Kept only because ``resolve_target`` exposes it for callers
+# that may still set it; the current httpx wrapper records directly
+# without rewriting.
 TARGET_HEADER = "x-agentopt-target"
 
 
@@ -93,10 +95,11 @@ _INTERCEPT_PATTERNS: Tuple[str, ...] = (
 
 
 class ProviderRegistry:
-    """Per-instance LLM provider catalog used by ``ProxyServer``.
+    """Per-instance LLM provider catalog used by ``LLMTracker``.
 
-    Holds one mutable copy of the built-in providers plus the CONNECT-mode
-    intercept set.  Each ``ProxyServer`` instance gets its own.
+    Holds one mutable copy of the built-in providers plus the intercept
+    set used by the mitmproxy addon's ``tls_clienthello`` hook.  Each
+    ``LLMTracker`` instance gets its own.
     """
 
     def __init__(self) -> None:

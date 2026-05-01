@@ -18,7 +18,7 @@ def tracker():
 def test_register_provider_adds_hostname_to_intercept_set(tracker):
     """register_provider should extend both the provider registry and
     the CONNECT intercept set."""
-    assert not tracker._server._should_intercept("openrouter.ai")
+    assert not tracker._registry.should_intercept("openrouter.ai")
 
     tracker.register_provider(
         name="openrouter",
@@ -26,10 +26,10 @@ def test_register_provider_adds_hostname_to_intercept_set(tracker):
         path_patterns=("/api/v1/chat/completions",),
     )
 
-    # Direct mode: path-pattern auto-detection registry updated.
-    assert "openrouter" in tracker._server._providers
-    # CONNECT mode: hostname added to intercept set.
-    assert tracker._server._should_intercept("openrouter.ai")
+    # Path-pattern registry updated (in-process httpx wrapper detects it).
+    assert "openrouter" in tracker._registry.providers
+    # Hostname added to intercept set (subprocess CONNECT path).
+    assert tracker._registry.should_intercept("openrouter.ai")
 
 
 def test_register_provider_strips_port_and_scheme(tracker):
@@ -39,27 +39,27 @@ def test_register_provider_strips_port_and_scheme(tracker):
         base_url="http://localhost:8000/v1",
         path_patterns=("/chat/completions",),
     )
-    assert tracker._server._should_intercept("localhost")
+    assert tracker._registry.should_intercept("localhost")
 
 
 def test_unknown_host_not_intercepted(tracker):
     """Hosts not registered should not be intercepted — they pass through."""
-    assert not tracker._server._should_intercept("example.com")
-    assert not tracker._server._should_intercept("random.site.net")
+    assert not tracker._registry.should_intercept("example.com")
+    assert not tracker._registry.should_intercept("random.site.net")
 
 
 def test_default_hosts_still_intercepted(tracker):
     """Built-in providers stay intercepted after init."""
-    assert tracker._server._should_intercept("api.openai.com")
-    assert tracker._server._should_intercept("api.anthropic.com")
-    assert tracker._server._should_intercept("generativelanguage.googleapis.com")
-    assert tracker._server._should_intercept("cloudcode-pa.googleapis.com")
+    assert tracker._registry.should_intercept("api.openai.com")
+    assert tracker._registry.should_intercept("api.anthropic.com")
+    assert tracker._registry.should_intercept("generativelanguage.googleapis.com")
+    assert tracker._registry.should_intercept("cloudcode-pa.googleapis.com")
 
 
 def test_wildcard_patterns_work(tracker):
     """Wildcard patterns (e.g. Azure OpenAI) still match after refactor."""
-    assert tracker._server._should_intercept("my-resource.openai.azure.com")
-    assert tracker._server._should_intercept("bedrock-runtime.us-east-1.amazonaws.com")
+    assert tracker._registry.should_intercept("my-resource.openai.azure.com")
+    assert tracker._registry.should_intercept("bedrock-runtime.us-east-1.amazonaws.com")
 
 
 def test_instance_isolation(tracker):
@@ -69,12 +69,12 @@ def test_instance_isolation(tracker):
         base_url="https://openrouter.ai",
         path_patterns=("/api/v1/chat/completions",),
     )
-    assert tracker._server._should_intercept("openrouter.ai")
+    assert tracker._registry.should_intercept("openrouter.ai")
 
     other = LLMTracker(cache=False, cache_dir=None)
     other.start()
     try:
-        assert not other._server._should_intercept("openrouter.ai")
+        assert not other._registry.should_intercept("openrouter.ai")
     finally:
         other.stop()
 

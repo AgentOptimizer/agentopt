@@ -1,46 +1,109 @@
-"""LLMTracker — proxy-based LLM call tracking and session management."""
+"""LLMTracker — proxy-based LLM call tracking and session management.
 
+Two interception paths, separately:
+
+* **In-process agents** — :mod:`agentopt.proxy.interceptor` patches
+  ``httpx`` so calls inside a ``track()`` block are recorded directly
+  (cache-then-forward).  No localhost listener.
+* **Subprocess agents** — each ``track()`` eagerly spins up a
+  :class:`SessionMaster` (one mitmproxy ``DumpMaster`` on a dedicated
+  ephemeral port).  Subprocesses inherit ``HTTPS_PROXY`` and the merged
+  CA bundle via :meth:`get_session_env`.
+
+The two paths share the same recording (:mod:`recording.Recorder`),
+cache (:mod:`cache.ResponseCache`), and provider registry
+(:mod:`providers.ProviderRegistry`), so a record is a record regardless
+of how the call arrived.
+"""
+
+from __future__ import annotations
+
+import logging
 import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+import certifi
+
 from .cache import ResponseCache
-from .certs import CertificateAuthority
 from .interceptor import (
-    _session_port_var,
+    ActiveSession,
+    _active_session_var,
     install_redirect,
     register_extra_llm_paths,
     uninstall_redirect,
 )
+from .mitm_runner import SessionMaster
 from .models import CallRecord
-from .server import ProxyServer
-from .session import SessionInfo
+from .providers import ProviderRegistry
+from .recording import Recorder
+from .session import SessionInfo, SessionManager
+
+logger = logging.getLogger(__name__)
+
+
+# mitmproxy's confdir defaults to ~/.mitmproxy.  We don't override it —
+# users may already have a mitmproxy CA installed in their browser/system
+# keychain, and reusing it avoids re-prompting them.
+_MITMPROXY_CONFDIR = Path(os.path.expanduser("~/.mitmproxy"))
+_MITMPROXY_CA_CERT = _MITMPROXY_CONFDIR / "mitmproxy-ca-cert.pem"
+# Where we write the merged bundle (mitmproxy CA + system CAs from certifi).
+# Subprocesses set SSL_CERT_FILE to this so they can verify *both*
+# mitmproxy-impersonated LLM hosts AND real (passthrough) hosts.
+_AGENTOPT_BUNDLE = _MITMPROXY_CONFDIR / "agentopt-bundle.pem"
+
+
+def _ensure_ca_bundle() -> str:
+    """Return path to a CA bundle = mitmproxy CA + certifi system CAs.
+
+    Subprocesses need this — setting ``SSL_CERT_FILE`` to mitmproxy's CA
+    alone would break verification for any host the proxy *doesn't* MITM
+    (passthrough hosts that the subprocess talks to directly).
+
+    Idempotent: if the bundle is already up to date with mitmproxy's CA,
+    no work is done.
+    """
+    if not _MITMPROXY_CA_CERT.exists():
+        raise RuntimeError(
+            f"mitmproxy CA cert not found at {_MITMPROXY_CA_CERT}. "
+            "Has any SessionMaster started yet?"
+        )
+
+    ca_mtime = _MITMPROXY_CA_CERT.stat().st_mtime
+    if _AGENTOPT_BUNDLE.exists() and _AGENTOPT_BUNDLE.stat().st_mtime >= ca_mtime:
+        return str(_AGENTOPT_BUNDLE)
+
+    with open(certifi.where(), "rb") as f:
+        system_pem = f.read()
+    with open(_MITMPROXY_CA_CERT, "rb") as f:
+        mitm_pem = f.read()
+
+    # Append rather than prepend so existing trust roots take precedence.
+    _AGENTOPT_BUNDLE.write_bytes(system_pem + b"\n" + mitm_pem)
+    return str(_AGENTOPT_BUNDLE)
 
 
 class LLMTracker:
-    """Tracks LLM API calls via a local HTTP proxy server.
+    """Tracks LLM API calls via in-process httpx patching + per-session mitmproxy.
 
-    Each :meth:`track` session gets its own TCP port.  The port **is** the
-    session identity — no session IDs in URLs or ContextVars needed.
+    Every :meth:`track` block:
 
-    * **In-process agents** — the httpx monkey-patch rewrites requests to
-      ``http://127.0.0.1:{session_port}/...`` (plaintext HTTP, bypasses
-      ``HTTPS_PROXY``).
-    * **Subprocess agents** — inherit ``HTTPS_PROXY`` pointing at the same
-      session port → CONNECT-mode TLS termination.
-
-    One mechanism, one port per session, both agent types.
+    * Records in-process httpx calls directly (cache → forward → record).
+    * Eagerly spins up a per-session ``SessionMaster`` so
+      :meth:`get_session_env` can hand subprocesses a working HTTPS_PROXY
+      pair without an extra round-trip.
 
     Usage::
 
         tracker = LLMTracker()
         tracker.start()
 
-        with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku"):
+        with tracker.track(data_id="dp_1", combo_id="gpt4o+haiku") as session:
             result = agent.run(input_data)        # in-process: just works
-            subprocess.run(["gemini", "cli", ...]) # subprocess: just works
+            env = {**os.environ, **tracker.get_session_env(session)}
+            subprocess.run(["gemini", "cli", ...], env=env)  # subprocess: just works
 
         usage = tracker.get_usage(combo_id="gpt4o+haiku")
         tracker.stop()
@@ -57,33 +120,42 @@ class LLMTracker:
         self._lock = threading.Lock()
         self._active = False
         self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
-        self._ca = CertificateAuthority()
-        self._server: Optional[ProxyServer] = None
+        self._session_manager = SessionManager()
+        self._registry = ProviderRegistry()
+        self._recorder = Recorder(self._session_manager)
+        # session_id -> SessionMaster
+        self._masters: Dict[str, SessionMaster] = {}
+        self._masters_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Launch the proxy server and install the httpx redirect."""
+        """Install the httpx redirect.  Subprocess masters spin up per-track()."""
         if self._active:
             return
-        self._server = ProxyServer(cache=self._response_cache, ca=self._ca)
-        self._server.start()
         install_redirect()
         self._active = True
 
     def stop(self) -> None:
-        """Shut down the proxy, restore httpx, and flush the cache."""
+        """Tear down all live SessionMasters, restore httpx, flush cache."""
         if not self._active:
             return
-        if self._server is not None:
-            uninstall_redirect()
-            self._server.session_manager.force_end_all()
-            with self._lock:
-                self._records.extend(self._server.session_manager.get_all_records())
-            self._server.stop()
-            self._server = None
+        uninstall_redirect()
+        # Stop any masters that survived (track() should have closed them,
+        # but in test/error paths they may linger).
+        with self._masters_lock:
+            masters = list(self._masters.values())
+            self._masters.clear()
+        for m in masters:
+            try:
+                m.stop()
+            except Exception:
+                logger.debug("ignored exception in SessionMaster.stop", exc_info=True)
+        self._session_manager.force_end_all()
+        with self._lock:
+            self._records.extend(self._session_manager.get_all_records())
         if self._response_cache is not None:
             self._response_cache.close()
         self._active = False
@@ -96,37 +168,45 @@ class LLMTracker:
     def track(
         self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
     ):
-        """Create a tracking session with its own proxy port.
+        """Create a tracking session with its own mitmproxy port.
 
-        Sets the ``_session_port_var`` ContextVar so the httpx monkey-patch
-        routes in-process LLM calls to the session port.  Does NOT mutate
-        ``os.environ`` — subprocess agents should pass
-        :meth:`get_session_env` explicitly::
-
-            with tracker.track(...) as session:
-                env = {**os.environ, **tracker.get_session_env(session)}
-                subprocess.run(["tb", "run", ...], env=env)
-
-        This keeps parallel evaluation fully safe — each subprocess gets
-        its own env dict pointing at its own port.
+        Sets the ``_active_session_var`` ContextVar so the in-process
+        httpx patch records calls into this session.  Eagerly starts a
+        ``SessionMaster`` so subprocesses can use ``get_session_env``
+        without further setup.
         """
-        assert self._server is not None, "call tracker.start() first"
-        session = self._server.session_manager.create_session(
+        assert self._active, "call tracker.start() first"
+
+        session = self._session_manager.create_session(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id,
         )
+        master = SessionMaster(
+            session=session,
+            registry=self._registry,
+            recorder=self._recorder,
+            cache=self._response_cache,
+        )
+        port = master.start()
+        with self._masters_lock:
+            self._masters[session.session_id] = master
 
-        # Bind a port for this session.
-        session_port = self._server.open_session_port(session.session_id)
-
-        # Set ContextVar for in-process httpx monkey-patch.
-        token = _session_port_var.set(session_port)
+        active = ActiveSession(
+            session=session,
+            recorder=self._recorder,
+            cache=self._response_cache,
+            port=port,
+        )
+        token = _active_session_var.set(active)
 
         try:
             yield session
         finally:
-            _session_port_var.reset(token)
-            self._server.close_session_port(session.session_id)
-            self._server.session_manager.end_session(session.session_id)
+            _active_session_var.reset(token)
+            with self._masters_lock:
+                m = self._masters.pop(session.session_id, None)
+            if m is not None:
+                m.stop()
+            self._session_manager.end_session(session.session_id)
 
     # ------------------------------------------------------------------
     # Subprocess helpers
@@ -140,18 +220,19 @@ class LLMTracker:
             with tracker.track(data_id="dp_1", combo_id="c") as session:
                 env = {**os.environ, **tracker.get_session_env(session)}
                 subprocess.run(["tb", "run", ...], env=env)
-
-        Each session has its own port, so parallel subprocess evaluation
-        is fully safe — each subprocess gets its own ``HTTPS_PROXY``.
         """
-        assert self._server is not None, "call tracker.start() first"
-        port = self._server.get_session_port(session.session_id)
-        ca_bundle = self._ca.ca_bundle_path
+        with self._masters_lock:
+            master = self._masters.get(session.session_id)
+        assert master is not None, (
+            f"no SessionMaster for {session.session_id}; "
+            "is the session inside its track() scope?"
+        )
+        bundle = _ensure_ca_bundle()
         return {
-            "HTTPS_PROXY": f"http://127.0.0.1:{port}",
-            "SSL_CERT_FILE": ca_bundle,
-            "REQUESTS_CA_BUNDLE": ca_bundle,
-            "NODE_EXTRA_CA_CERTS": ca_bundle,
+            "HTTPS_PROXY": f"http://127.0.0.1:{master.port}",
+            "SSL_CERT_FILE": bundle,
+            "REQUESTS_CA_BUNDLE": bundle,
+            "NODE_EXTRA_CA_CERTS": bundle,
         }
 
     # ------------------------------------------------------------------
@@ -161,17 +242,16 @@ class LLMTracker:
     def register_provider(
         self, name: str, base_url: str, path_patterns: tuple,
     ) -> None:
-        """Add or replace a provider in the proxy's registry.
+        """Add or replace a provider.
 
-        Updates three places at once so the new provider works for both
-        agent shapes:
-        * the proxy's per-instance registry (direct-mode resolution)
-        * the proxy's CONNECT-mode intercept-host set (subprocess agents)
-        * the in-process httpx patch's path-pattern set, so direct-mode
-          calls to the new provider get redirected at all.
+        Updates two surfaces at once:
+
+        * the shared ``ProviderRegistry`` (subprocess path — addons see
+          new intercept hosts immediately via the shared reference)
+        * the in-process httpx patch's path-pattern set (so direct-mode
+          calls to the new provider are recorded)
         """
-        assert self._server is not None, "call tracker.start() first"
-        self._server.register_provider(name, base_url, path_patterns)
+        self._registry.register(name, base_url, path_patterns)
         register_extra_llm_paths(path_patterns)
 
     # ------------------------------------------------------------------
@@ -193,11 +273,10 @@ class LLMTracker:
     # ------------------------------------------------------------------
 
     def _all_records(self) -> List[CallRecord]:
-        """Gather records from both the server and the local archive."""
+        """Gather records from both the local archive and live sessions."""
         with self._lock:
             records = list(self._records)
-        if self._server is not None:
-            records.extend(self._server.session_manager.get_all_records())
+        records.extend(self._session_manager.get_all_records())
         return records
 
     def get_records(
@@ -249,6 +328,6 @@ class LLMTracker:
         return sum(r.latency_seconds for r in records if r.cached)
 
     def clear(self) -> None:
-        """Clear all recorded data."""
+        """Clear all locally archived records."""
         with self._lock:
             self._records.clear()

@@ -33,7 +33,7 @@ from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo
-from .usage import is_streaming_request
+from .usage import has_include_usage, is_openai_compatible_url, is_streaming_request
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,16 @@ class AgentoptAddon:
     def request(self, flow: http.HTTPFlow) -> None:
         json_body = _decode_json_body(flow.request.content)
         flow.metadata[_T0_KEY] = time.monotonic()
+
+        # OpenAI-compatible streaming: force `stream_options.include_usage`
+        # so the SSE response carries a usage frame. Some subprocess agents
+        # (OpenHarness's `oh` does this whenever any tool is attached, as a
+        # Kimi/Moonshot compat hack) strip it from the request, which
+        # otherwise leaves the proxy unable to count tokens.
+        if _ensure_openai_include_usage(json_body, flow.request.pretty_url):
+            flow.request.content = json.dumps(json_body, separators=(",", ":")).encode(
+                "utf-8"
+            )
 
         # Only POSTs with JSON bodies are LLM calls worth caching.
         if self._cache is None or flow.request.method != "POST" or not json_body:
@@ -223,3 +233,23 @@ def _safe_response_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {
         k: v for k, v in headers.items() if k.lower() not in _RESPONSE_HEADERS_STRIP
     }
+
+
+def _ensure_openai_include_usage(json_body: Dict[str, Any], request_url: str) -> bool:
+    """Inject ``stream_options.include_usage=True`` for OpenAI-compatible streams.
+
+    Returns True if the body was mutated.  No-op for non-streaming
+    requests, non-OpenAI-compatible URLs, or bodies that already opted in.
+    """
+    if not is_openai_compatible_url(request_url):
+        return False
+    if json_body.get("stream") is not True:
+        return False
+    if has_include_usage(json_body):
+        return False
+    opts = json_body.get("stream_options")
+    if isinstance(opts, dict):
+        opts["include_usage"] = True
+    else:
+        json_body["stream_options"] = {"include_usage": True}
+    return True

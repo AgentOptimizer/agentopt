@@ -84,6 +84,18 @@ class TestMakeCacheKey:
         body2 = {"messages": [], "temperature": 0.5, "model": "gpt-4o"}
         assert _make_cache_key(body1) == _make_cache_key(body2)
 
+    def test_different_path_different_key(self):
+        # Gemini-style: identical body but model encoded in the URL path.
+        body = {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
+        path_pro = "/v1beta/models/gemini-2.5-pro:streamGenerateContent"
+        path_flash = "/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+        assert _make_cache_key(body, path_pro) != _make_cache_key(body, path_flash)
+
+    def test_same_path_same_key(self):
+        body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]}
+        path = "/v1/chat/completions"
+        assert _make_cache_key(body, path) == _make_cache_key(body, path)
+
 
 # ---------------------------------------------------------------------------
 # Integration tests: cache through proxy server

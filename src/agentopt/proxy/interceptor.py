@@ -1,91 +1,175 @@
-"""httpx monkey-patching — redirect LLM requests through the proxy server.
+"""In-process httpx interception — record LLM calls directly.
 
-Thin URL rewrite + header injection.  The session port (from a ContextVar)
-determines which session-specific proxy port to target.  All logic lives
-in the proxy server.
+The active tracking session lives in a ``ContextVar`` set by
+``LLMTracker.track()``.  When httpx is about to send a POST whose URL
+matches a known LLM endpoint, we cache-look-up first and short-circuit on
+hit, otherwise we forward the call to the real upstream, then record the
+result and (for 200s) populate the cache.
+
+No localhost round-trip — the in-process path doesn't need a proxy
+listener.  Only subprocess agents do; they go through the mitmproxy-based
+``SessionMaster`` (see ``mitm_runner.py``).
+
+The httpx wrapper is a process-wide monkey-patch installed once by
+``LLMTracker.start()``; the ContextVar makes it safe under concurrent
+``track()`` blocks in different async tasks or threads.
 """
 
+from __future__ import annotations
+
+import json
+import time
 from contextvars import ContextVar
-from typing import Any, Callable, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, FrozenSet, Optional
 
 import httpx
 
-from .providers import TARGET_HEADER
+from .cache import CacheEntry, ResponseCache, _make_cache_key
+from .recording import Recorder
+from .session import SessionInfo
+from .usage import is_streaming_request
+
 
 # ---------------------------------------------------------------------------
-# ContextVar — the active session's proxy port (set by LLMTracker.track())
+# Active-session context — populated by ``LLMTracker.track()``.
 # ---------------------------------------------------------------------------
 
-_session_port_var: ContextVar[Optional[int]] = ContextVar(
-    "agentopt_session_port", default=None
+
+@dataclass(frozen=True)
+class ActiveSession:
+    """Per-track() bundle: what the wrapper needs to record a call.
+
+    ``path_patterns`` is a snapshot of the owning tracker's
+    :class:`ProviderRegistry` patterns at ``track()`` entry — consulting
+    it (rather than a process-global set) keeps registrations on one
+    tracker from leaking into other tracker instances.
+    """
+
+    session: SessionInfo
+    recorder: Recorder
+    cache: Optional[ResponseCache]
+    port: int  # ``SessionMaster`` port — for ``get_current_session_proxy``
+    path_patterns: FrozenSet[str]
+
+
+_active_session_var: ContextVar[Optional[ActiveSession]] = ContextVar(
+    "agentopt_active_session", default=None,
 )
 
+
 # ---------------------------------------------------------------------------
-# State
+# Path-pattern detection
 # ---------------------------------------------------------------------------
 
-_original_sync_send: Optional[Callable] = None
-_original_async_send: Optional[Callable] = None
-_installed = False
 
-# URL path patterns that indicate LLM API endpoints.
-_LLM_PATH_PATTERNS = (
-    "/chat/completions",
-    "/v1/messages",
-    "/v1/responses",
-    "/v1beta/models",
-    "/v1/models",
-    "/v1internal:generateContent",
-    "/v1internal:streamGenerateContent",
-)
-
-
-def _is_llm_request(request: httpx.Request) -> bool:
-    """Check if this request targets a known LLM API endpoint."""
+def _is_llm_request(request: httpx.Request, patterns: FrozenSet[str]) -> bool:
+    """True if *request* targets an LLM endpoint listed in *patterns* via POST."""
     if request.method != "POST":
         return False
     path = request.url.raw_path.decode("ascii", errors="ignore")
-    return any(pattern in path for pattern in _LLM_PATH_PATTERNS)
+    return any(pattern in path for pattern in patterns)
 
 
-def _rewrite_request(request: httpx.Request, session_port: int) -> httpx.Request:
-    """Create a new ``httpx.Request`` pointing at the session proxy port.
+# ---------------------------------------------------------------------------
+# Recording — shared by sync and async paths
+# ---------------------------------------------------------------------------
 
-    The original base URL is forwarded as ``X-AgentOpt-Target`` so the
-    proxy knows where to route upstream.
-    """
-    original_url = request.url
-    original_base = f"{original_url.scheme}://{original_url.host}"
-    if original_url.port and original_url.port not in (80, 443):
-        original_base += f":{original_url.port}"
 
-    remaining = original_url.raw_path.decode("ascii", errors="ignore")
-    if original_url.query:
-        remaining += "?" + original_url.query.decode("ascii", errors="ignore")
+def _decode_json_body(body: Optional[bytes]) -> Dict[str, Any]:
+    """Best-effort JSON decode; non-dict / invalid → ``{}``."""
+    if not body:
+        return {}
+    try:
+        parsed = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
-    new_url = f"http://127.0.0.1:{session_port}{remaining}"
 
-    headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
-    headers[TARGET_HEADER] = original_base
-
-    return httpx.Request(
-        method=request.method, url=new_url, headers=headers, content=request.content,
+def _make_cached_response(request: httpx.Request, entry: CacheEntry,) -> httpx.Response:
+    """Build an ``httpx.Response`` from a cache entry, attached to *request*."""
+    headers = {
+        k: v
+        for k, v in entry.response_headers.items()
+        if k.lower() not in ("transfer-encoding", "content-encoding")
+    }
+    return httpx.Response(
+        status_code=200, headers=headers, content=entry.response_bytes, request=request,
     )
+
+
+def _record_after_response(
+    active: ActiveSession,
+    request: httpx.Request,
+    response: Optional[httpx.Response],
+    error: Optional[str],
+    latency: float,
+    cached: bool,
+) -> None:
+    """Convert a completed (or failed) httpx exchange into a CallRecord."""
+    json_body = _decode_json_body(request.content)
+    request_url = str(request.url)
+    is_streaming = is_streaming_request(json_body, request_url)
+
+    if response is None:
+        active.recorder.record(
+            active.session,
+            json_body,
+            None,
+            request_url,
+            latency,
+            cached=False,
+            is_streaming=is_streaming,
+            status_code=0,
+            error=error or "upstream error",
+        )
+        return
+
+    status = response.status_code
+    body_bytes = response.content  # forces buffering for streamed bodies
+    record_error = None if status == 200 else f"HTTP {status}"
+
+    active.recorder.record(
+        active.session,
+        json_body,
+        body_bytes,
+        request_url,
+        latency,
+        cached=cached,
+        is_streaming=is_streaming,
+        status_code=status,
+        error=record_error,
+    )
+
+    # Cache successful 200s on the miss path only.
+    if not cached and status == 200 and active.cache is not None and json_body:
+        active.cache.put(
+            _make_cache_key(json_body),
+            CacheEntry(
+                response_bytes=body_bytes,
+                response_headers=dict(response.headers),
+                latency_seconds=latency,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
 # Install / uninstall
 # ---------------------------------------------------------------------------
 
+_original_sync_send: Optional[Callable] = None
+_original_async_send: Optional[Callable] = None
+_installed = False
+
 
 def install_redirect() -> None:
-    """Monkey-patch ``httpx`` to redirect LLM requests through the proxy.
+    """Monkey-patch ``httpx.Client.send`` and ``AsyncClient.send``.
 
-    Non-LLM requests and requests outside an active tracking session are
-    passed through unmodified.
+    Idempotent.  Requests outside an active tracking session, or whose
+    URL doesn't look like an LLM call, are passed through unmodified.
     """
     global _original_sync_send, _original_async_send, _installed
-
     if _installed:
         return
 
@@ -93,22 +177,66 @@ def install_redirect() -> None:
     _original_async_send = httpx.AsyncClient.send
 
     def _patched_sync_send(
-        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any
+        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any,
     ) -> httpx.Response:
-        if _is_llm_request(request):
-            port = _session_port_var.get()
-            if port is not None:
-                request = _rewrite_request(request, port)
-        return _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+        active = _active_session_var.get()
+        if active is None or not _is_llm_request(request, active.path_patterns):
+            return _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+
+        json_body = _decode_json_body(request.content)
+        # Cache lookup
+        if active.cache is not None and json_body:
+            entry = active.cache.get(_make_cache_key(json_body))
+            if entry is not None:
+                resp = _make_cached_response(request, entry)
+                _record_after_response(
+                    active, request, resp, None, entry.latency_seconds, cached=True,
+                )
+                return resp
+
+        # Forward to real upstream
+        t0 = time.monotonic()
+        try:
+            response = _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+        except Exception as exc:
+            latency = time.monotonic() - t0
+            _record_after_response(
+                active, request, None, str(exc), latency, cached=False
+            )
+            raise
+        latency = time.monotonic() - t0
+        _record_after_response(active, request, response, None, latency, cached=False)
+        return response
 
     async def _patched_async_send(
-        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any
+        self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any,
     ) -> httpx.Response:
-        if _is_llm_request(request):
-            port = _session_port_var.get()
-            if port is not None:
-                request = _rewrite_request(request, port)
-        return await _original_async_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+        active = _active_session_var.get()
+        if active is None or not _is_llm_request(request, active.path_patterns):
+            return await _original_async_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+
+        json_body = _decode_json_body(request.content)
+        if active.cache is not None and json_body:
+            entry = active.cache.get(_make_cache_key(json_body))
+            if entry is not None:
+                resp = _make_cached_response(request, entry)
+                _record_after_response(
+                    active, request, resp, None, entry.latency_seconds, cached=True,
+                )
+                return resp
+
+        t0 = time.monotonic()
+        try:
+            response = await _original_async_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+        except Exception as exc:
+            latency = time.monotonic() - t0
+            _record_after_response(
+                active, request, None, str(exc), latency, cached=False
+            )
+            raise
+        latency = time.monotonic() - t0
+        _record_after_response(active, request, response, None, latency, cached=False)
+        return response
 
     httpx.Client.send = _patched_sync_send  # type: ignore[assignment]
     httpx.AsyncClient.send = _patched_async_send  # type: ignore[assignment]
@@ -116,9 +244,8 @@ def install_redirect() -> None:
 
 
 def uninstall_redirect() -> None:
-    """Restore the original ``httpx.Client.send`` methods."""
+    """Restore the original ``httpx`` send methods."""
     global _original_sync_send, _original_async_send, _installed
-
     if not _installed:
         return
 

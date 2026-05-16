@@ -41,7 +41,9 @@ class ControllableUpstream:
             "id": "c1",
             "object": "chat.completion",
             "model": "gpt-4o-mini",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}],
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": "hi"}}
+            ],
             "usage": {"prompt_tokens": 3, "completion_tokens": 2},
         }
 

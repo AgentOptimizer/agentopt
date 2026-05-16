@@ -52,27 +52,25 @@ class SessionProxy:
 def get_current_session_proxy() -> Optional[SessionProxy]:
     """Return proxy details for the current tracking session, or ``None``.
 
-    Each :meth:`LLMTracker.track` scope has its own port (via ContextVar),
-    so this is safe for parallel evaluation. Returns ``None`` when no
-    tracking session is active.
+    Each :meth:`LLMTracker.track` scope has its own mitmproxy port
+    (via ContextVar), so this is safe for parallel evaluation. Returns
+    ``None`` when no tracking session is active.
     """
-    from agentopt.proxy.interceptor import _session_port_var
+    from agentopt.proxy.interceptor import _active_session_var
+    from agentopt.proxy.tracker import _MITMPROXY_CA_CERT, _ensure_ca_bundle
 
-    port = _session_port_var.get()
-    if port is None:
+    active = _active_session_var.get()
+    if active is None:
         return None
 
-    from agentopt.proxy.certs import CertificateAuthority
-
-    ca = CertificateAuthority()
-    with open(ca.ca_cert_path) as f:
+    with open(_MITMPROXY_CA_CERT) as f:
         ca_pem = f.read().strip()
 
     return SessionProxy(
-        url=f"http://127.0.0.1:{port}",
-        port=port,
+        url=f"http://127.0.0.1:{active.port}",
+        port=active.port,
         ca_pem=ca_pem,
-        ca_bundle_path=ca.ca_bundle_path,
+        ca_bundle_path=_ensure_ca_bundle(),
     )
 
 

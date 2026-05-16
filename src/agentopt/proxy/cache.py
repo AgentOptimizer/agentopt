@@ -161,7 +161,7 @@ class ResponseCache:
                     data = json.loads(data_json)
                     self._store[key] = CacheEntry.from_dict(data)
                     loaded += 1
-                except (json.JSONDecodeError, KeyError) as exc:
+                except (json.JSONDecodeError, KeyError, ValueError) as exc:
                     logger.warning("Skipping corrupt cache row %s: %s", key, exc)
             if loaded:
                 logger.debug("Loaded %d cache entries from %s", loaded, self._db_path)

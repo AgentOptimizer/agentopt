@@ -118,8 +118,8 @@ if __name__ == "__main__":
         agent=GeminiCLIAgent,
         models={
             "agent": [
-                "gemini-2.5-flash",
                 "gemini-2.5-pro",
+                "gemini-2.5-flash",
                 # Add or swap models you have access to.
             ],
         },

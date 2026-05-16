@@ -99,7 +99,7 @@ class AgentoptAddon:
         if self._cache is None or flow.request.method != "POST" or not json_body:
             return
 
-        cache_key = _make_cache_key(json_body)
+        cache_key = _make_cache_key(json_body, flow.request.path)
         entry = self._cache.get(cache_key)
         if entry is None:
             return
@@ -155,7 +155,7 @@ class AgentoptAddon:
         # Cache successful 200s on the miss path.
         if not cached and status == 200 and self._cache is not None and json_body:
             self._cache.put(
-                _make_cache_key(json_body),
+                _make_cache_key(json_body, flow.request.path),
                 CacheEntry(
                     response_bytes=body_bytes,
                     response_headers=dict(flow.response.headers),

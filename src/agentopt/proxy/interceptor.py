@@ -145,7 +145,7 @@ def _record_after_response(
     # Cache successful 200s on the miss path only.
     if not cached and status == 200 and active.cache is not None and json_body:
         active.cache.put(
-            _make_cache_key(json_body),
+            _make_cache_key(json_body, str(request.url.path)),
             CacheEntry(
                 response_bytes=body_bytes,
                 response_headers=dict(response.headers),
@@ -186,7 +186,7 @@ def install_redirect() -> None:
         json_body = _decode_json_body(request.content)
         # Cache lookup
         if active.cache is not None and json_body:
-            entry = active.cache.get(_make_cache_key(json_body))
+            entry = active.cache.get(_make_cache_key(json_body, str(request.url.path)))
             if entry is not None:
                 resp = _make_cached_response(request, entry)
                 _record_after_response(
@@ -217,7 +217,7 @@ def install_redirect() -> None:
 
         json_body = _decode_json_body(request.content)
         if active.cache is not None and json_body:
-            entry = active.cache.get(_make_cache_key(json_body))
+            entry = active.cache.get(_make_cache_key(json_body, str(request.url.path)))
             if entry is not None:
                 resp = _make_cached_response(request, entry)
                 _record_after_response(

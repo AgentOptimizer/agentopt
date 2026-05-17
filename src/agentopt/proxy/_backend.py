@@ -133,8 +133,9 @@ class _Backend(ABC):
     ):
         """Return a context manager that yields a :class:`SessionInfo`.
 
-        Routing (``router``) is library-only in v1; remote backends
-        raise ``NotImplementedError`` when a router is supplied.
+        ``router`` optionally provides routing policy for the tracked
+        session. Backend implementations, including remote backends,
+        may honor this parameter.
         """
 
     @abstractmethod

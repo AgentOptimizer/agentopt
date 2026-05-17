@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 
@@ -56,6 +56,26 @@ class ParsedUsage:
     prompt_tokens: int
     completion_tokens: int
     response_body: dict  # representative chunk — kept for CallRecord debug
+
+
+# ---------------------------------------------------------------------------
+# Request body decoding (shared by interceptor + mitm addon)
+# ---------------------------------------------------------------------------
+
+
+def decode_json_body(body: Optional[bytes]) -> Dict[str, Any]:
+    """Best-effort JSON decode of a request body.
+
+    Non-JSON or non-dict bodies become ``{}`` rather than raising, so the
+    proxy never blocks a request just because it can't introspect the body.
+    """
+    if not body:
+        return {}
+    try:
+        parsed = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 # ---------------------------------------------------------------------------

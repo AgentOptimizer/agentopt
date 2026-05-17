@@ -89,7 +89,7 @@ def resolve_policy(policy: str, kwargs: Dict[str, Any]) -> Router:
     per-request when ``POST /sessions`` carries a ``router`` field).
     """
     cls = _resolve_class(policy)
-    return cls.from_config(**kwargs)
+    return cls(**kwargs)
 
 
 def load_policy_module(path: str) -> str:

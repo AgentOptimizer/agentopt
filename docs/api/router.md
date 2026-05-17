@@ -146,7 +146,7 @@ A plain Python file. **No plugin manifest, no `register()` callback, no decorato
 
 1. **Define `Router` subclasses at module level** so `getattr(module, "ClassName")` finds them.
 2. **Each class must implement `_config_kwargs()`** if you want clients to push it per-session — returns a JSON-serializable dict of `__init__` kwargs. (Daemon-default policies set from the CLI don't need this, but per-session overrides from Python clients do.)
-3. **`__init__` must accept that dict back as kwargs.** Default `from_config(**kwargs)` just calls `cls(**kwargs)`. Override `from_config` only if you need argument preprocessing.
+3. **`__init__` must accept that dict back as kwargs.** The daemon reconstructs the router with `cls(**kwargs)`.
 
 That's the whole contract.
 

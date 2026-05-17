@@ -176,16 +176,6 @@ class Router:
             "or unset AGENTOPT_GATEWAY_URL to run in library mode."
         )
 
-    @classmethod
-    def from_config(cls, **kwargs: Any) -> "Router":
-        """Reconstruct an instance from ``_config_kwargs`` output.
-
-        Default just calls ``cls(**kwargs)``; override if your
-        ``__init__`` needs argument processing the kwargs don't capture
-        (e.g. resolving model aliases).
-        """
-        return cls(**kwargs)
-
     # ------------------------------------------------------------------
     # Context manager — auto-spins an ephemeral tracker when needed
     # ------------------------------------------------------------------

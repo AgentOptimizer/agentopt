@@ -33,7 +33,7 @@ import httpx
 from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .recording import Recorder
 from .session import SessionInfo
-from .usage import is_streaming_request
+from .usage import decode_json_body, is_streaming_request
 
 if TYPE_CHECKING:
     from agentopt.routing.base import Router
@@ -55,17 +55,6 @@ def _is_llm_request(request: httpx.Request, patterns: FrozenSet[str]) -> bool:
 # ---------------------------------------------------------------------------
 # Body / response helpers (shared by all handlers)
 # ---------------------------------------------------------------------------
-
-
-def _decode_json_body(body: Optional[bytes]) -> Dict[str, Any]:
-    """Best-effort JSON decode; non-dict / invalid → ``{}``."""
-    if not body:
-        return {}
-    try:
-        parsed = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _make_cached_response(request: httpx.Request, entry: CacheEntry,) -> httpx.Response:
@@ -145,7 +134,7 @@ class LocalHandler(CallHandler):
         stream: bool,
         **kwargs: Any,
     ) -> httpx.Response:
-        json_body = _decode_json_body(request.content)
+        json_body = decode_json_body(request.content)
         request = self._maybe_route(request, json_body)
 
         # Cache lookup (post-routing — key reflects the actual model)
@@ -180,7 +169,7 @@ class LocalHandler(CallHandler):
         stream: bool,
         **kwargs: Any,
     ) -> httpx.Response:
-        json_body = _decode_json_body(request.content)
+        json_body = decode_json_body(request.content)
         request = self._maybe_route(request, json_body)
 
         if self._cache is not None and json_body:
@@ -257,7 +246,7 @@ class LocalHandler(CallHandler):
         cached: bool,
     ) -> None:
         """Convert a completed (or failed) httpx exchange into a CallRecord."""
-        json_body = _decode_json_body(request.content)
+        json_body = decode_json_body(request.content)
         request_url = str(request.url)
         is_streaming = is_streaming_request(json_body, request_url)
 

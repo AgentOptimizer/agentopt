@@ -33,7 +33,12 @@ from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo
-from .usage import has_include_usage, is_openai_compatible_url, is_streaming_request
+from .usage import (
+    decode_json_body,
+    has_include_usage,
+    is_openai_compatible_url,
+    is_streaming_request,
+)
 
 if TYPE_CHECKING:
     from agentopt.routing.base import Router
@@ -97,7 +102,7 @@ class AgentoptAddon:
     # ------------------------------------------------------------------
 
     def request(self, flow: http.HTTPFlow) -> None:
-        json_body = _decode_json_body(flow.request.content)
+        json_body = decode_json_body(flow.request.content)
         flow.metadata[_T0_KEY] = time.monotonic()
 
         # Routing: run the active router *before* the cache lookup so the
@@ -157,7 +162,7 @@ class AgentoptAddon:
         if flow.response is None:
             return  # shouldn't happen, but be defensive
 
-        json_body = _decode_json_body(flow.request.content)
+        json_body = decode_json_body(flow.request.content)
         request_url = flow.request.pretty_url
         is_streaming = is_streaming_request(json_body, request_url)
 
@@ -212,7 +217,7 @@ class AgentoptAddon:
             # An HTTP error is already a complete response — `response`
             # handled it.  This hook fires for transport-level errors.
             return
-        json_body = _decode_json_body(flow.request.content)
+        json_body = decode_json_body(flow.request.content)
         request_url = flow.request.pretty_url
         t0 = flow.metadata.get(_T0_KEY)
         latency = (time.monotonic() - t0) if t0 is not None else 0.0
@@ -234,22 +239,6 @@ class AgentoptAddon:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _decode_json_body(body: Optional[bytes]) -> Dict[str, Any]:
-    """Best-effort JSON decode of a request body.
-
-    Mirrors the lenient handling in the old ``_read_request`` — non-JSON
-    or non-dict bodies become ``{}`` rather than raising, so the proxy
-    never blocks a request just because it can't introspect the body.
-    """
-    if not body:
-        return {}
-    try:
-        parsed = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _safe_response_headers(headers: Dict[str, str]) -> Dict[str, str]:

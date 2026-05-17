@@ -1,33 +1,31 @@
-"""Routing abstractions: :class:`Router`, :class:`RouteContext`, :class:`RouteDecision`.
+"""Routing abstractions: :class:`Router`, :class:`RouteContext`, dispatcher.
 
 A *router* is a per-call policy that decides which model to actually
 send a request to.  It sees the parsed request body, session metadata,
-and prior LLM calls in the session, and returns either a
-:class:`RouteDecision` (swap the model) or ``None`` (keep the client's
-choice).
+and prior LLM calls in the session, and returns either a model name
+(swap to that model) or ``None`` (keep the client's choice).
 
 Public API shape::
 
     from agentopt import RandomRouter
 
-    router = RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"])
-    with tracker.track(data_id="dp", combo_id="c", router=router):
+    # Standalone — one line, no tracker boilerplate
+    with RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"]):
         agent.run(question)
 
-    # Or, equivalently, scope the router around a track() block:
-    with router:
-        with tracker.track(data_id="dp", combo_id="c"):
-            agent.run(question)
+    # Or, when you already have an LLMTracker, pass `router=` explicitly
+    with tracker.track(data_id="dp", combo_id="c", router=router):
+        agent.run(question)
 
 The swap happens transparently at the HTTP layer (in-process httpx
 patch + per-session mitmproxy addon), so any framework or subprocess
 agent works without integration code.
 
-**Scope (v1):** same-provider routing only.  ``RouteDecision`` carries
-``provider`` / ``api_key`` fields for future cross-provider routing;
-setting either today raises ``NotImplementedError`` at dispatch so the
-API can grow without breaks.  Routing is library-only: passing a router
-through ``LLMTracker`` in remote (daemon) mode raises a clear error.
+**Scope (v1):** same-provider routing only.  ``Router.route`` returns
+a model name string; cross-provider routing (rewriting host + auth +
+schema) is a v2 feature.  Routing in daemon mode is handled by Phase 2
+of the routing rollout; today, attaching a router to ``RemoteBackend``
+raises a clear error.
 """
 
 from __future__ import annotations
@@ -45,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Route data types
+# RouteContext — the call's read-only view passed to Router.route
 # ---------------------------------------------------------------------------
 
 
@@ -53,9 +51,10 @@ logger = logging.getLogger(__name__)
 class RouteContext:
     """Per-call context passed to :meth:`Router.route`.
 
-    All fields are read-only by contract.  The router may inspect them
-    but must not mutate the request body — return a
-    :class:`RouteDecision` to express any desired change.
+    Not exported at the top-level (``agentopt.RouteContext``) — import
+    from :mod:`agentopt.routing` if you want a type annotation on
+    custom routers.  Most user code accesses the fields by attribute
+    on the ``ctx`` parameter without ever naming the type.
     """
 
     request_body: Dict[str, Any]
@@ -63,20 +62,6 @@ class RouteContext:
     requested_model: Optional[str]
     session: "SessionInfo"
     history: Sequence["CallRecord"]
-
-
-@dataclass(frozen=True)
-class RouteDecision:
-    """Return value from :meth:`Router.route`.
-
-    v1 only honours ``model``.  Setting ``provider`` or ``api_key``
-    raises ``NotImplementedError`` at dispatch — reserved for future
-    cross-provider routing so the API can grow without breaks.
-    """
-
-    model: str
-    provider: Optional[str] = None
-    api_key: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -106,26 +91,42 @@ def get_active_router() -> Optional["Router"]:
 class Router:
     """Base class for per-call model routing policies.
 
-    Subclasses implement :meth:`route`.  Use the instance as a context
-    manager to scope routing to a block of code::
+    Subclasses implement :meth:`route`, which returns the model name to
+    use (or ``None`` to keep the client's requested model).
 
-        router = MyRouter(...)
-        with router:
-            with tracker.track(...):
-                agent.run(question)
+    Use the instance as a context manager — ``with router:`` spins up
+    an ephemeral :class:`LLMTracker` and a tracking session for you, so
+    you never have to write the lifecycle boilerplate manually::
 
-    Inside the ``with`` block, any ``tracker.track()`` that does *not*
-    pass an explicit ``router=`` argument picks this router up via a
-    ``ContextVar``.
+        with RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"]):
+            agent.run(question)
 
-    **Not re-entrant on a single instance.**  If you need nested or
-    concurrent scopes, instantiate a separate router per scope.
+    If you already have an ``LLMTracker`` and want to attach a router
+    to a specific scope, pass ``router=`` to ``track()`` instead — and
+    do *not* nest ``with router:`` inside that ``track()`` (the
+    auto-spawn would clobber attribution; we raise a clear error).
+
+    **Not re-entrant on a single instance.**  Use distinct instances
+    for nested or concurrent scopes.
+
+    **Daemon-mode serialization.**  When ``AGENTOPT_GATEWAY_URL`` is
+    set, ``RemoteBackend`` describes the router to the daemon via
+    :meth:`config`.  Subclasses must override :meth:`_config_kwargs`
+    to return a JSON-serializable dict of ``__init__`` kwargs; the
+    base class's default raises :class:`NotImplementedError` so the
+    failure is loud at the wire boundary, not on a quiet HTTP 500.
     """
 
-    def route(self, ctx: RouteContext) -> Optional[RouteDecision]:
+    #: Short alias for built-in policies.  ``RemoteBackend`` sends this
+    #: as ``router.policy`` so the daemon can look up the class in
+    #: ``BUILTIN_POLICIES``.  Custom routers leave this empty;
+    #: :meth:`config` falls back to a ``module:Class`` import path.
+    POLICY_NAME: str = ""
+
+    def route(self, ctx: RouteContext) -> Optional[str]:
         """Decide which model to use for *ctx*.
 
-        Return a :class:`RouteDecision` to swap the model, or ``None``
+        Return the model name as a string to swap the model, or ``None``
         to keep the client's requested model unchanged.
 
         Exceptions raised here are caught by the dispatcher and logged;
@@ -135,7 +136,49 @@ class Router:
         raise NotImplementedError
 
     # ------------------------------------------------------------------
-    # Context manager — the "activate this router" API
+    # Daemon-mode serialization
+    # ------------------------------------------------------------------
+
+    def config(self) -> Dict[str, Any]:
+        """Return a JSON-serializable ``{policy, kwargs}`` for daemon transport.
+
+        ``RemoteBackend`` calls this and POSTs the result as the
+        ``router`` field on ``/sessions``.  Default implementation
+        uses :attr:`POLICY_NAME` if set, else falls back to
+        ``"module:Class"``; subclasses override :meth:`_config_kwargs`
+        to supply the constructor arguments.
+        """
+        policy = self.POLICY_NAME or (
+            f"{type(self).__module__}:{type(self).__qualname__}"
+        )
+        return {"policy": policy, "kwargs": self._config_kwargs()}
+
+    def _config_kwargs(self) -> Dict[str, Any]:
+        """Return a JSON-serializable dict of ``__init__`` kwargs.
+
+        Override to enable daemon-mode routing.  The default raises so
+        custom routers fail loudly at the wire boundary instead of
+        silently bypassing the daemon.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support daemon-mode routing. "
+            "Override `_config_kwargs()` to return a JSON-serializable dict "
+            "of __init__ kwargs, or use a built-in router (e.g. RandomRouter), "
+            "or unset AGENTOPT_GATEWAY_URL to run in library mode."
+        )
+
+    @classmethod
+    def from_config(cls, **kwargs: Any) -> "Router":
+        """Reconstruct an instance from ``_config_kwargs`` output.
+
+        Default just calls ``cls(**kwargs)``; override if your
+        ``__init__`` needs argument processing the kwargs don't capture
+        (e.g. resolving model aliases).
+        """
+        return cls(**kwargs)
+
+    # ------------------------------------------------------------------
+    # Context manager — auto-spins an ephemeral tracker when needed
     # ------------------------------------------------------------------
 
     def __enter__(self) -> "Router":
@@ -143,9 +186,47 @@ class Router:
             raise RuntimeError(
                 "Router is already active — `with router:` is not "
                 "re-entrant on the same instance.  Instantiate a fresh "
-                "Router for nested scopes."
+                "Router for nested or concurrent scopes."
             )
+
+        # If the user is already inside an LLMTracker.track() scope, we'd
+        # silently fail to route (the handler was built without a router).
+        # Raise with a clear pointer to the correct pattern.
+        from agentopt.proxy.interceptor import _active_session_var
+
+        if _active_session_var.get() is not None:
+            raise RuntimeError(
+                "Cannot enter `with router:` inside an active "
+                "tracker.track() scope — the surrounding session was "
+                "constructed without this router and wouldn't see it.  "
+                "Either move `with router:` to wrap the track() block, "
+                "or pass `router=...` to track() directly."
+            )
+
         self._routing_token = _active_router_var.set(self)
+
+        # Spin an ephemeral LLMTracker so this router does something on
+        # its own.  Users with attribution requirements should construct
+        # their own tracker and use `tracker.track(router=...)` instead.
+        from agentopt.proxy.tracker import LLMTracker
+
+        self._auto_tracker = LLMTracker()
+        try:
+            self._auto_tracker.start()
+            self._auto_track_ctx = self._auto_tracker.track(
+                data_id="__router__", combo_id="__router__", router=self,
+            )
+            self._auto_track_ctx.__enter__()
+        except Exception:
+            # Ensure ContextVar + tracker state are cleaned up on a
+            # failed enter so the next attempt isn't blocked.
+            try:
+                self._auto_tracker.close()
+            except Exception:
+                logger.debug("ignored error closing auto-tracker", exc_info=True)
+            _active_router_var.reset(self._routing_token)
+            self._routing_token = None
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -153,7 +234,18 @@ class Router:
         if token is None:
             return
         self._routing_token = None
-        _active_router_var.reset(token)
+        try:
+            track_ctx = getattr(self, "_auto_track_ctx", None)
+            if track_ctx is not None:
+                track_ctx.__exit__(exc_type, exc, tb)
+            tracker = getattr(self, "_auto_tracker", None)
+            if tracker is not None:
+                tracker.close()
+        finally:
+            _active_router_var.reset(token)
+            for attr in ("_auto_tracker", "_auto_track_ctx"):
+                if hasattr(self, attr):
+                    delattr(self, attr)
 
 
 # ---------------------------------------------------------------------------
@@ -201,18 +293,14 @@ def apply_router(
 
     if decision is None:
         return False
-
-    if decision.provider is not None or decision.api_key is not None:
-        # v1: cross-provider routing is reserved; loud error so this
-        # never silently passes a misconfigured decision.
-        raise NotImplementedError(
-            "RouteDecision.provider / RouteDecision.api_key are reserved "
-            "for future cross-provider routing.  v1 supports same-provider "
-            "model swaps only — set RouteDecision.model and leave "
-            "provider / api_key as None."
+    if not isinstance(decision, str):
+        logger.error(
+            "router.route() returned %r — expected Optional[str] (a model "
+            "name) for v1 same-provider routing; passing request unrouted",
+            type(decision).__name__,
         )
-
-    if requested_model is not None and decision.model == requested_model:
+        return False
+    if requested_model is not None and decision == requested_model:
         return False  # no-op decision
 
     if "model" not in request_body:
@@ -221,12 +309,12 @@ def apply_router(
         logger.debug(
             "router decision dropped: request body has no 'model' key "
             "(URL-encoded model routing, e.g. Gemini, is not yet supported). "
-            "Provider=%s path=%s decision.model=%s",
+            "Provider=%s path=%s decision=%s",
             provider_name,
             request_path,
-            decision.model,
+            decision,
         )
         return False
 
-    request_body["model"] = decision.model
+    request_body["model"] = decision
     return True

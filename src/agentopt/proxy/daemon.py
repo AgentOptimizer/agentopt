@@ -38,10 +38,19 @@ from ._backend import _MITMPROXY_CA_CERT
 from ._local_backend import LocalBackend
 from .models import CallRecord
 
+if False:  # type-only — avoid runtime import on the proxy side
+    from agentopt.routing.base import Router
+
 logger = logging.getLogger(__name__)
 
 
 _BACKEND_KEY = web.AppKey("backend", LocalBackend)
+# Optional default router applied to every session that doesn't carry
+# its own.  ``None`` means "no default — sessions without an explicit
+# router run unrouted."
+_DEFAULT_ROUTER_KEY: "web.AppKey[Optional[Any]]" = web.AppKey(
+    "default_router", object,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +75,28 @@ async def _health(request: web.Request) -> web.Response:
 async def _create_session(request: web.Request) -> web.Response:
     body = await request.json() if request.body_exists else {}
     backend = request.app[_BACKEND_KEY]
+
+    # Router resolution.  Body field "router" is the per-session override:
+    #   - {"policy": "...", "kwargs": {...}}  → resolve and use
+    #   - explicit None                       → no routing for this session
+    #   - field absent                        → fall back to the daemon default
+    router: Optional["Router"]
+    if "router" in body:
+        router_cfg = body["router"]
+        if router_cfg is None:
+            router = None
+        else:
+            try:
+                from agentopt.routing.config import resolve_policy
+
+                router = resolve_policy(
+                    router_cfg["policy"], router_cfg.get("kwargs", {}),
+                )
+            except (KeyError, ValueError) as exc:
+                return web.json_response({"error": str(exc)}, status=400,)
+    else:
+        router = request.app[_DEFAULT_ROUTER_KEY]
+
     loop = asyncio.get_running_loop()
     session, port = await loop.run_in_executor(
         None,
@@ -73,6 +104,7 @@ async def _create_session(request: web.Request) -> web.Response:
         body.get("data_id"),
         body.get("combo_id"),
         body.get("agent_id"),
+        router,
     )
     ca_pem_b64 = _read_ca_pem_b64()
     return web.json_response(
@@ -151,10 +183,17 @@ async def _get_ca(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
-def make_app(backend: LocalBackend) -> web.Application:
-    """Build the aiohttp application bound to *backend*."""
+def make_app(
+    backend: LocalBackend, default_router: Optional[Any] = None,
+) -> web.Application:
+    """Build the aiohttp application bound to *backend*.
+
+    *default_router* (if provided) is applied to every session that
+    arrives via ``POST /sessions`` without its own ``router`` field.
+    """
     app = web.Application()
     app[_BACKEND_KEY] = backend
+    app[_DEFAULT_ROUTER_KEY] = default_router
     app.router.add_get("/health", _health)
     app.router.add_post("/sessions", _create_session)
     app.router.add_delete("/sessions/{session_id}", _close_session)
@@ -204,6 +243,9 @@ def run(
     port: int = 9000,
     cache_dir: Union[str, Path] = ".agentopt_cache",
     allow_remote: bool = False,
+    routing_policy: Optional[str] = None,
+    candidate_models: Optional[List[str]] = None,
+    seed: Optional[int] = None,
 ) -> None:
     """Start the daemon and block until interrupted.
 
@@ -229,20 +271,65 @@ def run(
         raise SystemExit("agentopt serve: --cache-dir cannot be empty.  Pass a path.")
     resolved_cache_dir = Path(cache_dir).expanduser().resolve()
 
+    default_router = _build_default_router(routing_policy, candidate_models, seed,)
+
     backend = LocalBackend(cache=True, cache_dir=resolved_cache_dir)
     backend.start()
     try:
         _warmup_ca(backend)
-        app = make_app(backend)
+        app = make_app(backend, default_router=default_router)
+        router_summary = (
+            f" default router: {routing_policy} candidates={candidate_models}"
+            if default_router is not None
+            else " no default router"
+        )
         logger.info(
-            "agentopt serve listening on http://%s:%d (cache dir: %s)",
+            "agentopt serve listening on http://%s:%d (cache dir: %s);%s",
             host,
             port,
             resolved_cache_dir,
+            router_summary,
         )
         web.run_app(app, host=host, port=port, print=None, handle_signals=True)
     finally:
         backend.stop()
+
+
+def _build_default_router(
+    policy: Optional[str], candidate_models: Optional[List[str]], seed: Optional[int],
+) -> Optional[Any]:
+    """Construct a daemon default router from CLI flags, or return ``None``.
+
+    Only the built-in ``random`` policy is wired up to CLI flags today;
+    custom policies arrive per-session via ``POST /sessions``.
+    """
+    if policy is None:
+        if candidate_models or seed is not None:
+            raise SystemExit(
+                "agentopt serve: --candidate-models / --seed require "
+                "--routing-policy.  Either set --routing-policy random, or "
+                "drop the other routing flags."
+            )
+        return None
+
+    from agentopt.routing.config import resolve_policy
+
+    if policy == "random":
+        if not candidate_models:
+            raise SystemExit(
+                "agentopt serve: --routing-policy random requires "
+                "--candidate-models gpt-4o,gpt-4o-mini,..."
+            )
+        kwargs: Dict[str, Any] = {"candidates": list(candidate_models)}
+        if seed is not None:
+            kwargs["seed"] = seed
+        return resolve_policy("random", kwargs)
+
+    raise SystemExit(
+        f"agentopt serve: --routing-policy {policy!r} is not a built-in.  "
+        f"v1 CLI supports only 'random'; custom policies arrive per-session "
+        f"via the wire protocol."
+    )
 
 
 def register_serve_subparser(
@@ -273,6 +360,27 @@ def register_serve_subparser(
         action="store_true",
         help="(reserved) bind a non-localhost host. Requires auth which is not yet shipped.",
     )
+    # Routing — only the 'random' built-in is wired to CLI flags in v1.
+    # Custom policies arrive per-session via POST /sessions; clients use
+    # their Python `with router:` API as usual.
+    p.add_argument(
+        "--routing-policy",
+        default=None,
+        help="Default router for every session (currently only 'random').  "
+        "Sessions can still override via POST /sessions.  Omit for no "
+        "default routing.",
+    )
+    p.add_argument(
+        "--candidate-models",
+        default=None,
+        help="Comma-separated model names for --routing-policy random.",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Optional RNG seed for --routing-policy random.",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=_serve_main)
     return p
@@ -284,9 +392,17 @@ def _serve_main(args: argparse.Namespace) -> None:
     logging.basicConfig(
         level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    candidates = (
+        [m.strip() for m in args.candidate_models.split(",") if m.strip()]
+        if args.candidate_models
+        else None
+    )
     run(
         host=args.host,
         port=args.port,
         cache_dir=args.cache_dir,
         allow_remote=args.allow_remote,
+        routing_policy=args.routing_policy,
+        candidate_models=candidates,
+        seed=args.seed,
     )

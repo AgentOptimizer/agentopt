@@ -339,15 +339,23 @@ _active_session_var: ContextVar[Optional[ActiveSession]] = ContextVar(
 _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
 _installed = False
+# Refcount so multiple coexisting ``LLMTracker`` instances (or the
+# ephemeral one ``Router.__enter__`` spins up) don't tear down each
+# other's httpx patch.  Only the first install actually patches;
+# only the matching last uninstall actually restores.
+_install_refcount = 0
 
 
 def install_redirect() -> None:
     """Monkey-patch ``httpx.Client.send`` and ``AsyncClient.send``.
 
-    Idempotent.  Requests outside an active tracking session, or whose
-    URL doesn't look like an LLM call, are passed through unmodified.
+    Idempotent across multiple callers — uses a refcount so each
+    ``install_redirect`` is paired with one ``uninstall_redirect``;
+    the patch is restored only when the count drops back to zero.
     """
     global _original_sync_send, _original_async_send, _installed
+    global _install_refcount
+    _install_refcount += 1
     if _installed:
         return
 
@@ -406,9 +414,18 @@ async def forward_async(
 
 
 def uninstall_redirect() -> None:
-    """Restore the original ``httpx`` send methods."""
+    """Restore the original ``httpx`` send methods.
+
+    Decrements the refcount; only the matching last call actually
+    restores the original ``httpx`` methods.  Earlier calls are no-ops
+    so a nested auto-tracker exit can't tear down a still-active
+    user tracker's patch.
+    """
     global _original_sync_send, _original_async_send, _installed
-    if not _installed:
+    global _install_refcount
+    if _install_refcount > 0:
+        _install_refcount -= 1
+    if _install_refcount > 0 or not _installed:
         return
 
     if _original_sync_send is not None:

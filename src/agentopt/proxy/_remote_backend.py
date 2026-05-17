@@ -314,17 +314,33 @@ class RemoteBackend(_Backend):
         data_id: Optional[str] = None,
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        router_config: Optional[Dict[str, Any]] = None,
     ) -> Tuple[SessionInfo, int, str]:
         """POST /sessions; return ``(SessionInfo, proxy_port, ca_bundle_path)``.
 
         Exposed for parity with :meth:`LocalBackend.open_session` (and
         for testability); :meth:`track` is the usual entry point.
+
+        *router_config* (optional) is the ``{policy, kwargs}`` shape
+        :meth:`Router.config` returns; the daemon resolves it server-side
+        and attaches the router to this session.  Pass ``None`` to fall
+        back to the daemon's default policy (if any).
         """
         assert self._active, "call backend.start() first"
-        resp = self._http.post(
-            f"{self._gateway_url}/sessions",
-            json={"data_id": data_id, "combo_id": combo_id, "agent_id": agent_id},
-        )
+        body_payload: Dict[str, Any] = {
+            "data_id": data_id,
+            "combo_id": combo_id,
+            "agent_id": agent_id,
+        }
+        if router_config is not None:
+            body_payload["router"] = router_config
+        resp = self._http.post(f"{self._gateway_url}/sessions", json=body_payload,)
+        if resp.status_code == 400:
+            # Daemon rejected the router config — surface the error.
+            raise RuntimeError(
+                f"agentopt daemon rejected the session: "
+                f"{resp.json().get('error', resp.text)}"
+            )
         resp.raise_for_status()
         body = resp.json()
         session = SessionInfo(
@@ -359,24 +375,25 @@ class RemoteBackend(_Backend):
         agent_id: Optional[str] = None,
         router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
-        # Mirror LocalBackend's resolution so the error message is
-        # accurate whether the router came from an explicit kwarg or a
-        # ``with router:`` block.
+        # Resolve the router (explicit kwarg > with-router ContextVar).
         if router is None:
             from agentopt.routing.base import get_active_router
 
             router = get_active_router()
+
+        # Serialize the router for the daemon.  ``config()`` raises
+        # NotImplementedError for custom routers that don't override
+        # ``_config_kwargs()``; surface that as-is so the user knows
+        # exactly what's missing.
+        router_config: Optional[Dict[str, Any]] = None
         if router is not None:
-            raise NotImplementedError(
-                "agentopt: routing is library-only in v1.  AGENTOPT_GATEWAY_URL "
-                "is set, so tracking goes through the agentopt daemon — but the "
-                "daemon does not yet apply per-call routing policies.  Either "
-                "unset AGENTOPT_GATEWAY_URL for routing experiments, or drop "
-                "the router."
-            )
+            router_config = router.config()
 
         session, proxy_port, bundle_path = self.open_session(
-            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+            data_id=data_id,
+            combo_id=combo_id,
+            agent_id=agent_id,
+            router_config=router_config,
         )
         proxy_url = f"http://{self._gateway_host}:{proxy_port}"
         handler = RemoteHandler(proxy_url=proxy_url, ca_bundle_path=bundle_path)

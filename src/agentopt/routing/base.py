@@ -34,7 +34,8 @@ from __future__ import annotations
 import logging
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
 
 if TYPE_CHECKING:
     from agentopt.proxy.models import CallRecord
@@ -56,9 +57,16 @@ class RouteContext:
     from :mod:`agentopt.routing` if you want a type annotation on
     custom routers.  Most user code accesses the fields by attribute
     on the ``ctx`` parameter without ever naming the type.
+
+    ``request_body`` is wrapped in :class:`types.MappingProxyType` so
+    ``ctx.request_body["foo"] = bar`` raises :class:`TypeError`.  This
+    is a shallow guarantee — nested lists/dicts (``messages``,
+    ``tools``) are still mutable through the proxy, but the cheap
+    top-level guard catches the common contract violations without
+    paying for a deep copy on every call.
     """
 
-    request_body: Dict[str, Any]
+    request_body: Mapping[str, Any]
     provider: str  # "openai" | "anthropic" | "google" | ... | "unknown"
     requested_model: Optional[str]
     session: "SessionInfo"
@@ -278,7 +286,7 @@ def apply_router(
         provider_name = provider.name if provider is not None else "unknown"
         requested_model = request_body.get("model")
         ctx = RouteContext(
-            request_body=request_body,
+            request_body=MappingProxyType(request_body),
             provider=provider_name,
             requested_model=requested_model,
             session=session,

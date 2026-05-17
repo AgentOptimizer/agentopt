@@ -23,9 +23,10 @@ agent works without integration code.
 
 **Scope (v1):** same-provider routing only.  ``Router.route`` returns
 a model name string; cross-provider routing (rewriting host + auth +
-schema) is a v2 feature.  Routing in daemon mode is handled by Phase 2
-of the routing rollout; today, attaching a router to ``RemoteBackend``
-raises a clear error.
+schema) is a v2 feature.  Routing also works in daemon mode via router
+serialization in ``RemoteBackend.track()`` and daemon-side resolution;
+custom routers must implement ``_config_kwargs()`` so they can be
+reconstructed remotely.
 """
 
 from __future__ import annotations

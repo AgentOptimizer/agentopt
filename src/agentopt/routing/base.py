@@ -296,8 +296,9 @@ def apply_router(
         return False
     if not isinstance(decision, str):
         logger.error(
-            "router.route() returned %r — expected Optional[str] (a model "
-            "name) for v1 same-provider routing; passing request unrouted",
+            "router.route() returned type %s — expected Optional[str] "
+            "(a model name) for v1 same-provider routing; passing request "
+            "unrouted",
             type(decision).__name__,
         )
         return False

@@ -15,7 +15,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple, Union
 
 from ._backend import _Backend, _ensure_ca_bundle
 from .cache import ResponseCache
@@ -31,6 +31,9 @@ from .models import CallRecord
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo, SessionManager
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +97,17 @@ class LocalBackend(_Backend):
         data_id: Optional[str] = None,
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ) -> Tuple[SessionInfo, int]:
         """Create a session + start its ``SessionMaster``.  No ContextVar.
 
         Imperative counterpart to :meth:`track`.  Used by the daemon
         (:mod:`.daemon`) where session lifecycle is driven by HTTP
         endpoints, not a context manager.
+
+        When a *router* is supplied, the session's mitmproxy addon
+        applies it to every subprocess request; the in-process
+        ``LocalHandler`` is constructed by :meth:`track`, not here.
         """
         assert self._active, "call backend.start() first"
         session = self._session_manager.create_session(
@@ -110,6 +118,7 @@ class LocalBackend(_Backend):
             registry=self._registry,
             recorder=self._recorder,
             cache=self._response_cache,
+            router=router,
         )
         try:
             port = master.start()
@@ -138,7 +147,11 @@ class LocalBackend(_Backend):
 
     @contextmanager
     def track(
-        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+        self,
+        data_id: str,
+        combo_id: str,
+        agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
         """Create a tracking session with its own mitmproxy port.
 
@@ -146,12 +159,26 @@ class LocalBackend(_Backend):
         httpx patch records calls into this session.  Eagerly starts a
         ``SessionMaster`` so subprocesses can use ``get_session_env``
         without further setup.
+
+        Router resolution: an explicit ``router=`` argument always wins;
+        if omitted, the router activated by an enclosing ``with router:``
+        block (via :func:`agentopt.routing.get_active_router`) is used.
+        Either router applies to both the in-process httpx path and the
+        subprocess mitmproxy addon for this session.
         """
+        if router is None:
+            from agentopt.routing.base import get_active_router
+
+            router = get_active_router()
+
         session, port = self.open_session(
-            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id, router=router,
         )
         handler = LocalHandler(
-            session=session, recorder=self._recorder, cache=self._response_cache,
+            session=session,
+            recorder=self._recorder,
+            cache=self._response_cache,
+            router=router,
         )
         active = ActiveSession(
             session=session,

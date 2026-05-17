@@ -26,7 +26,7 @@ import json
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, FrozenSet, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, Optional
 
 import httpx
 
@@ -34,6 +34,9 @@ from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .recording import Recorder
 from .session import SessionInfo
 from .usage import is_streaming_request
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 
 # ---------------------------------------------------------------------------
@@ -109,19 +112,28 @@ class CallHandler(abc.ABC):
 
 
 class LocalHandler(CallHandler):
-    """In-process handler: cache lookup, forward to upstream, record.
+    """In-process handler: route, cache lookup, forward to upstream, record.
 
     This is the body of the original ``_patched_sync_send`` /
-    ``_patched_async_send`` extracted into a class so that a remote-mode
+    ``_patched_async_send`` extracted into a class so a remote-mode
     handler can plug into the same seam.
+
+    When a router is attached, it runs **before** the cache lookup so
+    cache keys reflect the model that will actually be sent upstream,
+    not the model the client originally requested.
     """
 
     def __init__(
-        self, session: SessionInfo, recorder: Recorder, cache: Optional[ResponseCache],
+        self,
+        session: SessionInfo,
+        recorder: Recorder,
+        cache: Optional[ResponseCache],
+        router: Optional["Router"] = None,
     ) -> None:
         self._session = session
         self._recorder = recorder
         self._cache = cache
+        self._router = router
 
     # -- sync ---------------------------------------------------------
 
@@ -134,7 +146,9 @@ class LocalHandler(CallHandler):
         **kwargs: Any,
     ) -> httpx.Response:
         json_body = _decode_json_body(request.content)
-        # Cache lookup
+        request = self._maybe_route(request, json_body)
+
+        # Cache lookup (post-routing — key reflects the actual model)
         if self._cache is not None and json_body:
             entry = self._cache.get(_make_cache_key(json_body, str(request.url.path)))
             if entry is not None:
@@ -167,6 +181,8 @@ class LocalHandler(CallHandler):
         **kwargs: Any,
     ) -> httpx.Response:
         json_body = _decode_json_body(request.content)
+        request = self._maybe_route(request, json_body)
+
         if self._cache is not None and json_body:
             entry = self._cache.get(_make_cache_key(json_body, str(request.url.path)))
             if entry is not None:
@@ -189,6 +205,45 @@ class LocalHandler(CallHandler):
         latency = time.monotonic() - t0
         self._record(request, response, None, latency, cached=False)
         return response
+
+    # -- routing ------------------------------------------------------
+
+    def _maybe_route(
+        self, request: httpx.Request, json_body: Dict[str, Any],
+    ) -> httpx.Request:
+        """Apply the active router; return a fresh ``Request`` if it mutated.
+
+        Returns the original *request* unchanged when there's nothing to
+        do.  When the router rewrites the body, we build a new
+        ``httpx.Request`` so its ``.stream`` (what the transport actually
+        iterates over the wire) and ``Content-Length`` stay coherent —
+        mutating ``request._content`` alone leaves a stale stream and
+        ``h11`` rejects the mismatch.
+        """
+        if self._router is None or not json_body:
+            return request
+        from agentopt.routing.base import apply_router
+
+        mutated = apply_router(
+            self._router,
+            json_body,
+            request.url.raw_path.decode("ascii", errors="ignore"),
+            self._session,
+        )
+        if not mutated:
+            return request
+
+        new_bytes = json.dumps(json_body, separators=(",", ":")).encode("utf-8")
+        new_headers = httpx.Headers(request.headers)
+        # Let httpx recompute Content-Length from the new body.
+        new_headers.pop("content-length", None)
+        return httpx.Request(
+            method=request.method,
+            url=request.url,
+            headers=new_headers,
+            content=new_bytes,
+            extensions=dict(request.extensions),
+        )
 
     # -- recording (shared by sync + async) --------------------------
 

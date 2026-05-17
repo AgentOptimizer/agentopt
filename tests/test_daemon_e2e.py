@@ -218,6 +218,7 @@ def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeyp
     tracker = LLMTracker()
     tracker.start()
     try:
+
         async def make_call():
             async with httpx.AsyncClient(base_url=mock_upstream.base_url) as client:
                 resp = await client.post(

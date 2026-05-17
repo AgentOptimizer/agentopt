@@ -23,9 +23,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         prog="agentopt",
         description="agentopt — LLM model selection + per-call tracking",
     )
-    subparsers = parser.add_subparsers(
-        dest="cmd", required=True, metavar="COMMAND",
-    )
+    subparsers = parser.add_subparsers(dest="cmd", required=True, metavar="COMMAND",)
 
     # Subcommands register themselves here.  Each must call
     # `set_defaults(func=<handler>)` so dispatch below stays generic.

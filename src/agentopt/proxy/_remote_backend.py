@@ -27,10 +27,13 @@ import logging
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Set, Tuple
 
 import certifi
 import httpx
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 from ._backend import _Backend
 from .interceptor import (
@@ -350,8 +353,28 @@ class RemoteBackend(_Backend):
 
     @contextmanager
     def track(
-        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+        self,
+        data_id: str,
+        combo_id: str,
+        agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
+        # Mirror LocalBackend's resolution so the error message is
+        # accurate whether the router came from an explicit kwarg or a
+        # ``with router:`` block.
+        if router is None:
+            from agentopt.routing.base import get_active_router
+
+            router = get_active_router()
+        if router is not None:
+            raise NotImplementedError(
+                "agentopt: routing is library-only in v1.  AGENTOPT_GATEWAY_URL "
+                "is set, so tracking goes through the agentopt daemon — but the "
+                "daemon does not yet apply per-call routing policies.  Either "
+                "unset AGENTOPT_GATEWAY_URL for routing experiments, or drop "
+                "the router."
+            )
+
         session, proxy_port, bundle_path = self.open_session(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id,
         )

@@ -226,9 +226,7 @@ def run(
         )
 
     if not str(cache_dir).strip():
-        raise SystemExit(
-            "agentopt serve: --cache-dir cannot be empty.  Pass a path."
-        )
+        raise SystemExit("agentopt serve: --cache-dir cannot be empty.  Pass a path.")
     resolved_cache_dir = Path(cache_dir).expanduser().resolve()
 
     backend = LocalBackend(cache=True, cache_dir=resolved_cache_dir)
@@ -238,7 +236,9 @@ def run(
         app = make_app(backend)
         logger.info(
             "agentopt serve listening on http://%s:%d (cache dir: %s)",
-            host, port, resolved_cache_dir,
+            host,
+            port,
+            resolved_cache_dir,
         )
         web.run_app(app, host=host, port=port, print=None, handle_signals=True)
     finally:
@@ -265,8 +265,8 @@ def register_serve_subparser(
         "--cache-dir",
         default=".agentopt_cache",
         help="Directory for the response cache (cache.db). Resolved to an "
-             "absolute path relative to the daemon's CWD at startup; the "
-             "resolved path is logged. Default: ./.agentopt_cache",
+        "absolute path relative to the daemon's CWD at startup; the "
+        "resolved path is logged. Default: ./.agentopt_cache",
     )
     p.add_argument(
         "--allow-remote",

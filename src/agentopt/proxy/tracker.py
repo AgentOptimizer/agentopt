@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple, Union
 
 from ._backend import (
     _MITMPROXY_CA_CERT,
@@ -29,6 +29,9 @@ from ._backend import (
 from ._local_backend import LocalBackend
 from .models import CallRecord
 from .session import SessionInfo
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 __all__ = [
     "LLMTracker",
@@ -142,11 +145,20 @@ class LLMTracker:
 
     @contextmanager
     def track(
-        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+        self,
+        data_id: str,
+        combo_id: str,
+        agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
-        """Open a tracking session.  See :meth:`_Backend.track`."""
+        """Open a tracking session.  See :meth:`_Backend.track`.
+
+        Optionally pass a :class:`agentopt.Router` to swap models on a
+        per-call basis.  If omitted, the router activated by an
+        enclosing ``with router:`` block is used.
+        """
         with self._backend.track(
-            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id, router=router,
         ) as session:
             yield session
 

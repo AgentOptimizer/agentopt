@@ -53,6 +53,9 @@ plot = ["matplotlib>=3.5"]
 dev = ["pytest>=8.0"]
 docs = ["mkdocs-material", "mkdocstrings[python]"]
 
+[project.scripts]
+agentopt = "agentopt.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/AgentOptimizer/agentopt"
 Documentation = "https://agentoptimizer.github.io/agentopt"

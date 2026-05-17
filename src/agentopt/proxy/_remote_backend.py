@@ -274,9 +274,35 @@ class RemoteBackend(_Backend):
         # NOTE: do not close ``self._http`` here.  Callers (``ModelSelector``
         # in particular) invoke ``get_records()`` / ``get_usage()`` *after*
         # ``stop()`` to harvest the run's records — those calls would fail
-        # against a closed control-plane client.  The httpx Client closes
-        # itself in __del__ when the backend is garbage-collected.
+        # against a closed control-plane client.  Use :meth:`close` for
+        # final teardown.
         self._active = False
+
+    def close(self) -> None:
+        """Final teardown.  Idempotent; safe to call after ``stop``.
+
+        Releases the control-plane httpx client.  Without this, httpx
+        emits an "Unclosed client" warning at GC time, and on PyPy or
+        in cycles the close may run much later than expected.
+        """
+        if self._active:
+            self.stop()
+        try:
+            if not self._http.is_closed:
+                self._http.close()
+        except Exception:
+            logger.debug(
+                "ignored exception closing control-plane client", exc_info=True,
+            )
+
+    def __del__(self) -> None:
+        # Safety net for callers that forget to call ``close()``.  Errors
+        # from __del__ are awkward — swallow them rather than print to
+        # stderr at interpreter shutdown.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     # -- session management ------------------------------------------
 

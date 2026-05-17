@@ -100,7 +100,23 @@ class _Backend(ABC):
 
     @abstractmethod
     def stop(self) -> None:
-        """Tear down all sessions and flush state."""
+        """Tear down all sessions and flush state.
+
+        Record queries (``get_records`` / ``get_usage`` / etc.) remain
+        valid after ``stop()`` so callers can harvest the run's records;
+        :meth:`close` is the final-teardown hook that releases everything
+        else (e.g. the remote backend's HTTP client).
+        """
+
+    def close(self) -> None:
+        """Release every resource the backend holds.  Idempotent.
+
+        Default implementation calls :meth:`stop` if the backend is
+        still active.  Subclasses that hold additional resources (long-
+        lived HTTP clients, sockets, threads) override to release them.
+        """
+        if getattr(self, "_active", False):
+            self.stop()
 
     # -- session management ------------------------------------------
 

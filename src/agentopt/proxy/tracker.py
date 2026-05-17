@@ -112,8 +112,29 @@ class LLMTracker:
         self._backend.start()
 
     def stop(self) -> None:
-        """Tear down all live sessions, restore httpx, flush cache."""
+        """Tear down all live sessions, restore httpx, flush cache.
+
+        Record queries remain valid after ``stop()``; call :meth:`close`
+        for full teardown (releases the remote backend's HTTP client).
+        """
         self._backend.stop()
+
+    def close(self) -> None:
+        """Final teardown.  Idempotent; safe to call after ``stop``.
+
+        Releases every resource the backend holds.  For ``RemoteBackend``
+        this drops the long-lived control-plane HTTP client; for
+        ``LocalBackend`` this is equivalent to ``stop`` when the tracker
+        is still active and a no-op otherwise.
+        """
+        self._backend.close()
+
+    # Context-manager sugar: ``with LLMTracker() as tracker:`` auto-closes.
+    def __enter__(self) -> "LLMTracker":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     # ------------------------------------------------------------------
     # Session tracking

@@ -116,8 +116,12 @@ def load_policy_module(path: str) -> str:
     sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
-    except Exception:
+    except Exception as exc:
         sys.modules.pop(module_name, None)
-        raise
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError(
+            f"Could not import policy module {path!r} as {module_name!r}: {exc}"
+        ) from exc
     logger.info("Loaded policy module %s from %s", module_name, p)
     return module_name

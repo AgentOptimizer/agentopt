@@ -108,6 +108,82 @@ This is a design choice, not a forced constraint. Alternatives we rejected:
 
 Per-session masters cost ~100-300ms startup and ~30MB RSS each. Acceptable for research workloads where session count is low and parallel safety matters more than absolute throughput.
 
+## Local vs daemon mode: where the proxy lives
+
+Everything above describes the *mechanism* of interception. Orthogonal to that mechanism is the question of *where* the proxy runs — in the same Python process as your selector code, or in a long-lived daemon.
+
+`LLMTracker` picks the mode automatically from a single environment variable:
+
+```bash
+# Default — in-process: spins per-session mitmproxy masters in this process.
+python my_script.py
+
+# Daemon mode — talk to a long-lived gateway.
+AGENTOPT_GATEWAY_URL=http://127.0.0.1:9000 python my_script.py
+```
+
+The user-facing API is byte-identical between modes. `ModelSelector(...).select_best()`, `tracker.track()`, `tracker.get_records()` — none of it changes. Switching modes is a deployment decision, not an API decision.
+
+### What's identical between modes
+
+Same proxy mechanism end-to-end. Per-session mitmproxy masters, the same `AgentoptAddon`, same CA, same path-pattern detection, same `CallRecord` schema. The only thing that varies is *which process* owns the master.
+
+### What differs
+
+| | Local mode | Daemon mode |
+|---|---|---|
+| Where the master runs | The user's Python process | The `agentopt serve` daemon |
+| Where the cache + records live | In-process | On the daemon |
+| Where the in-process httpx patch sends traffic | Directly to the upstream LLM API | Through the daemon's per-session proxy port |
+| Multi-process / multi-language clients | Subprocess agents only | First-class: any client that respects `HTTPS_PROXY` |
+| State outlives a single experiment | No (process-bound) | Yes (daemon-bound) |
+| Setup | None | Run `agentopt serve` separately |
+
+### The `agentopt serve` daemon
+
+A small `aiohttp.web` app that owns one `LocalBackend` and exposes its surface over HTTP. Localhost-only in v1 (no auth).
+
+```bash
+agentopt serve --port 9000 --cache-dir .agentopt_cache
+```
+
+Control plane:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`    | `/health`                          | liveness probe |
+| `POST`   | `/sessions`                        | open a session — returns `{session_id, proxy_port, ca_pem_b64}` |
+| `DELETE` | `/sessions/{session_id}`           | close a session |
+| `GET`    | `/records?data_id=&combo_id=…`     | filtered `CallRecord` list |
+| `GET`    | `/usage?…`                         | aggregated token usage |
+| `GET`    | `/cached_latency?…`                | total cached-response latency |
+| `POST`   | `/cache/flush`                     | force-flush dirty cache rows |
+| `POST`   | `/cache/clear`                     | drop all cached responses |
+| `POST`   | `/providers`                       | register a custom LLM provider |
+| `GET`    | `/ca`                              | mitmproxy CA cert (also returned in `POST /sessions`) |
+
+The daemon refuses to bind a non-loopback host without `--allow-remote`, which is reserved for a future revision that ships authentication. Until then, refusing fast is safer than accidentally exposing an unauthenticated proxy on the network.
+
+### How the in-process httpx patch routes in daemon mode
+
+In local mode the patched `httpx.Client.send` does the work itself (cache lookup, forward to upstream, record). In daemon mode it would be duplicate machinery — the daemon's `AgentoptAddon` already does all of that. So the patched `send` instead forwards the original request through an `httpx.Client(proxy=daemon_session_url, verify=daemon_ca_bundle)`, and the daemon records + caches.
+
+The seam is a small `CallHandler` ABC inside `interceptor.py`. Two implementations:
+
+- **`LocalHandler`** — today's behaviour (cache, forward to real upstream, record).
+- **`RemoteHandler`** — forwards through the daemon's per-session proxy port; the daemon does cache + record.
+
+Both are bound to the `ActiveSession` ContextVar at `track()` entry. The patched `send` is a one-line dispatcher: `return active.handler.handle_sync(...)`. Nothing about the activation, path-pattern filter, or `_active_session_var` plumbing changes between modes.
+
+### Why daemon mode at all
+
+Two motivations:
+
+1. **Multi-language / multi-process clients.** Subprocess agents work today via `HTTPS_PROXY`, but each Python process spins its own proxy. With a daemon, one gateway serves any number of clients in any language — they all just point `HTTPS_PROXY` at the same per-session port returned by `POST /sessions`.
+2. **State that outlives a process.** Cache survives across runs. Records can be queried later. A foundation for future features (concurrency caps, request coalescing, cross-call observability) that need a global view a single-process library can't supply.
+
+Routing is intentionally library-only for now — user-supplied Python `Router` callables don't translate cleanly across the wire and the cost of supporting them at v1 wasn't worth it. The daemon focuses on tracking, caching, and shared infrastructure.
+
 ## The complete flow
 
 Here's everything that happens end-to-end when you run an evaluation:
@@ -122,7 +198,9 @@ Here's everything that happens end-to-end when you run an evaluation:
 
 **Session teardown**: `track()` scope exits → ContextVar is reset, the SessionMaster is shut down (drains in-flight requests, joins the thread), and the session is archived.
 
-**Shutdown**: `tracker.stop()` restores the original `httpx.Client.send`, stops any remaining masters, and flushes the cache.
+**Shutdown**: `tracker.stop()` restores the original `httpx.Client.send`, stops any remaining masters, and flushes the cache. Record queries remain valid after `stop()`; `tracker.close()` does the final teardown (release the remote backend's long-lived HTTP client). `LLMTracker` is a context manager — `with LLMTracker() as t:` calls `close()` on exit.
+
+In daemon mode the same calls dispatch over HTTP: `start()` health-checks the daemon, `track()` POSTs `/sessions`, `stop()` closes any lingering sessions, `close()` releases the control-plane client.
 
 ## Session lifecycle
 
@@ -186,26 +264,34 @@ track(combo_id="gpt4o+gpt4o-mini") → SessionMaster on port 59205
 
 ### `agentopt.proxy`
 
-The interception machinery, split between the in-process httpx wrapper and the per-session mitmproxy addon.  Both call into the same recording / cache / token-extraction code, so a record is a record regardless of how the call arrived.
+The interception machinery, split between the in-process httpx wrapper, the per-session mitmproxy addon, and (optionally) a long-lived `agentopt serve` daemon.  All paths call into the same recording / cache / token-extraction code, so a record is a record regardless of how the call arrived.
 
-- **`interceptor.py`** — the httpx monkey-patch.  On an LLM request inside an active session: cache lookup, then either short-circuit on hit or call the real upstream and record.  No localhost listener.  Path-pattern set is a frozenset rebuilt-on-write so `register_provider` can extend it without racing the wrapper hot path.
+- **`tracker.py`** — `LLMTracker`.  Public surface.  Thin delegator that picks a backend in `__init__` based on `AGENTOPT_GATEWAY_URL`.  Context-manager-friendly: `with LLMTracker() as t:`.
+- **`_backend.py`** — `_Backend` ABC and the shared CA-bundle helpers (`_MITMPROXY_CA_CERT`, `_ensure_ca_bundle`).  Both backends import from here.
+- **`_local_backend.py`** — `LocalBackend`.  Per-session mitmproxy in this process; holds the shared `SessionManager`, `ResponseCache`, `ProviderRegistry`, `Recorder`; manages `SessionMaster` lifecycles per `track()`.
+- **`_remote_backend.py`** — `RemoteBackend` and `RemoteHandler`.  Talks to the daemon's HTTP control plane; the in-process httpx patch's slow path forwards through the daemon's per-session port instead of recording locally.
+- **`daemon.py`** — `aiohttp.web` app wrapping a singleton `LocalBackend`; CLI entrypoint registers the `agentopt serve` subparser.  Warms up mitmproxy's CA on startup so the first `/sessions` POST doesn't have to.
+- **`cli.py`** — top-level `agentopt` argparse dispatcher; subcommands register themselves via `set_defaults(func=...)`.
+- **`interceptor.py`** — the httpx monkey-patch.  On an LLM request inside an active session, the patched `send` is a one-line dispatcher to `active.handler.handle_{sync,async}`.  Two handlers: `LocalHandler` (today's cache+forward+record body) and `RemoteHandler` (forwards through the daemon).  Path-pattern set is a frozenset rebuilt-on-write so `register_provider` can extend it without racing the wrapper hot path.
 - **`mitm_addon.py`** — `AgentoptAddon` for mitmproxy.  Hooks: `tls_clienthello` decides intercept-vs-passthrough at the SNI level; `request` does cache lookup and short-circuit; `response` records and caches; `error` records transport failures.
 - **`mitm_runner.py`** — `SessionMaster`: hosts one `DumpMaster` per session in a background thread with its own asyncio loop.  Captures the bound port via the `running` addon hook.  Documents the embedded mitmproxy API surface we depend on so a major-version bump is traceable.
 - **`recording.py`** — `Recorder`.  The single function that turns (session, request body, response body, latency, status) into a `CallRecord` and dispatches to `SessionManager`.  Owns the warn-once-per-host set for token-extraction failures.  Both the httpx wrapper and the addon use the same instance.
-- **`tracker.py`** — `LLMTracker`.  Holds the shared `SessionManager`, `ResponseCache`, `ProviderRegistry`, `Recorder`; manages `SessionMaster` lifecycles per `track()`; merges mitmproxy's CA with `certifi`'s system bundle into a file subprocesses can use.
-- **`providers.py`** — `Provider` dataclass and `ProviderRegistry`.  Per-`LLMTracker` catalog of LLM hostnames and path patterns.
+- **`providers.py`** — `Provider` dataclass and `ProviderRegistry`.  Per-`LocalBackend` catalog of LLM hostnames and path patterns.
 - **`usage.py`** — pure token-extraction for OpenAI / Anthropic / Gemini response shapes (JSON object, JSON array, SSE).  Raises `UsageExtractionError` with a structured diagnostic on miss; never reports zero tokens silently.
 - **`cache.py`** — `ResponseCache`.  In-memory dict, optionally persisted to SQLite via a daemon flush thread.  Keyed by a hash of the request body (excluding `stream`).
 - **`session.py`** — `SessionManager`.  Active and archived sessions; `add_record` checks both so a slow upstream that finishes after `end_session` doesn't drop its record.
 
 ### `agentopt.proxy.LLMTracker` (the public surface)
 
-- `tracker.start()` / `tracker.stop()` lifecycle
-- `tracker.track(data_id, combo_id, agent_id)` context manager — creates a session, eagerly spins up a SessionMaster, sets the ContextVar
-- `tracker.get_session_env(session)` — env-var dict for subprocess agents (`HTTPS_PROXY` + the merged CA bundle path)
-- `tracker.register_provider(name, base_url, path_patterns)` — extends both the shared `ProviderRegistry` (subprocess intercept hosts) and the httpx wrapper's path-pattern set (in-process detection)
-- `tracker.get_records(...)`, `tracker.get_usage(...)`, `tracker.get_cached_latency(...)` — query recorded calls
-- `tracker.flush_cache()`, `tracker.clear_cache()`, `tracker.clear()`
+Identical between local and daemon modes. Reads `AGENTOPT_GATEWAY_URL` in `__init__` to pick the backend.
+
+- `tracker.start()` / `tracker.stop()` / `tracker.close()` lifecycle. Record queries remain valid after `stop()`; `close()` is the final-teardown hook that releases the remote backend's long-lived HTTP client.
+- `with LLMTracker() as tracker:` — context-manager sugar that calls `close()` on exit.
+- `tracker.track(data_id, combo_id, agent_id)` context manager — creates a session, eagerly spins up a SessionMaster (local) or POSTs `/sessions` (remote), sets the ContextVar.
+- `tracker.get_session_env(session)` — env-var dict for subprocess agents (`HTTPS_PROXY` + the merged CA bundle path). The proxy URL points at the local SessionMaster or the daemon's per-session port, transparently.
+- `tracker.register_provider(name, base_url, path_patterns)` — extends both the shared `ProviderRegistry` (subprocess intercept hosts) and the httpx wrapper's path-pattern set (in-process detection). In remote mode, also POSTs `/providers` to keep the daemon in sync.
+- `tracker.get_records(...)`, `tracker.get_usage(...)`, `tracker.get_cached_latency(...)` — query recorded calls.
+- `tracker.flush_cache()`, `tracker.clear_cache()`, `tracker.clear()`.
 
 ### The httpx wrapper (no business logic — delegates to `Recorder` + `ResponseCache`)
 
@@ -257,6 +343,7 @@ Every layer of complexity is forced by a real constraint, not a design choice:
 4. But the agent rejects fake certificates → need a custom CA in the trust store
 5. But we need to know which calls belong to which combo → use a separate port per session
 6. But `os.environ` isn't safe for parallel subprocesses → pass env explicitly to each subprocess instead of mutating globals
+7. But state dies with the Python process and other languages can't share it → run the same proxy code as a long-lived `agentopt serve` daemon; clients pick local vs daemon via the `AGENTOPT_GATEWAY_URL` env var, with no API change
 
 ## Scoping constraints
 

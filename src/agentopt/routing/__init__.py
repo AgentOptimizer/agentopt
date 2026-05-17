@@ -12,7 +12,7 @@ from .base import (
     Router,
     get_active_router,
 )
-from .config import BUILTIN_POLICIES, resolve_policy
+from .config import BUILTIN_POLICIES, load_policy_module, resolve_policy
 from .random_policy import RandomRouter
 
 __all__ = [
@@ -21,5 +21,6 @@ __all__ = [
     "RandomRouter",
     "BUILTIN_POLICIES",
     "get_active_router",
+    "load_policy_module",
     "resolve_policy",
 ]

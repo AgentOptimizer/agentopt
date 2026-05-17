@@ -135,7 +135,73 @@ A Python client's `with RandomRouter(...):` always overrides the daemon default 
 
 ### Custom routers in daemon mode
 
-Built-in routers work over the wire. **Custom user-defined routers are library-only in v1** — the daemon refuses to instantiate arbitrary user classes for security. Phase 3 lifts this via `agentopt serve --policy-module ./my_policies.py`; the wire protocol is already compatible.
+Custom `Router` subclasses work over the wire too. The daemon just needs to import the module the class lives in. Two ways:
+
+1. **`--policy-module path/to/my_policies.py`** — daemon pre-imports the file at startup; classes inside resolve as `"<file-stem>:ClassName"`. Repeatable.
+2. **PYTHONPATH** — put the module on the daemon process's `sys.path` (start the daemon from a CWD that contains it, or set `PYTHONPATH`). `importlib.import_module` does the rest.
+
+#### What `--policy-module` expects
+
+A plain Python file. **No plugin manifest, no `register()` callback, no decorators.** Three rules:
+
+1. **Define `Router` subclasses at module level** so `getattr(module, "ClassName")` finds them.
+2. **Each class must implement `_config_kwargs()`** if you want clients to push it per-session — returns a JSON-serializable dict of `__init__` kwargs. (Daemon-default policies set from the CLI don't need this, but per-session overrides from Python clients do.)
+3. **`__init__` must accept that dict back as kwargs.** Default `from_config(**kwargs)` just calls `cls(**kwargs)`. Override `from_config` only if you need argument preprocessing.
+
+That's the whole contract.
+
+#### Minimal example
+
+```python
+# my_policies.py
+from agentopt import Router
+
+
+class FirstCallBigRouter(Router):
+    """Big model on the first call of a workflow, cheap after."""
+
+    def __init__(self, big: str, small: str):
+        self.big = big
+        self.small = small
+
+    def route(self, ctx):
+        return self.big if not ctx.history else self.small
+
+    def _config_kwargs(self):
+        return {"big": self.big, "small": self.small}
+```
+
+```bash
+agentopt serve --policy-module ./my_policies.py
+```
+
+Client side (Python with `AGENTOPT_GATEWAY_URL` set):
+
+```python
+from my_policies import FirstCallBigRouter      # import for client-side use
+
+with FirstCallBigRouter(big="gpt-4o", small="gpt-4o-mini"):
+    agent.run(question)
+```
+
+Under the hood, the `with` block calls `router.config()` → `{"policy": "my_policies:FirstCallBigRouter", "kwargs": {"big": "...", "small": "..."}}` → POSTs to the daemon → daemon resolves via `importlib.import_module("my_policies")` (already in `sys.modules` from `--policy-module`) → instantiates.
+
+#### What you DON'T need to add
+
+- No `POLICIES = {...}` dict
+- No `register(registry)` function
+- No `__main__` block
+- No entry-point declaration in `pyproject.toml` (though you can package it that way if you'd rather `pip install` it than point at a file)
+
+#### Gotchas
+
+- **The file stem becomes the module name.** `routes.py` → `routes:MyRouter`. **Avoid stdlib collisions** (`random.py`, `json.py`, `logging.py`) — your file would shadow the stdlib module *inside the daemon process*.
+- **Module-level code runs at daemon startup.** Imports and class definitions are fine; heavy work (tokenizers, classifiers) is fine but blocks startup. If your module raises, the daemon won't start.
+- **Repeat the flag for multiple files**: `--policy-module ./a.py --policy-module ./b.py`.
+- **No hot reload.** Restart the daemon to pick up edits.
+- **Class identity matters only at wire-decode time.** What goes over the wire is `(policy_string, kwargs_dict)`. The Python client's class needs to produce a `policy_string` whose `module:Class` resolves on the daemon to the right class — the simplest way is for client and daemon to import the same file (PYTHONPATH or shared installable package).
+
+**Security**: the daemon imports whatever file you point it at, so don't `--policy-module` from untrusted sources. v1 is localhost-only — anyone who can POST to the daemon already has local execution, so this matches the existing trust model.
 
 ---
 
@@ -169,7 +235,7 @@ Two invariants worth knowing:
 
 - **Same-provider only.** `route()` returns `Optional[str]` — a model name in the same provider as the request URL. Cross-provider routing (host + auth + schema rewrites) is on the [roadmap](#roadmap).
 - **OpenAI / Anthropic body shape only.** The model lives in `request_body["model"]`. Gemini's URL-encoded model (`/v1beta/models/{model}:generateContent`) isn't rewritten yet — `route()` is still called, but a non-`None` decision logs at DEBUG and the request passes unrouted.
-- **Custom routers don't work in daemon mode** (built-ins only). See above.
+- **Custom routers in daemon mode require an importable module** — either `--policy-module ./file.py` or `PYTHONPATH`. Routers must also implement `_config_kwargs()` so they serialize over the wire (the base class raises a clear error otherwise).
 - **Not re-entrant on a single instance.** `with router:` on the same instance twice raises. Use distinct instances for nested or concurrent scopes.
 - **No nesting `with router:` inside `tracker.track()`.** Raises with a pointer to use `track(router=...)`.
 
@@ -191,7 +257,6 @@ Top-level re-exports: `agentopt.Router`, `agentopt.RandomRouter`.
 
 ## Roadmap
 
-- **Plugin loader** — `agentopt serve --policy-module ./my_policies.py` pre-imports user modules so their `Router` subclasses resolve over the wire. Wire protocol already supports this.
 - **Gemini path-rewrite routing** — extend the dispatcher to rewrite `/v1beta/models/{model}:…` URLs when the body has no `model` field.
 - **Cross-provider routing** — `route() -> Optional[str | RouteDecision]`; `RouteDecision` carries provider/api_key and the dispatcher rewrites host + auth + (where required) the request schema. Streaming response translation is the hard part.
 - **Selection ↔ routing loop** — feed `ModelSelector` results into a learned `Router` (bandit, classifier on prompt features) so selection and routing compound rather than merely coexist. ModelSelector doesn't accept a `router=` parameter yet.

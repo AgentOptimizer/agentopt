@@ -246,6 +246,7 @@ def run(
     routing_policy: Optional[str] = None,
     candidate_models: Optional[List[str]] = None,
     seed: Optional[int] = None,
+    policy_modules: Optional[List[str]] = None,
 ) -> None:
     """Start the daemon and block until interrupted.
 
@@ -270,6 +271,17 @@ def run(
     if not str(cache_dir).strip():
         raise SystemExit("agentopt serve: --cache-dir cannot be empty.  Pass a path.")
     resolved_cache_dir = Path(cache_dir).expanduser().resolve()
+
+    # Pre-import user policy modules so custom ``Router`` subclasses
+    # resolve when clients POST {"policy": "my_mod:MyRouter", ...}.
+    if policy_modules:
+        from agentopt.routing.config import load_policy_module
+
+        for mod_path in policy_modules:
+            try:
+                load_policy_module(mod_path)
+            except ValueError as exc:
+                raise SystemExit(f"agentopt serve: --policy-module {exc}")
 
     default_router = _build_default_router(routing_policy, candidate_models, seed,)
 
@@ -381,6 +393,16 @@ def register_serve_subparser(
         default=None,
         help="Optional RNG seed for --routing-policy random.",
     )
+    p.add_argument(
+        "--policy-module",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help="Path to a Python file defining custom Router subclasses.  "
+        "Pre-imports the file so clients can POST "
+        '{"policy": "filename:ClassName", "kwargs": {...}}.  '
+        "Repeatable.",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=_serve_main)
     return p
@@ -405,4 +427,5 @@ def _serve_main(args: argparse.Namespace) -> None:
         routing_policy=args.routing_policy,
         candidate_models=candidates,
         seed=args.seed,
+        policy_modules=args.policy_module,
     )

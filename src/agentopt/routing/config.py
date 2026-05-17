@@ -9,21 +9,23 @@ Two policy-name conventions resolve here:
 
 * **Short aliases** for built-in policies, listed in
   :data:`BUILTIN_POLICIES`.  E.g. ``"random"`` → :class:`RandomRouter`.
-* **``module:Class``** dotted paths for everything else.  The module
-  must already be importable (a future ``--policy-module`` flag will
-  pre-import user modules so custom routers resolve too).
-
-Built-in policies are the only ones supported in v1's daemon mode.
-Custom routers raise on the wire today; the dispatch path is in place
-so adding the plugin loader later is a small change.
+* **``module:Class``** dotted paths for everything else.  The named
+  module must be importable on the daemon's ``sys.path``.  Built-ins
+  always are; user modules need either ``PYTHONPATH`` setup or
+  :func:`load_policy_module` (wired to the ``--policy-module`` CLI flag).
 """
 
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import logging
+from pathlib import Path
 from typing import Any, Dict, Type
 
 from .base import Router
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -88,3 +90,34 @@ def resolve_policy(policy: str, kwargs: Dict[str, Any]) -> Router:
     """
     cls = _resolve_class(policy)
     return cls.from_config(**kwargs)
+
+
+def load_policy_module(path: str) -> str:
+    """Import a Python file by path so its ``Router`` subclasses resolve.
+
+    Used by ``agentopt serve --policy-module path/to/my_policies.py``.
+    Adds the module to ``sys.modules`` under its file stem (e.g.
+    ``my_policies.py`` → ``my_policies``); ``resolve_policy`` can then
+    reach the classes inside via ``"my_policies:MyRouter"``.
+
+    Returns the module name it registered.  Raises :class:`ValueError`
+    with a clear message on missing files / import errors.
+    """
+    p = Path(path).expanduser().resolve()
+    if not p.is_file():
+        raise ValueError(f"policy module {path!r} does not exist or is not a file")
+    module_name = p.stem
+    spec = importlib.util.spec_from_file_location(module_name, p)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"could not build import spec for {path!r}")
+    module = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    logger.info("Loaded policy module %s from %s", module_name, p)
+    return module_name

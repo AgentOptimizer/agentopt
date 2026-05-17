@@ -1,8 +1,14 @@
-"""``agentopt`` CLI — currently dispatches a single subcommand: ``serve``.
+"""``agentopt`` CLI — top-level argparse dispatcher.
 
-Wired to ``pyproject.toml``'s ``[project.scripts]`` table as
-``agentopt = "agentopt.cli:main"``.  Run ``agentopt serve --help`` for
-daemon options.
+Wired to ``pyproject.toml``'s ``[project.scripts]`` as
+``agentopt = "agentopt.cli:main"``.
+
+Each subcommand registers itself by adding a subparser and calling
+``set_defaults(func=<handler>)``; :func:`main` dispatches via
+``args.func(args)``.  This pattern keeps ``--help`` ergonomics
+predictable at every level (``agentopt --help``,
+``agentopt serve --help``) without the ``parse_known_args`` /
+``add_help=False`` workarounds those break.
 """
 
 from __future__ import annotations
@@ -17,22 +23,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         prog="agentopt",
         description="agentopt — LLM model selection + per-call tracking",
     )
-    subs = parser.add_subparsers(dest="cmd", required=True)
-    subs.add_parser(
-        "serve",
-        help="Run the long-lived gateway daemon. See `agentopt serve --help`.",
-        add_help=False,
+    subparsers = parser.add_subparsers(
+        dest="cmd", required=True, metavar="COMMAND",
     )
-    # Parse only the first positional so subcommands can own their own flags.
-    args, rest = parser.parse_known_args(argv)
 
-    if args.cmd == "serve":
-        from .proxy.daemon import cli as serve_cli
+    # Subcommands register themselves here.  Each must call
+    # `set_defaults(func=<handler>)` so dispatch below stays generic.
+    from .proxy.daemon import register_serve_subparser
 
-        serve_cli(rest)
-        return
+    register_serve_subparser(subparsers)
 
-    parser.error(f"unknown subcommand: {args.cmd!r}")
+    args = parser.parse_args(argv)
+    args.func(args)
 
 
 if __name__ == "__main__":

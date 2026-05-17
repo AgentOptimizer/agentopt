@@ -143,16 +143,24 @@ def test_remote_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
 
 def test_remote_get_session_env_points_at_daemon(daemon, monkeypatch):
     """``get_session_env`` returns the daemon's per-session port + bundle."""
+    from urllib.parse import urlparse
+
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
+    daemon_url = urlparse(daemon)
     tracker = LLMTracker()
     tracker.start()
     try:
         with tracker.track(data_id="dp", combo_id="c") as session:
             env = tracker.get_session_env(session)
-            assert "HTTPS_PROXY" in env
-            assert env["HTTPS_PROXY"].startswith("http://127.0.0.1:")
+
+            proxy = urlparse(env["HTTPS_PROXY"])
+            assert proxy.scheme == "http"
+            assert proxy.hostname == daemon_url.hostname == "127.0.0.1"
+            assert proxy.path in ("", "/")  # no extra path components
             # Per-session port is distinct from the control-plane port.
-            assert env["HTTPS_PROXY"] != daemon
+            assert proxy.port is not None
+            assert proxy.port != daemon_url.port
+
             assert env["SSL_CERT_FILE"].endswith("ca-bundle.pem")
             assert env["REQUESTS_CA_BUNDLE"] == env["SSL_CERT_FILE"]
             assert env["NODE_EXTRA_CA_CERTS"] == env["SSL_CERT_FILE"]
@@ -171,6 +179,63 @@ def test_remote_no_op_endpoints(daemon, monkeypatch):
         assert tracker.get_cached_latency(combo_id="never") == 0.0
         tracker.flush_cache()
         tracker.clear_cache()
+    finally:
+        tracker.stop()
+
+
+def test_remote_handler_lazy_async_client(daemon, monkeypatch):
+    """``RemoteHandler.close()`` is safe when ``handle_async`` was never called.
+
+    Regression: prior to the lazy-creation fix, an ``AsyncClient`` was
+    eagerly constructed in ``__init__``; ``close()`` then called the
+    nonexistent ``AsyncClient.close()`` (only ``aclose()`` exists),
+    raising ``AttributeError`` that was silently swallowed and leaking
+    the connection pool every time ``track()`` exited.
+    """
+    import certifi
+
+    from agentopt.proxy._remote_backend import RemoteHandler
+
+    h = RemoteHandler(
+        proxy_url="http://127.0.0.1:1",  # arbitrary; never sent to
+        ca_bundle_path=certifi.where(),  # any valid PEM; never verified
+    )
+    assert h._async_client is None
+    h.close()  # must not raise
+    assert h._async_client is None  # still uncreated — no leak
+
+
+def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
+    """Async (``httpx.AsyncClient``) LLM call records cleanly through the daemon.
+
+    Also exercises the async-cleanup path in ``RemoteHandler.close()`` —
+    the prior implementation silently failed here, leaving the
+    ``AsyncClient``'s connection pool open across runs.
+    """
+    import asyncio
+
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
+    tracker = LLMTracker()
+    tracker.start()
+    try:
+        async def make_call():
+            async with httpx.AsyncClient(base_url=mock_upstream.base_url) as client:
+                resp = await client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "gpt-4o-mini",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                )
+                assert resp.status_code == 200
+
+        with tracker.track(data_id="dp_async", combo_id="c_async"):
+            asyncio.run(make_call())
+
+        records = tracker.get_records(combo_id="c_async")
+        assert len(records) == 1
+        assert records[0].model == "gpt-4o-mini"
+        assert records[0].status_code == 200
     finally:
         tracker.stop()
 
@@ -198,6 +263,15 @@ def test_remote_get_records_works_after_stop(daemon, mock_upstream, monkeypatch)
     records = tracker.get_records(combo_id="c")
     assert len(records) == 1
     assert records[0].model == "gpt-4o-mini"
+
+
+def test_daemon_rejects_empty_cache_dir():
+    """``run(cache_dir='')`` fails fast — silently allowing it would land
+    the cache somewhere unpredictable under a supervisor."""
+    from agentopt.proxy.daemon import run
+
+    with pytest.raises(SystemExit, match="cache-dir cannot be empty"):
+        run(host="127.0.0.1", port=0, cache_dir="")
 
 
 def test_remote_gateway_unreachable_fails_fast(monkeypatch):

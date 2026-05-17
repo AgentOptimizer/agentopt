@@ -29,7 +29,8 @@ import asyncio
 import base64
 import dataclasses
 import logging
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 from aiohttp import web
 
@@ -201,7 +202,7 @@ def _warmup_ca(backend: LocalBackend) -> None:
 def run(
     host: str = "127.0.0.1",
     port: int = 9000,
-    cache_dir: Optional[str] = ".agentopt_cache",
+    cache_dir: Union[str, Path] = ".agentopt_cache",
     allow_remote: bool = False,
 ) -> None:
     """Start the daemon and block until interrupted.
@@ -210,6 +211,12 @@ def run(
     ``allow_remote=True``, which is reserved for a future revision that
     ships authentication.  Until then, refusing fast is safer than
     accidentally exposing an unauthenticated proxy on the network.
+
+    *cache_dir* is resolved to an absolute path before opening the cache
+    so the daemon's on-disk state lands somewhere predictable when run
+    under a supervisor (systemd, supervisord, docker) where the CWD
+    isn't where the operator expects.  The resolved path is logged at
+    startup.
     """
     if host not in ("127.0.0.1", "localhost", "::1") and not allow_remote:
         raise SystemExit(
@@ -218,36 +225,65 @@ def run(
             "--allow-remote once authentication is wired up."
         )
 
-    backend = LocalBackend(cache=True, cache_dir=cache_dir)
+    if not str(cache_dir).strip():
+        raise SystemExit(
+            "agentopt serve: --cache-dir cannot be empty.  Pass a path."
+        )
+    resolved_cache_dir = Path(cache_dir).expanduser().resolve()
+
+    backend = LocalBackend(cache=True, cache_dir=resolved_cache_dir)
     backend.start()
     try:
         _warmup_ca(backend)
         app = make_app(backend)
-        logger.info("agentopt serve listening on http://%s:%d", host, port)
+        logger.info(
+            "agentopt serve listening on http://%s:%d (cache dir: %s)",
+            host, port, resolved_cache_dir,
+        )
         web.run_app(app, host=host, port=port, print=None, handle_signals=True)
     finally:
         backend.stop()
 
 
-def cli(argv: Optional[List[str]] = None) -> None:
-    """argparse entrypoint for the ``agentopt serve`` subcommand."""
-    parser = argparse.ArgumentParser(prog="agentopt serve")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=9000)
-    parser.add_argument("--cache-dir", default=".agentopt_cache")
-    parser.add_argument(
+def register_serve_subparser(
+    subparsers: "argparse._SubParsersAction",
+) -> argparse.ArgumentParser:
+    """Register ``agentopt serve`` on the top-level CLI parser.
+
+    Returns the subparser (for callers that want to introspect it).
+    Sets ``args.func = _serve_main`` so :func:`agentopt.cli.main` can
+    dispatch generically via ``args.func(args)``.
+    """
+    p = subparsers.add_parser(
+        "serve",
+        help="Run the long-lived gateway daemon.",
+        description="Run the agentopt gateway daemon (localhost-only).",
+    )
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=9000)
+    p.add_argument(
+        "--cache-dir",
+        default=".agentopt_cache",
+        help="Directory for the response cache (cache.db). Resolved to an "
+             "absolute path relative to the daemon's CWD at startup; the "
+             "resolved path is logged. Default: ./.agentopt_cache",
+    )
+    p.add_argument(
         "--allow-remote",
         action="store_true",
         help="(reserved) bind a non-localhost host. Requires auth which is not yet shipped.",
     )
-    parser.add_argument("-v", "--verbose", action="store_true")
-    args = parser.parse_args(argv)
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=_serve_main)
+    return p
 
+
+def _serve_main(args: argparse.Namespace) -> None:
+    """Dispatched by :func:`agentopt.cli.main` after argument parsing."""
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
         level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-
     run(
         host=args.host,
         port=args.port,

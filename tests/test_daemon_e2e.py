@@ -265,6 +265,38 @@ def test_remote_get_records_works_after_stop(daemon, mock_upstream, monkeypatch)
     assert records[0].model == "gpt-4o-mini"
 
 
+def test_remote_close_releases_control_plane_client(daemon, monkeypatch):
+    """``close()`` actually closes the long-lived httpx client.
+
+    Without this, the client lingers until ``__del__`` and httpx emits
+    an "Unclosed client" warning at GC time.
+    """
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
+    tracker = LLMTracker()
+    tracker.start()
+    tracker.stop()
+    # _http stays open across stop() so post-stop record queries work.
+    assert not tracker._backend._http.is_closed  # type: ignore[attr-defined]
+
+    tracker.close()
+    assert tracker._backend._http.is_closed  # type: ignore[attr-defined]
+
+    # Idempotent — calling close() again must not raise.
+    tracker.close()
+
+
+def test_remote_context_manager_closes(daemon, monkeypatch):
+    """``with LLMTracker() as tracker:`` releases the control-plane client."""
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
+    with LLMTracker() as tracker:
+        tracker.start()
+        with tracker.track(data_id="dp", combo_id="c"):
+            pass
+        tracker.stop()
+        backend = tracker._backend
+    assert backend._http.is_closed  # type: ignore[attr-defined]
+
+
 def test_daemon_rejects_empty_cache_dir():
     """``run(cache_dir='')`` fails fast — silently allowing it would land
     the cache somewhere unpredictable under a supervisor."""

@@ -23,7 +23,8 @@ class RandomRouter(Router):
     POLICY_NAME = "random"
 
     def __init__(self, candidates: Sequence[str], seed: Optional[int] = None,) -> None:
-        assert len(candidates) > 0, "RandomRouter requires at least one candidate"
+        if not candidates:
+            raise ValueError("RandomRouter requires at least one candidate")
         self._candidates = tuple(candidates)
         self._seed = seed
         self._rng = random.Random(seed)

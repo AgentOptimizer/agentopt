@@ -20,6 +20,7 @@ No cache or records live in this process — the daemon owns both.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -89,6 +90,25 @@ def _write_ca_bundle(ca_pem: bytes, gateway_url: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _make_httpx_client(
+    cls, proxy_url: str, ca_bundle_path: str,
+):
+    """Construct an httpx ``Client`` or ``AsyncClient`` with proxy config.
+
+    ``proxy=`` is the modern httpx kwarg (0.27+).  Fall back to the
+    deprecated ``proxies=`` for older installs (package pin is
+    ``httpx>=0.24``).
+    """
+    try:
+        return cls(proxy=proxy_url, verify=ca_bundle_path, timeout=_DEFAULT_TIMEOUT)
+    except TypeError:
+        return cls(
+            proxies={"all://": proxy_url},
+            verify=ca_bundle_path,
+            timeout=_DEFAULT_TIMEOUT,
+        )
+
+
 class RemoteHandler(CallHandler):
     """Forward intercepted requests through the daemon's session proxy.
 
@@ -97,30 +117,22 @@ class RemoteHandler(CallHandler):
     OpenAI/Anthropic SDKs) still get their traffic captured when
     ``AGENTOPT_GATEWAY_URL`` is set; subprocess agents use
     ``HTTPS_PROXY`` directly and never hit this code.
+
+    The sync client is created eagerly; the async client is created on
+    first use.  This keeps the common (sync-only) path leak-free without
+    making the async path more expensive than necessary — and it gives
+    :meth:`close` a clear signal for when async cleanup is needed.
     """
 
     def __init__(self, proxy_url: str, ca_bundle_path: str) -> None:
-        # `proxy=` is the modern httpx kwarg (0.27+).  Fall back to
-        # the deprecated `proxies=` for older installs (package pin is
-        # httpx>=0.24).
-        try:
-            self._sync_client = httpx.Client(
-                proxy=proxy_url, verify=ca_bundle_path, timeout=_DEFAULT_TIMEOUT,
-            )
-            self._async_client = httpx.AsyncClient(
-                proxy=proxy_url, verify=ca_bundle_path, timeout=_DEFAULT_TIMEOUT,
-            )
-        except TypeError:
-            self._sync_client = httpx.Client(
-                proxies={"all://": proxy_url},
-                verify=ca_bundle_path,
-                timeout=_DEFAULT_TIMEOUT,
-            )
-            self._async_client = httpx.AsyncClient(
-                proxies={"all://": proxy_url},
-                verify=ca_bundle_path,
-                timeout=_DEFAULT_TIMEOUT,
-            )
+        self._proxy_url = proxy_url
+        self._ca_bundle_path = ca_bundle_path
+        self._sync_client: httpx.Client = _make_httpx_client(
+            httpx.Client, proxy_url, ca_bundle_path,
+        )
+        # Lazy: only created if handle_async is ever called.  Avoids
+        # leaking a connection pool when only sync paths are exercised.
+        self._async_client: Optional[httpx.AsyncClient] = None
 
     def handle_sync(
         self, client: httpx.Client, request: httpx.Request, *, stream: bool, **kwargs,
@@ -136,6 +148,10 @@ class RemoteHandler(CallHandler):
         stream: bool,
         **kwargs,
     ) -> httpx.Response:
+        if self._async_client is None:
+            self._async_client = _make_httpx_client(
+                httpx.AsyncClient, self._proxy_url, self._ca_bundle_path,
+            )
         return await forward_async(
             self._async_client, request, stream=stream, **kwargs,
         )
@@ -145,11 +161,42 @@ class RemoteHandler(CallHandler):
             self._sync_client.close()
         except Exception:
             logger.debug("ignored exception closing sync client", exc_info=True)
-        # AsyncClient.aclose() needs an event loop; best-effort sync close.
+        # Only attempt async cleanup if we actually built an async client.
+        # AsyncClient has no synchronous ``close`` — must drive ``aclose``
+        # on a loop.
+        if self._async_client is not None:
+            self._close_async_client(self._async_client)
+            self._async_client = None
+
+    @staticmethod
+    def _close_async_client(client: httpx.AsyncClient) -> None:
+        """Run ``client.aclose()`` regardless of whether a loop is current.
+
+        * No running loop → drive a fresh one via ``asyncio.run``.
+        * Running loop (e.g. ``track()`` exits inside ``asyncio.run(...)``)
+          → fire-and-forget a task on it; we can't ``await`` from sync
+          code, but the task will complete before the loop closes.
+        """
         try:
-            self._async_client.close()  # type: ignore[attr-defined]
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None:
+            try:
+                asyncio.run(client.aclose())
+            except Exception:
+                logger.debug(
+                    "ignored exception draining async client", exc_info=True,
+                )
+            return
+
+        try:
+            loop.create_task(client.aclose())
         except Exception:
-            logger.debug("ignored exception closing async client", exc_info=True)
+            logger.debug(
+                "ignored exception scheduling async client aclose", exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------

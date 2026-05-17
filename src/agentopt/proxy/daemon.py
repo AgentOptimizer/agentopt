@@ -33,7 +33,8 @@ from typing import Any, Dict, List, Optional
 
 from aiohttp import web
 
-from ._backend import _MITMPROXY_CA_CERT, LocalBackend
+from ._backend import _MITMPROXY_CA_CERT
+from ._local_backend import LocalBackend
 from .models import CallRecord
 
 logger = logging.getLogger(__name__)
@@ -50,11 +51,6 @@ _BACKEND_KEY = web.AppKey("backend", LocalBackend)
 def record_to_dict(r: CallRecord) -> Dict[str, Any]:
     """Serialize a ``CallRecord`` to a JSON-compatible dict."""
     return dataclasses.asdict(r)
-
-
-def record_from_dict(d: Dict[str, Any]) -> CallRecord:
-    """Reconstruct a ``CallRecord`` from a server-side dict."""
-    return CallRecord(**d)
 
 
 # ---------------------------------------------------------------------------

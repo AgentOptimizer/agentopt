@@ -23,10 +23,10 @@ from typing import Dict, Iterator, List, Optional, Tuple, Union
 from ._backend import (
     _MITMPROXY_CA_CERT,
     _MITMPROXY_CONFDIR,
-    LocalBackend,
     _Backend,
     _ensure_ca_bundle,
 )
+from ._local_backend import LocalBackend
 from .models import CallRecord
 from .session import SessionInfo
 

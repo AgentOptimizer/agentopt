@@ -1,9 +1,18 @@
-"""In-process httpx interception — record LLM calls directly.
+"""In-process httpx + subprocess interception — record LLM calls directly.
 
 The active tracking session lives in a ``ContextVar`` set by
-``LLMTracker.track()``.  When httpx is about to send a POST whose URL
-matches a known LLM endpoint, the patched ``send`` hands the request off
-to the session's :class:`CallHandler` to do the actual work.
+``LLMTracker.track()``.  Two patches consult it:
+
+* ``httpx.Client.send`` / ``AsyncClient.send`` — in-process Python
+  agents.  When httpx is about to send a POST whose URL matches a known
+  LLM endpoint, the patched ``send`` hands the request off to the
+  session's :class:`CallHandler`.
+* ``subprocess.Popen.__init__`` — subprocess / CLI agents.  When a
+  subprocess is spawned inside an active ``track()`` scope, the patched
+  init injects ``HTTPS_PROXY`` + the merged CA bundle path into the
+  child's env so its LLM calls route through this session's mitmproxy
+  port.  The child inherits exactly enough to be tracked; the user's
+  ``run()`` method stays free of any agentopt imports.
 
 Two handlers ship with the proxy:
 
@@ -13,16 +22,17 @@ Two handlers ship with the proxy:
   request through a long-lived daemon's per-session proxy port; the
   daemon performs cache and recording.  Used by ``RemoteBackend``.
 
-The handler seam is the smallest possible split: the patched
-``send`` is a dispatcher; everything else (cache, forward, record)
-lives in the handler.  Both modes share the ContextVar activation, the
-fast-path check (``_is_llm_request``), and the install/uninstall plumbing.
+Both the httpx and subprocess install/uninstall helpers are refcounted
+so coexisting ``LLMTracker`` instances don't tear down each other's
+patches.
 """
 
 from __future__ import annotations
 
 import abc
 import json
+import os
+import subprocess
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -308,12 +318,20 @@ class ActiveSession:
 
     ``handler`` is the per-session strategy (cache+forward+record locally,
     or forward through a daemon).  See :class:`CallHandler`.
+
+    ``proxy_host`` and ``ca_bundle_path`` carry the subprocess-routing
+    bits.  ``LocalBackend`` leaves them ``None`` (the subprocess patch
+    falls back to ``127.0.0.1`` + ``_ensure_ca_bundle()`` from the local
+    mitmproxy install).  ``RemoteBackend`` sets them so children of a
+    daemon-mode session route to the daemon's host with its CA bundle.
     """
 
     session: SessionInfo
     port: int  # session's proxy port (local SessionMaster or daemon-allocated)
     path_patterns: FrozenSet[str]
     handler: CallHandler
+    proxy_host: Optional[str] = None
+    ca_bundle_path: Optional[str] = None
 
 
 _active_session_var: ContextVar[Optional[ActiveSession]] = ContextVar(
@@ -424,3 +442,99 @@ def uninstall_redirect() -> None:
     _original_sync_send = None
     _original_async_send = None
     _installed = False
+
+
+# ---------------------------------------------------------------------------
+# Subprocess interception — inject HTTPS_PROXY + CA bundle into spawned
+# children so subprocess agents are tracked without per-agent boilerplate.
+# ---------------------------------------------------------------------------
+
+_original_popen_init: Optional[Callable] = None
+_subprocess_installed = False
+_subprocess_install_refcount = 0
+
+
+def _session_env_for(active: "ActiveSession") -> Dict[str, str]:
+    """Env vars routing a child process through *active*'s proxy port.
+
+    Local mode: host is ``127.0.0.1`` and the CA bundle is the merged
+    mitmproxy + certifi file under ``~/.mitmproxy``.  Remote mode: host
+    and bundle are carried on the ``ActiveSession`` by ``RemoteBackend``.
+
+    The ``_ensure_ca_bundle`` import is lazy so callers that never spawn
+    a subprocess inside a ``track()`` scope never touch the filesystem.
+    """
+    if active.ca_bundle_path is not None:
+        bundle = active.ca_bundle_path
+    else:
+        from ._backend import _ensure_ca_bundle
+
+        bundle = _ensure_ca_bundle()
+    host = active.proxy_host or "127.0.0.1"
+    return {
+        "HTTPS_PROXY": f"http://{host}:{active.port}",
+        "SSL_CERT_FILE": bundle,
+        "REQUESTS_CA_BUNDLE": bundle,
+        "NODE_EXTRA_CA_CERTS": bundle,
+    }
+
+
+def install_subprocess_redirect() -> None:
+    """Monkey-patch ``subprocess.Popen.__init__`` to inject session env.
+
+    While an ``ActiveSession`` is set in the calling context, every new
+    ``Popen`` (and therefore every ``subprocess.run`` / ``check_output`` /
+    ``call`` / ``check_call``, which all go through ``Popen``) gets the
+    session's ``HTTPS_PROXY`` + CA bundle keys merged into its env.
+
+    Merge policy: when ``env`` is ``None`` (the default — inherit from
+    ``os.environ``), build ``{**os.environ, **session_env}`` so the
+    session's proxy wins over any pre-existing ``HTTPS_PROXY`` in the
+    parent.  When the caller passed an explicit ``env`` dict, build
+    ``{**env, **session_env}`` so the session still wins — the user
+    being inside ``with LLMTracker:`` is the signal that they want
+    tracking.  If they really need a specific subprocess unrouted, they
+    can spawn it outside the ``track()`` scope.
+
+    Idempotent and refcounted, identical to :func:`install_redirect`.
+    """
+    global _original_popen_init, _subprocess_installed
+    global _subprocess_install_refcount
+    _subprocess_install_refcount += 1
+    if _subprocess_installed:
+        return
+
+    _original_popen_init = subprocess.Popen.__init__
+
+    def _patched_popen_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        active = _active_session_var.get()
+        if active is not None:
+            session_env = _session_env_for(active)
+            user_env = kwargs.get("env")
+            if user_env is None:
+                kwargs["env"] = {**os.environ, **session_env}
+            else:
+                kwargs["env"] = {**user_env, **session_env}
+        return _original_popen_init(self, *args, **kwargs)  # type: ignore[misc]
+
+    subprocess.Popen.__init__ = _patched_popen_init  # type: ignore[assignment]
+    _subprocess_installed = True
+
+
+def uninstall_subprocess_redirect() -> None:
+    """Restore the original ``subprocess.Popen.__init__``.
+
+    Refcounted; the patch is removed only when the count drops to zero.
+    """
+    global _original_popen_init, _subprocess_installed
+    global _subprocess_install_refcount
+    if _subprocess_install_refcount > 0:
+        _subprocess_install_refcount -= 1
+    if _subprocess_install_refcount > 0 or not _subprocess_installed:
+        return
+
+    if _original_popen_init is not None:
+        subprocess.Popen.__init__ = _original_popen_init  # type: ignore[assignment]
+
+    _original_popen_init = None
+    _subprocess_installed = False

@@ -43,7 +43,9 @@ from .interceptor import (
     forward_async,
     forward_sync,
     install_redirect,
+    install_subprocess_redirect,
     uninstall_redirect,
+    uninstall_subprocess_redirect,
 )
 from .models import CallRecord
 from .providers import _BUILTIN_PROVIDERS
@@ -248,11 +250,13 @@ class RemoteBackend(_Backend):
         if self._active:
             return
         install_redirect()
+        install_subprocess_redirect()
         # Sanity: daemon reachable.  Fail fast with a clear message.
         try:
             r = self._http.get(f"{self._gateway_url}/health")
             r.raise_for_status()
         except httpx.HTTPError as exc:
+            uninstall_subprocess_redirect()
             uninstall_redirect()
             raise RuntimeError(
                 f"agentopt: gateway at {self._gateway_url} is not reachable. "
@@ -264,6 +268,7 @@ class RemoteBackend(_Backend):
     def stop(self) -> None:
         if not self._active:
             return
+        uninstall_subprocess_redirect()
         uninstall_redirect()
         # Close any sessions that survived (well-behaved callers exit
         # track() cleanly, but tests / error paths may not).
@@ -401,6 +406,8 @@ class RemoteBackend(_Backend):
             port=proxy_port,
             path_patterns=frozenset(self._path_patterns),
             handler=handler,
+            proxy_host=self._gateway_host,
+            ca_bundle_path=bundle_path,
         )
         token = _active_session_var.set(active)
         try:

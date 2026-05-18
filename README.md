@@ -25,8 +25,6 @@
 ---
 
 ## News
-[2026/05] 🔥 Per-call **routing** and a long-lived **`agentopt serve` daemon** shipped! Pick a different model on every LLM call, or point any number of clients at one shared gateway with `AGENTOPT_GATEWAY_URL`.
-
 [2026/04] Version 0.1.0 released.
 
 
@@ -74,10 +72,21 @@ pip install agentopt-py
 ```
 ## Quick Start
 
-The two entry points share the same proxy and the same agent shape — pick selection when you want to find one fixed combination offline, pick routing when you want to swap models per call at runtime. The agent class below is reused by both.
+Two axes determine which entry point you reach for:
+
+- **Selection vs routing** — find one fixed model combination *offline* (selection), or pick a model *per LLM call* at runtime (routing).
+- **In-process vs subprocess** — does your agent live in the same Python process as your script (LangChain, OpenAI SDK, …), or run as an external CLI / Docker container (Gemini CLI, Terminal Bench, Claude Code, …)?
+
+A third deployment axis — **local proxy vs `agentopt serve` daemon** — is just an env-var flip; the code below is byte-identical between modes. The four canonical setups follow.
+
+### 1. In-process agent + offline model selection
+
+The base case. Your agent uses an LLM SDK directly; you search a `{planner, solver}` combination space to pick the cheapest combo that hits the accuracy band.
 
 ```python
 from openai import OpenAI
+from agentopt import ModelSelector
+
 
 class MyAgent:
     def __init__(self, models):
@@ -90,30 +99,20 @@ class MyAgent:
             model=self.planner_model,
             messages=[{"role": "user", "content": f"Plan: {input_data}"}],
         ).choices[0].message.content
-
-        answer = self.client.chat.completions.create(
+        return self.client.chat.completions.create(
             model=self.solver_model,
             messages=[
                 {"role": "system", "content": f"Follow this plan:\n{plan}"},
                 {"role": "user", "content": input_data},
             ],
         ).choices[0].message.content
-        return answer
-```
 
-### 1. Offline model selection
-
-Find the best fixed `{planner, solver}` combination against an evaluation dataset:
-
-```python
-from agentopt import ModelSelector
 
 dataset = [
     ("What is the capital of France?", "Paris"),
     ("What is 2 + 2?", "4"),
     ("What color is the sky?", "blue"),
-    # 100+ samples recommended for production decisions;
-    # 10-20 already surfaces clear winners during development.
+    # 100+ samples recommended for production; 10–20 surfaces clear winners.
 ]
 
 def eval_fn(expected, actual):
@@ -129,7 +128,6 @@ selector = ModelSelector(
     dataset=dataset,
     method="auto",                      # arm_elimination — smart + cheap
 )
-
 results = selector.select_best(parallel=True, max_concurrent=50)
 results.print_summary()
 ```
@@ -146,16 +144,48 @@ Output:
     ...
 ```
 
-LLM-as-judge is also supported — just call your judge LLM inside `eval_fn`. With `method="auto"` (default) AgentOpt eliminates clearly worse combinations after just a few datapoints instead of evaluating every combo on every datapoint.
+With `method="auto"` AgentOpt eliminates clearly worse combinations after a few datapoints; LLM-as-judge is supported — just call your judge LLM inside `eval_fn`.
 
-### 2. Online model routing
+### 2. Subprocess agent + offline model selection
 
-Same agent, no `models=` search space, no dataset — instead a `Router` decides per call:
+When the agent is an external CLI (Gemini CLI, Claude Code, Terminal Bench, OpenHarness, …), `run()` shells out via `subprocess.run`. **You write zero env-var plumbing** — while a selection is in flight, AgentOpt patches `subprocess.Popen` to inject `HTTPS_PROXY` + the CA bundle into every child, so the CLI's LLM calls are intercepted and tracked the same way as in-process ones.
+
+```python
+import subprocess
+from agentopt import ModelSelector
+
+
+class GeminiCLIAgent:
+    def __init__(self, models):
+        self.model = models["agent"]
+
+    def run(self, prompt):
+        # No agentopt imports here. The subprocess patch handles routing.
+        return subprocess.run(
+            ["gemini", "-m", self.model, "-p", prompt],
+            capture_output=True, text=True,
+        ).stdout
+
+
+selector = ModelSelector(
+    agent=GeminiCLIAgent,
+    models={"agent": ["gemini-2.5-flash", "gemini-2.5-pro"]},
+    eval_fn=eval_fn,
+    dataset=dataset,
+    method="brute_force",
+)
+selector.select_best(parallel=False).print_summary()
+```
+
+For agents that ignore `HTTPS_PROXY` and need the proxy URL / CA cert injected into a config file (OpenClaw is the canonical case), `agentopt.get_current_session_proxy()` is the escape hatch — see the [`OpenClawAgent`](examples/shared/openclaw_agent.py) wrapper for the pattern. Working examples per CLI: [examples/selection/local/](examples/selection/local/).
+
+### 3. Local backend + online model routing
+
+A `Router` decides at every LLM call which model to use — no `models=` search space, no eval dataset. The same `MyAgent` from §1 is reused; only the harness around it changes.
 
 ```python
 from agentopt import LLMTracker, RandomRouter
 
-# Instantiate the agent once; the router overrides the model on each LLM call.
 agent = MyAgent({"planner": "gpt-4o-mini", "solver": "gpt-4o-mini"})
 
 router = RandomRouter(candidates=["gpt-4o-mini", "gpt-4.1-nano"], seed=0)
@@ -199,16 +229,42 @@ Tokens per model:
 Total latency: 12.37s across 6 call(s)
 ```
 
-`RandomRouter` is the simplest built-in policy. Write your own by subclassing `Router` and implementing `route(ctx) -> Optional[str]` — return a model name to swap or `None` to keep the client's choice. See the [router docs](https://agentoptimizer.github.io/agentopt/api/router/) for context fields (history, prompt, session) and the [`examples/routing/`](examples/routing/) folder for length-based, first-call-big, and bandit policies.
+`RandomRouter` is the simplest built-in policy. Write your own by subclassing `Router` and implementing `route(ctx) -> Optional[str]` — return a model name to swap, or `None` to keep the client's choice. The same code works for subprocess agents too (CLIs are routed at the mitmproxy hop). See the [router docs](https://agentoptimizer.github.io/agentopt/api/router/) and [`examples/routing/local/`](examples/routing/local/).
+
+### 4. Daemon backend + online model routing
+
+Same Python code as §3 — but the proxy state (cache, records, mitmproxy masters) lives in a long-lived `agentopt serve` daemon instead of this process. One gateway can serve many clients in any language, and routing policies preloaded on the daemon apply across all of them.
+
+Start the daemon (in its own terminal):
+
+```bash
+# Plain daemon — clients bring their own routers.
+agentopt serve --port 9000 --cache-dir ./shared_cache
+
+# Or set a daemon-wide default router (per-session overrides still allowed).
+agentopt serve --port 9000 \
+    --routing-policy random --candidate-models gpt-4o,gpt-4o-mini --seed 42
+
+# Or preload custom Router subclasses for clients to push per-session.
+agentopt serve --port 9000 --policy-module ./my_policies.py
+```
+
+Then run the §3 script against it — only the env var changes:
+
+```bash
+AGENTOPT_GATEWAY_URL=http://127.0.0.1:9000 python my_routing_script.py
+```
+
+`LLMTracker` detects `AGENTOPT_GATEWAY_URL` in `__init__` and routes through `RemoteBackend`; in-process httpx calls forward through the daemon's per-session proxy port, and subprocess agents get that same port injected into `HTTPS_PROXY`. See [`examples/routing/daemon/`](examples/routing/daemon/) and [`examples/selection/daemon/`](examples/selection/daemon/).
 
 ### What you provide
 
-Both entry points share the same agent contract:
+All four setups share the same agent contract:
 
-- `MyAgent.__init__(self, models)` — receive a dict like `{"planner": "gpt-4o", "solver": "gpt-4o-mini"}` and build your agent. For routing, the dict is the *initial* model assignment; the router can override on any individual LLM call.
+- `MyAgent.__init__(self, models)` — receive a dict like `{"planner": "gpt-4o", "solver": "gpt-4o-mini"}` and build your agent. For routing, the dict is the *initial* model assignment; the router overrides per call.
 - `MyAgent.run(self, input_data)` — run on a single datapoint and return the output.
 
-Selection additionally needs a `dataset` of `(input, expected)` pairs and an `eval_fn(expected, actual) -> float` — neither is required for routing.
+Selection additionally needs a `dataset` of `(input, expected)` pairs and an `eval_fn(expected, actual) -> float`; neither is required for routing.
 
 ## Framework Compatibility
 
@@ -257,64 +313,58 @@ results = selector.select_best(parallel=True)
 
 ## How It Works
 
-AgentOpt intercepts LLM calls at the `httpx` transport layer — the one chokepoint every LLM SDK shares. No proxy server, no framework adapters required.
+Everything in AgentOpt builds on a single primitive: **intercept every outbound LLM HTTP call.** Selection, routing, tracking, and caching all hang off that one seam.
+
+### One primitive, two interception sites
+
+| Agent shape | Where we intercept | What we patch |
+|---|---|---|
+| In-process Python (LangChain, OpenAI SDK, …) | The HTTP library, before encryption | `httpx.Client.send` |
+| Subprocess / CLI / Docker (Gemini CLI, Claude Code, Terminal Bench, …) | The network, via a local mitmproxy on a per-session port | `subprocess.Popen.__init__` (to inject `HTTPS_PROXY` + CA bundle) |
 
 ```
-your_agent(input)
-  └── framework internals (LangChain, CrewAI, etc.)
-        └── httpx.Client.send()   ← intercepted here
-              └── LLM API (OpenAI, Anthropic, etc.)
+in-process:                                subprocess:
+
+  agent.run(input)                           agent.run(input)
+   └── SDK (langchain/openai/…)               └── subprocess.run([...])  ← Popen patch
+       └── httpx.Client.send()  ← patched          └── child process inherits HTTPS_PROXY
+           └── LLM API                                └── mitmproxy on session port
+                                                          ├── TLS-terminates with our CA
+                                                          └── forwards to LLM API
 ```
 
-For each model combination, AgentOpt:
-1. Instantiates your agent class with the candidate models
-2. Calls `run()` on every datapoint in your evaluation set
-3. Tracks token usage, latency, and per-query cost automatically
-4. Scores the output using your evaluation function
-5. Reports the Pareto-optimal combinations
+The mitmproxy CA is generated once and merged with `certifi`'s system CAs into a bundle at `~/.mitmproxy/agentopt-bundle.pem`; the subprocess patch sets `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` so the child trusts both. **No agent code changes either way** — the patches install when `LLMTracker.start()` (or the `with LLMTracker:` context) is entered, and uninstall on exit (refcounted so concurrent trackers don't interfere).
 
-Response caching (in-memory + SQLite on disk) is enabled by default — identical LLM calls are never repeated, making iterative experimentation fast and cheap.
+### Three capabilities on top of the seam
 
-### Subprocess / External Agents (Claude Code, Gemini CLI, Terminal Bench, OpenClaw, …)
+| | What runs at the intercept | What it produces |
+|---|---|---|
+| **Tracking** | Record provider, model, tokens, latency, cache hit/miss | A `CallRecord` per LLM call |
+| **Caching** | Hash request body → look up SQLite/in-memory cache → short-circuit on hit | Replays of cached responses, with original latency preserved |
+| **Routing** | Run the active `Router.route(ctx)` to swap `body["model"]` before forwarding | Per-call model overrides |
 
-For agents that run as **external processes** (not in-process Python), AgentOpt uses a localhost HTTP proxy with TLS interception via a local CA certificate. The subprocess's LLM calls route through the proxy, which tracks tokens, latency, and cost transparently.
+Selection orchestrates the same primitive: for each combination it instantiates `MyAgent(combo)`, runs `run()` over the dataset inside a tracking session, and ranks by aggregated accuracy / latency / cost. Smart algorithms (`auto` = arm-elimination by default) drop dominated combinations early so the cost scales sublinearly with the search space.
 
-For most subprocess agents, `agentopt.get_current_session_proxy()` returns the right env vars to route calls through the proxy:
+### Two backends, one API
 
-```python
-import agentopt, subprocess
+Where does the mitmproxy state (cache, records, masters) live? You choose at runtime by setting one env var.
 
-with LLMTracker(combo_id="cli-run") as tracker:
-    proxy = agentopt.get_current_session_proxy()
-    env = {**os.environ, **proxy.env_dict()}     # HTTPS_PROXY + CA bundle path
-    subprocess.run(["gemini", "cli", "-p", prompt], env=env)
-```
+| Mode | Selected when | Proxy state lives in | Multi-language / multi-process clients |
+|---|---|---|---|
+| **Local** | `AGENTOPT_GATEWAY_URL` unset | The Python process running `LLMTracker` | Subprocess agents only |
+| **Daemon** | `AGENTOPT_GATEWAY_URL=http://host:port` set | The `agentopt serve` process | First-class — any client that respects `HTTPS_PROXY` |
 
-For agents like **OpenClaw** that don't read env vars, the [`OpenClawAgent`](examples/shared/openclaw_agent.py) wrapper under `examples/shared/` patches the agent's config file with the proxy URL + CA cert per call. See [openclaw.py](examples/selection/local/openclaw.py) for a complete working example.
+The user-facing API is byte-identical: `ModelSelector(...).select_best()`, `tracker.track()`, `tracker.get_records()`. In daemon mode the in-process httpx patch forwards through the daemon's per-session port instead of recording locally, and subprocess agents get the daemon's port injected into `HTTPS_PROXY` — the daemon does the cache + record on both paths.
 
-## Daemon mode — one gateway for many clients
+### What this buys you
 
-`agentopt serve` is a long-lived localhost daemon that owns the proxy state. Any number of clients — Python, other languages, subprocess agents — can share its cache, providers, and (optionally) a daemon-wide default router. Switching modes is a deployment decision, not an API change.
+- **Framework-agnostic.** Anything that ships an LLM call over the wire works — no plugin per framework, no adapter per provider.
+- **Subprocess agents are first-class.** Claude Code, Gemini CLI, Terminal Bench, Docker-bound agents — all intercepted with no env-var plumbing in the agent's `run()`.
+- **Caching saves real money during iteration.** Identical request bodies are deduplicated across runs.
+- **State outlives a single experiment** (daemon mode). Cache, providers, and (optionally) a default routing policy survive across runs and clients.
+- **Routing and selection compose.** Today selection picks a winning combination; tomorrow routing decides per call. Future versions can feed selection results into a learned router.
 
-```bash
-# Start the daemon
-agentopt serve --port 9000 --cache-dir ./shared_cache
-
-# (Optional) make every session that doesn't carry its own router use this one:
-agentopt serve --routing-policy random \
-    --candidate-models gpt-4o,gpt-4o-mini --seed 42
-
-# Preload custom Router subclasses so clients can push them per-session:
-agentopt serve --policy-module ./my_policies.py
-```
-
-The exact same Python code routes through the daemon when `AGENTOPT_GATEWAY_URL` is set:
-
-```bash
-AGENTOPT_GATEWAY_URL=http://127.0.0.1:9000 python my_script.py
-```
-
-See [`examples/selection/daemon/`](examples/selection/daemon/) and [`examples/routing/daemon/`](examples/routing/daemon/).
+For the full architecture — `_active_session_var` ContextVar attribution, per-session masters, CA bundle plumbing, daemon control plane — see [docs/api/proxy.md](docs/api/proxy.md).
 
 ## Results API
 

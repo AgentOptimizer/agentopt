@@ -2,8 +2,11 @@
 Example: routing for a Terminal Bench (``tb`` CLI) subprocess agent.
 
 ``tb run`` launches a Docker container per task and makes LLM calls
-through agentopt's proxy (set via ``HTTPS_PROXY``).  The router runs
-at the mitmproxy hop and rewrites the model in the request body.
+through agentopt's proxy.  While inside a ``track()`` scope, agentopt's
+subprocess patch injects ``HTTPS_PROXY`` + the CA bundle into every
+spawned child, so ``tb`` is intercepted with no env-var plumbing here.
+The router runs at the mitmproxy hop and rewrites the model in the
+request body.
 
 Note: Docker must be running for ``tb run`` to work at all.
 
@@ -19,7 +22,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 
@@ -27,7 +29,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import agentopt
 from agentopt import LLMTracker, RandomRouter
 
 TB_DATASET = "terminal-bench-core==0.1.1"
@@ -55,11 +56,9 @@ class MyAgent:
             "--task-id",
             task_id,
         ]
-        proxy = agentopt.get_current_session_proxy()
-        env = {**os.environ, **(proxy.env_dict() if proxy else {})}
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=TB_TIMEOUT, env=env,
+                cmd, capture_output=True, text=True, timeout=TB_TIMEOUT,
             )
             return result.stdout + "\n" + result.stderr
         except subprocess.TimeoutExpired:

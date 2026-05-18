@@ -24,7 +24,9 @@ from .interceptor import (
     LocalHandler,
     _active_session_var,
     install_redirect,
+    install_subprocess_redirect,
     uninstall_redirect,
+    uninstall_subprocess_redirect,
 )
 from .mitm_runner import SessionMaster
 from .models import CallRecord
@@ -62,16 +64,18 @@ class LocalBackend(_Backend):
     # -- lifecycle ----------------------------------------------------
 
     def start(self) -> None:
-        """Install the httpx redirect.  Subprocess masters spin up per-track()."""
+        """Install httpx + subprocess redirects.  Masters spin up per-track()."""
         if self._active:
             return
         install_redirect()
+        install_subprocess_redirect()
         self._active = True
 
     def stop(self) -> None:
-        """Tear down all live SessionMasters, restore httpx, flush cache."""
+        """Tear down all live SessionMasters, restore httpx + subprocess, flush cache."""
         if not self._active:
             return
+        uninstall_subprocess_redirect()
         uninstall_redirect()
         # Stop any masters that survived (track() should have closed them,
         # but in test/error paths they may linger).

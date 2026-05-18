@@ -6,9 +6,11 @@ Find the best LLM model for Terminal Bench tasks. The agent wraps the
 candidate model across a set of tbench tasks and ranks them by pass rate,
 latency, and cost.
 
-Token usage, latency, and cost are tracked automatically: the tracker
-sets ``HTTPS_PROXY`` and ``SSL_CERT_FILE`` so that LLM calls from the
-``tb`` subprocess route through agentopt's proxy.
+Token usage, latency, and cost are tracked automatically: while a
+``track()`` scope is active, agentopt's subprocess patch transparently
+injects ``HTTPS_PROXY`` + the merged CA bundle path into any child
+process spawned via ``subprocess.run`` / ``Popen`` — the user's
+``run()`` method stays free of any agentopt imports.
 
 Prerequisites:
     1. pip install agentopt-py
@@ -51,7 +53,6 @@ class TerminalBenchAgent:
         self.model = models["agent"]
 
     def run(self, input_data):
-        task_id = input_data
         cmd = [
             "tb",
             "run",
@@ -62,17 +63,11 @@ class TerminalBenchAgent:
             "--model",
             self.model,
             "--task-id",
-            task_id,
+            input_data,
         ]
-        # Route subprocess LLM calls through the proxy for tracking.
-        import os
-        import agentopt
-
-        proxy = agentopt.get_current_session_proxy()
-        env = {**os.environ, **(proxy.env_dict() if proxy else {})}
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=TB_TIMEOUT, env=env,
+                cmd, capture_output=True, text=True, timeout=TB_TIMEOUT,
             )
             return result.stdout + "\n" + result.stderr
         except subprocess.TimeoutExpired:
@@ -109,8 +104,9 @@ def eval_fn(expected, actual):
 
 # ---------------------------------------------------------------------------
 # Step 4: Run model selection.
-# AgentOpt tries each model across all tasks and ranks by pass rate, latency,
-# and cost. HTTPS_PROXY is set automatically so LLM calls from tb are tracked.
+# AgentOpt tries each model across all tasks and ranks by pass rate,
+# latency, and cost.  Subprocess LLM calls are tracked automatically —
+# no env-var plumbing needed inside the agent.
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":

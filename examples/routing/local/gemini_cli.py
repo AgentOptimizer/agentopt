@@ -2,8 +2,10 @@
 Example: routing for a Gemini CLI subprocess agent.
 
 The ``gemini`` CLI runs as a subprocess and routes its LLM traffic
-through agentopt's proxy via ``HTTPS_PROXY``.  The router runs at the
-mitmproxy hop just like for in-process Python.
+through agentopt's proxy.  While inside ``track()``, agentopt's
+subprocess patch injects ``HTTPS_PROXY`` + the CA bundle into every
+spawned child, so the agent's ``run()`` stays free of agentopt imports.
+The router runs at the mitmproxy hop just like for in-process Python.
 
 **v1 LIMITATION:** Gemini encodes the model in the URL path
 (``/v1beta/models/{model}:generateContent``), not in the request body.
@@ -34,7 +36,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import agentopt
 from agentopt import LLMTracker, RandomRouter
 
 GEMINI_TIMEOUT = 120
@@ -49,12 +50,9 @@ class MyAgent:
 
     def run(self, prompt: str) -> str:
         cmd = ["gemini", "-m", self.model, "-p", prompt]
-        proxy = agentopt.get_current_session_proxy()
-        env = {
-            **os.environ,
-            "GEMINI_CLI_TRUST_WORKSPACE": "true",
-            **(proxy.env_dict() if proxy else {}),
-        }
+        # GEMINI_CLI_TRUST_WORKSPACE=true skips the trusted-folder gate.
+        # Agentopt's subprocess patch merges HTTPS_PROXY + CA bundle on top.
+        env = {**os.environ, "GEMINI_CLI_TRUST_WORKSPACE": "true"}
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=GEMINI_TIMEOUT, env=env,

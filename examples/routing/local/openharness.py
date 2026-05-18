@@ -2,9 +2,11 @@
 Example: routing for an OpenHarness (``oh`` CLI) subprocess agent.
 
 ``oh`` calls the official Anthropic/OpenAI SDKs under the hood, which
-honour ``HTTPS_PROXY`` set by ``agentopt.get_current_session_proxy()``.
-The router runs at the mitmproxy hop and rewrites the model in the
-request body.
+honour ``HTTPS_PROXY``.  While a ``track()`` scope is active, agentopt's
+subprocess patch transparently injects ``HTTPS_PROXY`` + the CA bundle
+into every child process, so no env-var plumbing is needed here.  The
+router runs at the mitmproxy hop and rewrites the model in the request
+body.
 
 Prerequisites:
     1. ``pip install agentopt-py``
@@ -25,7 +27,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import agentopt
 from agentopt import LLMTracker, RandomRouter
 
 OH_TIMEOUT = 120
@@ -78,11 +79,9 @@ class MyAgent:
             "--output-format",
             "text",
         ]
-        proxy = agentopt.get_current_session_proxy()
-        env = {**os.environ, **(proxy.env_dict() if proxy else {})}
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=OH_TIMEOUT, env=env,
+                cmd, capture_output=True, text=True, timeout=OH_TIMEOUT,
             )
         except subprocess.TimeoutExpired:
             return f"FAILED: oh timeout after {OH_TIMEOUT}s"

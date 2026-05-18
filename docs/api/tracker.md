@@ -56,7 +56,15 @@ with LLMTracker(combo_id="subproc") as tracker:
     subprocess.run(["claude", "-p", prompt])
 ```
 
-Merge policy: when the caller passes `env=None` (the default), the patch sets `env = {**os.environ, **session_env}`. When the caller passes an explicit `env=` dict, the patch merges in the session env on top (`{**user_env, **session_env}`) — being inside `with LLMTracker:` is the signal that tracking is wanted.
+Merge policy — *explicit beats implicit*:
+
+- `env=None` (caller said nothing — inherit `os.environ`): `{**os.environ, **session_env}`. Session wins over any `HTTPS_PROXY` the parent shell happened to set.
+- `env=<dict>` (caller wrote an explicit env): `{**session_env, **user_env}`. **Caller's keys win on conflicts.** Setting e.g. `env={"HTTPS_PROXY": "http://custom-proxy:8080"}` inside a `track()` scope is respected — agentopt never silently overrides an explicit env. The common case `env={"PATH": ...}` (set for non-LLM reasons) still gets tracking because the user didn't write the session keys, so `session_env` fills them in.
+
+Limitations of the ContextVar-based activation (same as the httpx patch):
+
+- A new `threading.Thread` doesn't propagate `_active_session_var` automatically — subprocess calls inside the thread won't be intercepted. Workaround: wrap the thread target with `contextvars.copy_context().run(...)`.
+- `multiprocessing.Process` (spawn mode) starts a fresh Python interpreter that never called `tracker.start()`, so the patch isn't installed there. Fork mode inherits the patch and works.
 
 For agents that ignore `HTTPS_PROXY` and instead need the proxy URL / CA cert injected into a config file (OpenClaw is the canonical case), `agentopt.get_current_session_proxy()` is the escape hatch — see the helper below. See [proxy.md](proxy.md) for the full subprocess flow.
 

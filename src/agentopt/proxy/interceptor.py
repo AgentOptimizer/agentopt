@@ -487,14 +487,19 @@ def install_subprocess_redirect() -> None:
     ``call`` / ``check_call``, which all go through ``Popen``) gets the
     session's ``HTTPS_PROXY`` + CA bundle keys merged into its env.
 
-    Merge policy: when ``env`` is ``None`` (the default — inherit from
-    ``os.environ``), build ``{**os.environ, **session_env}`` so the
-    session's proxy wins over any pre-existing ``HTTPS_PROXY`` in the
-    parent.  When the caller passed an explicit ``env`` dict, build
-    ``{**env, **session_env}`` so the session still wins — the user
-    being inside ``with LLMTracker:`` is the signal that they want
-    tracking.  If they really need a specific subprocess unrouted, they
-    can spawn it outside the ``track()`` scope.
+    Merge policy — *explicit beats implicit*:
+
+    * ``env=None`` (the default — inherit ``os.environ``): build
+      ``{**os.environ, **session_env}``.  The session wins over any
+      ``HTTPS_PROXY`` the parent shell happened to set, because the
+      user said nothing about env in this call.
+    * ``env=<dict>`` (caller wrote an explicit env): build
+      ``{**session_env, **user_env}``.  ``user_env`` wins on conflicts
+      — a key the user *explicitly* set in this very call (e.g.
+      ``HTTPS_PROXY`` pointed at a custom upstream for a test) must
+      not be silently overridden.  The common case (``env={"PATH":
+      ...}`` for non-LLM reasons) still gets tracking because the
+      caller didn't write the session keys, so session_env fills them.
 
     Idempotent and refcounted, identical to :func:`install_redirect`.
     """
@@ -512,9 +517,11 @@ def install_subprocess_redirect() -> None:
             session_env = _session_env_for(active)
             user_env = kwargs.get("env")
             if user_env is None:
+                # Implicit inherit — session wins over the parent shell.
                 kwargs["env"] = {**os.environ, **session_env}
             else:
-                kwargs["env"] = {**user_env, **session_env}
+                # Explicit env — caller's keys win over our injection.
+                kwargs["env"] = {**session_env, **user_env}
         return _original_popen_init(self, *args, **kwargs)  # type: ignore[misc]
 
     subprocess.Popen.__init__ = _patched_popen_init  # type: ignore[assignment]

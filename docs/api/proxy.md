@@ -98,7 +98,24 @@ When you're evaluating multiple model combinations, you need to know which LLM c
 The design uses two attribution mechanisms, one per interception path:
 
 - **In-process** — a `ContextVar[ActiveSession]` holds the current session. Python's `ContextVar` propagates per-task / per-thread automatically, so concurrent `tracker.track()` blocks each see their own active session without mutating any shared state.
-- **Subprocess** — **one TCP port per session**. Each `tracker.track()` eagerly spins up a dedicated mitmproxy `DumpMaster` on its own ephemeral port. The subprocess gets `HTTPS_PROXY=http://127.0.0.1:{port}`, so the kernel routes its traffic to that master, which holds an addon bound to that session.
+- **Subprocess** — **one TCP port per session**. Each `tracker.track()` eagerly spins up a dedicated mitmproxy `DumpMaster` on its own ephemeral port. The subprocess gets `HTTPS_PROXY=http://127.0.0.1:{port}` via a `subprocess.Popen.__init__` monkey-patch that reads the active session from the same `ContextVar`, so the kernel routes the child's traffic to that master, which holds an addon bound to that session.
+
+### ContextVar propagation limits
+
+Both interception paths consult `_active_session_var`. ContextVar propagation matches the standard Python semantics, which means there are three corners where the patches don't see an active session even though the user is "inside" a `track()` block:
+
+- **`threading.Thread`** — a new thread starts with a fresh context, so calls inside the thread don't see the active session. Workaround: wrap the target with `contextvars.copy_context().run(...)` (or use `concurrent.futures.ThreadPoolExecutor` configured to copy the parent's context).
+- **`multiprocessing.Process` (spawn mode)** — the child is a fresh Python interpreter; it never called `tracker.start()`, so neither patch is installed there. Tracked subprocesses must be spawned via `subprocess.Popen` from the tracker's own process, not from a fresh interpreter.
+- **`multiprocessing.Process` (fork mode)** — the child inherits everything, including the patches and the ContextVar value at fork time. Works, but both parent and child will route to the *same* session ID, which can cause double-counting if both make LLM calls.
+
+These are accepted limitations of the ContextVar design and apply identically to the httpx patch and the subprocess patch.
+
+### Subprocess env merge policy
+
+The subprocess patch injects `HTTPS_PROXY` + the merged CA bundle paths (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`) into the child's environment. *Explicit beats implicit*:
+
+- `Popen(cmd)` / `Popen(cmd, env=None)` (inherit `os.environ`): `{**os.environ, **session_env}` — the session wins over any `HTTPS_PROXY` the parent shell happened to set.
+- `Popen(cmd, env={...})` (caller wrote an explicit env): `{**session_env, **user_env}` — caller's keys win on conflicts. Setting `env={"HTTPS_PROXY": "http://custom:8080"}` inside `track()` is respected; setting `env={"PATH": ...}` still gets tracking because the user didn't write the session keys.
 
 This is a design choice, not a forced constraint. Alternatives we rejected:
 

@@ -31,19 +31,20 @@
 
 
 ## Why AgentOpt
-Choosing models for your agent is surprisingly hard. Which family? Small or big? Thinking or non-thinking? And different steps may need different models. The combinatorial space explodes fast — 3 steps × 8 models = **512 combinations** to evaluate.
 
-AgentOpt solves this automatically. Give it your agent and a small evaluation dataset, and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice.
+**Framework-agnostic by construction.** AgentOpt intercepts LLM calls at the one place every SDK eventually goes through — the outbound HTTP request — so it works the same with anything that ships an LLM call over the wire. No framework adapters, no plugin per provider, no wrapping your client. In-process Python frameworks (LangChain, LangGraph, CrewAI, LlamaIndex, AG2, OpenAI Agents SDK, plain `openai`/`anthropic`) attach through an `httpx` patch; subprocess and CLI agents (Claude Code, Gemini CLI, OpenHarness, Terminal Bench, OpenClaw) attach through `HTTPS_PROXY` with a local CA. The same code works on both — and on anything custom you write tomorrow.
 
-It does this on top of a single primitive — interception of every outbound LLM HTTP call — that you can also use directly:
+On top of that one primitive, AgentOpt gives you three capabilities that share the same proxy, the same record schema, and the same cache:
 
 - **Selection** — search a combinatorial model space to find the best fixed combination for an agent.
 - **Routing** — swap models *per call* at runtime based on prompt, history, or any policy you write.
 - **Tracking** — just record token usage, latency, and per-query cost across an agent run.
 
-All three share the same proxy, the same record schema, and the same cache. AgentOpt works with **almost any agent implementation** — in-process Python (LangChain, CrewAI, LlamaIndex, OpenAI SDK) or subprocess (Claude Code, Gemini CLI, Terminal Bench, OpenClaw) — and requires **minimal wrappers** to your existing agents.
+The combinatorial search problem is real: 3 steps × 8 models = **512 combinations** to evaluate. AgentOpt's selection algorithms (arm elimination, LUCB, Bayesian) home in on the best combination with a fraction of the brute-force cost, and the routing API lets you keep refining at runtime once you've shipped.
 
 ## Use Cases
+
+### Offline model selection — find the best fixed combination
 
 Same accuracy band, 20–100x cost difference — just by picking the right model combination:
 
@@ -53,7 +54,18 @@ Same accuracy band, 20–100x cost difference — just by picking the right mode
 | HotpotQA | Opus + Opus | ~73% | $2.71 | Qwen3 Next + gpt-oss-120b | 71.3% | $0.13 | **21x** |
 | MathQA | Opus + Opus | ~98.5% | $5.89 | Ministral + C3 Haiku | 94.0% | $0.05 | **118x** |
 
-Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-combo-optimizer-not-just-a-model/).
+Run it once against a small evaluation dataset; ship the winner. Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-combo-optimizer-not-just-a-model/).
+
+### Online model routing — pick a different model per call
+
+For workloads where one fixed combination isn't optimal — easy prompts shouldn't pay GPT-4o prices, hard ones shouldn't suffer on Haiku — a `Router` decides at every LLM call which model to use, based on the prompt, prior calls in the session, or any feature you can compute. Common policies:
+
+- **Length/complexity-based** — short prompts → small model, long context or tool-call-heavy → big model.
+- **First-call-big** — a strong model for the planning hop, cheap models for the follow-ups.
+- **Bandit / learned routing** — feed selection results back into a contextual bandit so routing decisions improve with traffic.
+- **Provider failover & A/B** — route a fraction of traffic to a candidate model for live comparison without redeploying.
+
+The routing API runs the same in-process or through the `agentopt serve` daemon, so you can prototype locally and switch a single env var to share the policy across many clients.
 
 ## Installation
 
@@ -164,9 +176,7 @@ LLM-as-judge is also supported — just call your judge LLM inside `eval_fn`.
 
 ## Framework Compatibility
 
-AgentOpt works with any LLM framework or CLI agent that uses `httpx` (in-process) or honors `HTTPS_PROXY` (subprocess). Below are working examples — but it literally works with any custom implementation.
-
-Examples are organised into four quadrants under [`examples/`](examples/): `{selection, routing} × {local, daemon}`.
+Working examples for the frameworks and CLI agents named above. Examples are organised into four quadrants under [`examples/`](examples/): `{selection, routing} × {local, daemon}`.
 
 | Framework | Type | Selection | Routing |
 |-----------|------|-----------|---------|

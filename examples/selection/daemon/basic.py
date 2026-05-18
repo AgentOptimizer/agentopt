@@ -6,7 +6,7 @@ The user-facing API does not change between local and daemon modes; the
 
 Local mode (default — spins up an in-process mitmproxy per session)::
 
-    python examples/daemon_example.py
+    python examples/selection/daemon/basic.py
 
 Daemon mode (one long-lived gateway shared by every script and language)::
 
@@ -15,7 +15,7 @@ Daemon mode (one long-lived gateway shared by every script and language)::
 
     # Terminal 2 — same script, just point at the daemon.
     AGENTOPT_GATEWAY_URL=http://127.0.0.1:9000 \\
-        python examples/daemon_example.py
+        python examples/selection/daemon/basic.py
 
 The selector script (below) is byte-identical between the two runs.
 

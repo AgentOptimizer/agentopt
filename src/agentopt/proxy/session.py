@@ -90,11 +90,17 @@ class SessionManager:
             session.add_record(record)
 
     def get_all_records(self) -> List[CallRecord]:
-        """Return every record from all ended sessions."""
+        """Return every record from every session — active or ended.
+
+        Querying live sessions matters for the
+        ``with LLMTracker(combo_id="X") as tracker: tracker.get_records()``
+        pattern, where the auto-opened session is still active inside the
+        ``with`` block.  Ended-only would return ``[]`` there.
+        """
         with self._lock:
-            ended = list(self._ended.values())
+            sessions = list(self._active.values()) + list(self._ended.values())
         records: List[CallRecord] = []
-        for session in ended:
+        for session in sessions:
             with session._lock:
                 records.extend(session.records)
         return records

@@ -2,9 +2,10 @@
 Example: Gemini CLI with agentopt.
 
 Find the best Gemini model for your tasks. The agent wraps the ``gemini``
-CLI as a subprocess; agentopt sets ``HTTPS_PROXY`` and a CA bundle so all
-LLM traffic from the subprocess routes through the tracking proxy, and
-records model/tokens/latency per call.
+CLI as a subprocess; while a ``track()`` scope is active, agentopt's
+subprocess patch transparently injects ``HTTPS_PROXY`` + the CA bundle
+into the child's env so LLM traffic routes through the tracking proxy
+and we get model/tokens/latency per call.
 
 Prerequisites:
     1. pip install agentopt-py
@@ -13,7 +14,7 @@ Prerequisites:
     3. Optional: set GEMINI_API_KEY or GOOGLE_API_KEY in your environment.
 
 Usage:
-    python examples/gemini_cli_example.py
+    python examples/selection/local/gemini_cli.py
 """
 
 import os
@@ -24,7 +25,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import agentopt
 from agentopt import ModelSelector
 
 GEMINI_TIMEOUT = 120  # seconds per call
@@ -47,16 +47,10 @@ class GeminiCLIAgent:
         prompt = input_data if isinstance(input_data, str) else input_data["prompt"]
         cmd = ["gemini", "-m", self.model, "-p", prompt]
 
-        # Route subprocess LLM calls through agentopt's tracking proxy.
         # GEMINI_CLI_TRUST_WORKSPACE=true skips Gemini CLI's trusted-folder
-        # gate, which otherwise blocks headless execution.
-        proxy = agentopt.get_current_session_proxy()
-        env = {
-            **os.environ,
-            "GEMINI_CLI_TRUST_WORKSPACE": "true",
-            **(proxy.env_dict() if proxy else {}),
-        }
-
+        # gate, which otherwise blocks headless execution.  Agentopt's
+        # subprocess patch will merge HTTPS_PROXY + CA bundle on top of this.
+        env = {**os.environ, "GEMINI_CLI_TRUST_WORKSPACE": "true"}
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=GEMINI_TIMEOUT, env=env,

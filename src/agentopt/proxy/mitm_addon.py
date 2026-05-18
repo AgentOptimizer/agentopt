@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from mitmproxy import http, tls
 
@@ -33,7 +33,15 @@ from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo
-from .usage import has_include_usage, is_openai_compatible_url, is_streaming_request
+from .usage import (
+    decode_json_body,
+    has_include_usage,
+    is_openai_compatible_url,
+    is_streaming_request,
+)
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +66,13 @@ class AgentoptAddon:
         registry: ProviderRegistry,
         recorder: Recorder,
         cache: Optional[ResponseCache] = None,
+        router: Optional["Router"] = None,
     ) -> None:
         self._session = session
         self._registry = registry
         self._recorder = recorder
         self._cache = cache
+        self._router = router
 
     # ------------------------------------------------------------------
     # TLS — passthrough non-LLM hosts
@@ -92,8 +102,12 @@ class AgentoptAddon:
     # ------------------------------------------------------------------
 
     def request(self, flow: http.HTTPFlow) -> None:
-        json_body = _decode_json_body(flow.request.content)
+        json_body = decode_json_body(flow.request.content)
         flow.metadata[_T0_KEY] = time.monotonic()
+
+        # Routing: run the active router *before* the cache lookup so the
+        # cache key reflects the model that will actually be sent upstream.
+        body_mutated = self._maybe_route(flow, json_body)
 
         # OpenAI-compatible streaming: force `stream_options.include_usage`
         # so the SSE response carries a usage frame. Some subprocess agents
@@ -101,6 +115,9 @@ class AgentoptAddon:
         # Kimi/Moonshot compat hack) strip it from the request, which
         # otherwise leaves the proxy unable to count tokens.
         if _ensure_openai_include_usage(json_body, flow.request.pretty_url):
+            body_mutated = True
+
+        if body_mutated:
             flow.request.content = json.dumps(json_body, separators=(",", ":")).encode(
                 "utf-8"
             )
@@ -126,6 +143,18 @@ class AgentoptAddon:
         flow.metadata["agentopt.cached_latency"] = entry.latency_seconds
 
     # ------------------------------------------------------------------
+    # Routing
+    # ------------------------------------------------------------------
+
+    def _maybe_route(self, flow: http.HTTPFlow, json_body: Dict[str, Any]) -> bool:
+        """Run the active router (if any).  Returns True iff body mutated."""
+        if self._router is None or not json_body:
+            return False
+        from agentopt.routing.base import apply_router
+
+        return apply_router(self._router, json_body, flow.request.path, self._session,)
+
+    # ------------------------------------------------------------------
     # Response — record + cache
     # ------------------------------------------------------------------
 
@@ -133,7 +162,7 @@ class AgentoptAddon:
         if flow.response is None:
             return  # shouldn't happen, but be defensive
 
-        json_body = _decode_json_body(flow.request.content)
+        json_body = decode_json_body(flow.request.content)
         request_url = flow.request.pretty_url
         is_streaming = is_streaming_request(json_body, request_url)
 
@@ -188,7 +217,7 @@ class AgentoptAddon:
             # An HTTP error is already a complete response — `response`
             # handled it.  This hook fires for transport-level errors.
             return
-        json_body = _decode_json_body(flow.request.content)
+        json_body = decode_json_body(flow.request.content)
         request_url = flow.request.pretty_url
         t0 = flow.metadata.get(_T0_KEY)
         latency = (time.monotonic() - t0) if t0 is not None else 0.0
@@ -210,22 +239,6 @@ class AgentoptAddon:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _decode_json_body(body: Optional[bytes]) -> Dict[str, Any]:
-    """Best-effort JSON decode of a request body.
-
-    Mirrors the lenient handling in the old ``_read_request`` — non-JSON
-    or non-dict bodies become ``{}`` rather than raising, so the proxy
-    never blocks a request just because it can't introspect the body.
-    """
-    if not body:
-        return {}
-    try:
-        parsed = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _safe_response_headers(headers: Dict[str, str]) -> Dict[str, str]:

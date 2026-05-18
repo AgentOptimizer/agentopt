@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from mitmproxy import ctx
 from mitmproxy.options import Options
@@ -41,6 +41,9 @@ from .mitm_addon import AgentoptAddon
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +86,7 @@ class SessionMaster:
         recorder: Recorder,
         cache: Optional[ResponseCache] = None,
         host: str = "127.0.0.1",
+        router: Optional["Router"] = None,
     ) -> None:
         self._session = session
         self._registry = registry
@@ -90,7 +94,7 @@ class SessionMaster:
         self._cache = cache
         self._host = host
 
-        self._addon = AgentoptAddon(session, registry, recorder, cache)
+        self._addon = AgentoptAddon(session, registry, recorder, cache, router=router)
 
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None

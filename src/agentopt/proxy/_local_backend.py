@@ -15,7 +15,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple, Union
 
 from ._backend import _Backend, _ensure_ca_bundle
 from .cache import ResponseCache
@@ -24,13 +24,18 @@ from .interceptor import (
     LocalHandler,
     _active_session_var,
     install_redirect,
+    install_subprocess_redirect,
     uninstall_redirect,
+    uninstall_subprocess_redirect,
 )
 from .mitm_runner import SessionMaster
 from .models import CallRecord
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo, SessionManager
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +64,18 @@ class LocalBackend(_Backend):
     # -- lifecycle ----------------------------------------------------
 
     def start(self) -> None:
-        """Install the httpx redirect.  Subprocess masters spin up per-track()."""
+        """Install httpx + subprocess redirects.  Masters spin up per-track()."""
         if self._active:
             return
         install_redirect()
+        install_subprocess_redirect()
         self._active = True
 
     def stop(self) -> None:
-        """Tear down all live SessionMasters, restore httpx, flush cache."""
+        """Tear down all live SessionMasters, restore httpx + subprocess, flush cache."""
         if not self._active:
             return
+        uninstall_subprocess_redirect()
         uninstall_redirect()
         # Stop any masters that survived (track() should have closed them,
         # but in test/error paths they may linger).
@@ -94,12 +101,17 @@ class LocalBackend(_Backend):
         data_id: Optional[str] = None,
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ) -> Tuple[SessionInfo, int]:
         """Create a session + start its ``SessionMaster``.  No ContextVar.
 
         Imperative counterpart to :meth:`track`.  Used by the daemon
         (:mod:`.daemon`) where session lifecycle is driven by HTTP
         endpoints, not a context manager.
+
+        When a *router* is supplied, the session's mitmproxy addon
+        applies it to every subprocess request; the in-process
+        ``LocalHandler`` is constructed by :meth:`track`, not here.
         """
         assert self._active, "call backend.start() first"
         session = self._session_manager.create_session(
@@ -110,6 +122,7 @@ class LocalBackend(_Backend):
             registry=self._registry,
             recorder=self._recorder,
             cache=self._response_cache,
+            router=router,
         )
         try:
             port = master.start()
@@ -138,7 +151,11 @@ class LocalBackend(_Backend):
 
     @contextmanager
     def track(
-        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+        self,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
         """Create a tracking session with its own mitmproxy port.
 
@@ -146,12 +163,18 @@ class LocalBackend(_Backend):
         httpx patch records calls into this session.  Eagerly starts a
         ``SessionMaster`` so subprocesses can use ``get_session_env``
         without further setup.
+
+        If *router* is given, it applies to both the in-process httpx
+        path and the subprocess mitmproxy addon for this session.
         """
         session, port = self.open_session(
-            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+            data_id=data_id, combo_id=combo_id, agent_id=agent_id, router=router,
         )
         handler = LocalHandler(
-            session=session, recorder=self._recorder, cache=self._response_cache,
+            session=session,
+            recorder=self._recorder,
+            cache=self._response_cache,
+            router=router,
         )
         active = ActiveSession(
             session=session,

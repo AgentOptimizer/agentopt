@@ -2,9 +2,10 @@
 Example: OpenHarness (``oh`` CLI) with agentopt.
 
 Find the best LLM model for your OpenHarness tasks. The agent wraps the
-``oh`` CLI as a subprocess; agentopt sets ``HTTPS_PROXY`` and a CA bundle
-so all LLM traffic from the subprocess routes through the tracking proxy,
-and records model/tokens/latency per call.
+``oh`` CLI as a subprocess; while a ``track()`` scope is active, agentopt's
+subprocess patch transparently injects ``HTTPS_PROXY`` + the CA bundle into
+the child's env, so ``oh``'s LLM calls route through the tracking proxy
+and we get model/tokens/latency per call.
 
 The ``oh`` CLI (https://github.com/HKUDS/OpenHarness) is a Python tool
 that uses the official Anthropic/OpenAI SDKs under the hood, which means
@@ -18,7 +19,7 @@ Prerequisites:
     3. Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY in your environment.
 
 Usage:
-    python examples/openharness_example.py
+    python examples/selection/local/openharness.py
 """
 
 import os
@@ -29,7 +30,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import agentopt
 from agentopt import ModelSelector
 
 OH_TIMEOUT = 120  # seconds per call
@@ -103,18 +103,9 @@ class OpenHarnessAgent:
             "text",
         ]
 
-        # Route subprocess LLM calls through agentopt's tracking proxy.
-        # `oh` uses the official anthropic/openai SDKs, which read these env
-        # vars via their default httpx clients.
-        proxy = agentopt.get_current_session_proxy()
-        env = {
-            **os.environ,
-            **(proxy.env_dict() if proxy else {}),
-        }
-
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=OH_TIMEOUT, env=env,
+                cmd, capture_output=True, text=True, timeout=OH_TIMEOUT,
             )
         except subprocess.TimeoutExpired:
             return f"FAILED: oh timeout after {OH_TIMEOUT}s"

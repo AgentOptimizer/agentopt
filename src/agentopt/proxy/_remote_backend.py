@@ -27,10 +27,13 @@ import logging
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Set, Tuple
 
 import certifi
 import httpx
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 from ._backend import _Backend
 from .interceptor import (
@@ -40,7 +43,9 @@ from .interceptor import (
     forward_async,
     forward_sync,
     install_redirect,
+    install_subprocess_redirect,
     uninstall_redirect,
+    uninstall_subprocess_redirect,
 )
 from .models import CallRecord
 from .providers import _BUILTIN_PROVIDERS
@@ -245,11 +250,13 @@ class RemoteBackend(_Backend):
         if self._active:
             return
         install_redirect()
+        install_subprocess_redirect()
         # Sanity: daemon reachable.  Fail fast with a clear message.
         try:
             r = self._http.get(f"{self._gateway_url}/health")
             r.raise_for_status()
         except httpx.HTTPError as exc:
+            uninstall_subprocess_redirect()
             uninstall_redirect()
             raise RuntimeError(
                 f"agentopt: gateway at {self._gateway_url} is not reachable. "
@@ -261,6 +268,7 @@ class RemoteBackend(_Backend):
     def stop(self) -> None:
         if not self._active:
             return
+        uninstall_subprocess_redirect()
         uninstall_redirect()
         # Close any sessions that survived (well-behaved callers exit
         # track() cleanly, but tests / error paths may not).
@@ -311,17 +319,33 @@ class RemoteBackend(_Backend):
         data_id: Optional[str] = None,
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        router_config: Optional[Dict[str, Any]] = None,
     ) -> Tuple[SessionInfo, int, str]:
         """POST /sessions; return ``(SessionInfo, proxy_port, ca_bundle_path)``.
 
         Exposed for parity with :meth:`LocalBackend.open_session` (and
         for testability); :meth:`track` is the usual entry point.
+
+        *router_config* (optional) is the ``{policy, kwargs}`` shape
+        :meth:`Router.config` returns; the daemon resolves it server-side
+        and attaches the router to this session.  Pass ``None`` to fall
+        back to the daemon's default policy (if any).
         """
         assert self._active, "call backend.start() first"
-        resp = self._http.post(
-            f"{self._gateway_url}/sessions",
-            json={"data_id": data_id, "combo_id": combo_id, "agent_id": agent_id},
-        )
+        body_payload: Dict[str, Any] = {
+            "data_id": data_id,
+            "combo_id": combo_id,
+            "agent_id": agent_id,
+        }
+        if router_config is not None:
+            body_payload["router"] = router_config
+        resp = self._http.post(f"{self._gateway_url}/sessions", json=body_payload,)
+        if resp.status_code == 400:
+            # Daemon rejected the router config — surface the error.
+            raise RuntimeError(
+                f"agentopt daemon rejected the session: "
+                f"{resp.json().get('error', resp.text)}"
+            )
         resp.raise_for_status()
         body = resp.json()
         session = SessionInfo(
@@ -350,10 +374,25 @@ class RemoteBackend(_Backend):
 
     @contextmanager
     def track(
-        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+        self,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
+        # Serialize the router for the daemon if one was supplied.
+        # ``config()`` raises NotImplementedError for custom routers
+        # that don't override ``_config_kwargs()``; surface that as-is
+        # so the user knows exactly what's missing.
+        router_config: Optional[Dict[str, Any]] = None
+        if router is not None:
+            router_config = router.config()
+
         session, proxy_port, bundle_path = self.open_session(
-            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+            data_id=data_id,
+            combo_id=combo_id,
+            agent_id=agent_id,
+            router_config=router_config,
         )
         proxy_url = f"http://{self._gateway_host}:{proxy_port}"
         handler = RemoteHandler(proxy_url=proxy_url, ca_bundle_path=bundle_path)
@@ -367,6 +406,8 @@ class RemoteBackend(_Backend):
             port=proxy_port,
             path_patterns=frozenset(self._path_patterns),
             handler=handler,
+            proxy_host=self._gateway_host,
+            ca_bundle_path=bundle_path,
         )
         token = _active_session_var.set(active)
         try:

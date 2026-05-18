@@ -23,12 +23,15 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import certifi
 
 from .models import CallRecord
 from .session import SessionInfo
+
+if TYPE_CHECKING:
+    from agentopt.routing.base import Router
 
 logger = logging.getLogger(__name__)
 
@@ -122,9 +125,18 @@ class _Backend(ABC):
 
     @abstractmethod
     def track(
-        self, data_id: str, combo_id: str, agent_id: Optional[str] = None,
+        self,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        router: Optional["Router"] = None,
     ):
-        """Return a context manager that yields a :class:`SessionInfo`."""
+        """Return a context manager that yields a :class:`SessionInfo`.
+
+        ``router`` optionally provides routing policy for the tracked
+        session. Backend implementations, including remote backends,
+        may honor this parameter.
+        """
 
     @abstractmethod
     def get_session_env(self, session: SessionInfo) -> Dict[str, str]:

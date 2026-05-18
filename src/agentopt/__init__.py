@@ -75,6 +75,7 @@ def get_current_session_proxy() -> Optional[SessionProxy]:
 
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
+from .routing import RandomRouter, Router
 from .model_selection import (
     ArmEliminationModelSelector,
     BaseModelSelector,
@@ -186,4 +187,7 @@ __all__ = [
     "SessionInfo",
     "SessionProxy",
     "get_current_session_proxy",
+    # Routing
+    "Router",
+    "RandomRouter",
 ]

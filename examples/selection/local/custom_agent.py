@@ -120,5 +120,3 @@ if __name__ == "__main__":
     best = results.get_best_combo()
     if best:
         print(f"\nBest combination: {best}")
-
-    agent.route(datapoint, model_candidate=List[llmendpoint])

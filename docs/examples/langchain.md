@@ -53,4 +53,4 @@ results = selector.select_best(parallel=True)
 results.print_summary()
 ```
 
-[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/langchain_example.py)
+[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/selection/local/langchain.py)

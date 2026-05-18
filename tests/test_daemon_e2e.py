@@ -52,13 +52,11 @@ def _wait_for_health(url: str, timeout: float = 30.0) -> None:
     )
 
 
-@pytest.fixture
-def daemon(tmp_path):
-    """Spawn ``agentopt serve`` in a subprocess; yield its base URL."""
+def _spawn_daemon(tmp_path, extra_args=()):
+    """Spawn ``agentopt serve`` with optional extra CLI args; return (url, proc, log)."""
     port = _pick_free_port()
     cache_dir = tmp_path / "agentopt_cache"
     log_path = tmp_path / "daemon.log"
-
     log_handle = open(log_path, "wb")
     proc = subprocess.Popen(
         [
@@ -72,22 +70,58 @@ def daemon(tmp_path):
             str(port),
             "--cache-dir",
             str(cache_dir),
+            *extra_args,
         ],
         stdout=log_handle,
         stderr=subprocess.STDOUT,
     )
     url = f"http://127.0.0.1:{port}"
+    return url, proc, log_handle
+
+
+def _stop_daemon(proc, log_handle):
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+    log_handle.close()
+
+
+@pytest.fixture
+def daemon(tmp_path):
+    """Spawn ``agentopt serve`` in a subprocess; yield its base URL."""
+    url, proc, log_handle = _spawn_daemon(tmp_path)
     try:
         _wait_for_health(url)
         yield url
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
-        log_handle.close()
+        _stop_daemon(proc, log_handle)
+
+
+@pytest.fixture
+def daemon_factory(tmp_path):
+    """Yield a callable that spawns a daemon with custom CLI args.
+
+    Used for tests that need ``--routing-policy`` etc.  Cleans up the
+    daemon on test exit.
+    """
+    procs = []
+
+    def spawn(extra_args):
+        sub_tmp = tmp_path / f"d{len(procs)}"
+        sub_tmp.mkdir()
+        url, proc, log = _spawn_daemon(sub_tmp, extra_args=extra_args)
+        procs.append((proc, log))
+        _wait_for_health(url)
+        return url
+
+    try:
+        yield spawn
+    finally:
+        for proc, log in procs:
+            _stop_daemon(proc, log)
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +252,7 @@ def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeyp
     tracker = LLMTracker()
     tracker.start()
     try:
+
         async def make_call():
             async with httpx.AsyncClient(base_url=mock_upstream.base_url) as client:
                 resp = await client.post(
@@ -285,15 +320,25 @@ def test_remote_close_releases_control_plane_client(daemon, monkeypatch):
     tracker.close()
 
 
-def test_remote_context_manager_closes(daemon, monkeypatch):
-    """``with LLMTracker() as tracker:`` releases the control-plane client."""
+def test_remote_context_manager_keeps_http_alive_for_post_query(
+    daemon, monkeypatch,
+):
+    """``with LLMTracker() as tracker:`` exit calls ``stop()`` (not
+    ``close()``), so ``tracker.get_records()`` works *after* the block.
+    Explicit ``tracker.close()`` is what releases the http client.
+    """
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
     with LLMTracker() as tracker:
-        tracker.start()
         with tracker.track(data_id="dp", combo_id="c"):
             pass
-        tracker.stop()
         backend = tracker._backend
+
+    # After __exit__, http is still alive so post-exit queries succeed.
+    assert not backend._http.is_closed  # type: ignore[attr-defined]
+    tracker.get_records(combo_id="c")  # would raise if http were closed
+
+    # Explicit close() releases the http client.
+    tracker.close()
     assert backend._http.is_closed  # type: ignore[attr-defined]
 
 
@@ -313,3 +358,201 @@ def test_remote_gateway_unreachable_fails_fast(monkeypatch):
     tracker = LLMTracker()
     with pytest.raises(RuntimeError, match="not reachable"):
         tracker.start()
+
+
+# ---------------------------------------------------------------------------
+# Daemon-side routing (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_daemon_default_routing_policy_via_cli(
+    daemon_factory, mock_upstream, monkeypatch,
+):
+    """``--routing-policy random --candidate-models a,b`` applies to every
+    session that doesn't carry its own router."""
+    daemon_url = daemon_factory(
+        [
+            "--routing-policy",
+            "random",
+            "--candidate-models",
+            "gpt-4o-mini-routed,gpt-4o-mini-routed",  # both same → deterministic
+            "--seed",
+            "0",
+        ]
+    )
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon_url)
+
+    from agentopt import LLMTracker
+
+    tracker = LLMTracker()
+    tracker.start()
+    try:
+        with tracker.track(data_id="dp", combo_id="c"):  # no explicit router
+            client = httpx.Client(base_url=mock_upstream.base_url)
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4o",  # daemon will rewrite this
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+            assert resp.status_code == 200
+
+        rec = tracker.get_records(combo_id="c")[0]
+        # Daemon's default policy rewrote the body before forwarding.
+        assert rec.model == "gpt-4o-mini-routed"
+    finally:
+        tracker.stop()
+
+
+def test_daemon_per_session_router_override(daemon, mock_upstream, monkeypatch):
+    """Python client's per-session ``router=`` overrides daemon default."""
+    from agentopt import LLMTracker, RandomRouter
+
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
+    router = RandomRouter(candidates=["per-session-model"], seed=0)
+    tracker = LLMTracker()
+    tracker.start()
+    try:
+        with tracker.track(data_id="dp", combo_id="c", router=router):
+            client = httpx.Client(base_url=mock_upstream.base_url)
+            client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+        rec = tracker.get_records(combo_id="c")[0]
+        assert rec.model == "per-session-model"
+    finally:
+        tracker.stop()
+
+
+def test_daemon_rejects_unknown_policy(daemon):
+    """``POST /sessions`` with an unknown policy returns 400 with a clear error."""
+    resp = httpx.post(
+        f"{daemon}/sessions",
+        json={
+            "data_id": "dp",
+            "combo_id": "c",
+            "router": {"policy": "no_such_policy", "kwargs": {}},
+        },
+        timeout=10.0,
+    )
+    assert resp.status_code == 400
+    assert "Unknown routing policy" in resp.json()["error"]
+
+
+def test_daemon_serve_rejects_routing_args_without_policy():
+    """``--candidate-models`` without ``--routing-policy`` fails fast."""
+    from agentopt.proxy.daemon import run
+
+    with pytest.raises(SystemExit, match="require --routing-policy"):
+        run(
+            host="127.0.0.1", port=0, cache_dir="/tmp/x", candidate_models=["gpt-4o"],
+        )
+
+
+def test_daemon_serve_rejects_random_without_candidates():
+    """``--routing-policy random`` without ``--candidate-models`` fails fast."""
+    from agentopt.proxy.daemon import run
+
+    with pytest.raises(SystemExit, match="requires --candidate-models"):
+        run(
+            host="127.0.0.1", port=0, cache_dir="/tmp/x", routing_policy="random",
+        )
+
+
+def test_daemon_custom_router_via_policy_module(
+    daemon_factory, mock_upstream, monkeypatch, tmp_path,
+):
+    """``--policy-module ./mod.py`` loads a user file so its ``Router``
+    subclasses resolve over the wire.
+
+    The daemon doesn't have hard-coded knowledge of the user's class —
+    it just imports the file at startup, then `POST /sessions` carrying
+    ``{"policy": "<stem>:ClassName"}`` resolves via importlib.
+    """
+    # User writes a custom router file.  Daemon will load it by path.
+    user_module = tmp_path / "my_policies.py"
+    user_module.write_text(
+        """
+from agentopt import Router
+
+class FixedRouter(Router):
+    \"\"\"Always returns the same model — easy to assert on.\"\"\"
+
+    def __init__(self, target):
+        self.target = target
+
+    def route(self, ctx):
+        return self.target
+
+    def _config_kwargs(self):
+        return {"target": self.target}
+"""
+    )
+
+    daemon_url = daemon_factory(["--policy-module", str(user_module)])
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon_url)
+
+    # Sanity: client-side import isn't required.  The daemon resolves
+    # the class on its side from the policy string we send.
+    resp = httpx.post(
+        f"{daemon_url}/sessions",
+        json={
+            "data_id": "dp",
+            "combo_id": "c",
+            "router": {
+                "policy": "my_policies:FixedRouter",
+                "kwargs": {"target": "custom-routed-model"},
+            },
+        },
+        timeout=10.0,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # End-to-end: open the session client-side via LLMTracker so the
+    # in-process httpx routes through this session's daemon port.
+    session_id = resp.json()["session_id"]
+
+    from agentopt import LLMTracker
+
+    tracker = LLMTracker()
+    tracker.start()
+    try:
+        with tracker.track(
+            data_id="dp_e2e",
+            combo_id="c_e2e",
+            # No client-side router; the daemon-default policy isn't set
+            # either — but we proved the resolver above works, so we just
+            # verify the no-router default path still runs cleanly.
+        ):
+            client = httpx.Client(base_url=mock_upstream.base_url)
+            client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+        # No router on this session → original model survives.
+        rec = tracker.get_records(combo_id="c_e2e")[0]
+        assert rec.model == "gpt-4o"
+    finally:
+        tracker.stop()
+        httpx.delete(f"{daemon_url}/sessions/{session_id}", timeout=5.0)
+
+
+def test_daemon_policy_module_missing_file_fails_fast():
+    """``--policy-module /no/such/file.py`` exits with a clear error."""
+    from agentopt.proxy.daemon import run
+
+    with pytest.raises(SystemExit, match="does not exist"):
+        run(
+            host="127.0.0.1",
+            port=0,
+            cache_dir="/tmp/x",
+            policy_modules=["/no/such/policies.py"],
+        )

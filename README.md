@@ -25,15 +25,23 @@
 ---
 
 ## News
-[2026/04] 🔥 Version 0.1.0 released!
+[2026/05] 🔥 Per-call **routing** and a long-lived **`agentopt serve` daemon** ship in 0.2.0 — pick a different model on every LLM call, or point any number of clients at one shared gateway with `AGENTOPT_GATEWAY_URL`.
+
+[2026/04] Version 0.1.0 released.
 
 
 ## Why AgentOpt
 Choosing models for your agent is surprisingly hard. Which family? Small or big? Thinking or non-thinking? And different steps may need different models. The combinatorial space explodes fast — 3 steps × 8 models = **512 combinations** to evaluate.
 
-AgentOpt solves this automatically. Give it your agent and a small evaluation dataset, and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice. 
+AgentOpt solves this automatically. Give it your agent and a small evaluation dataset, and it will efficiently search the model combination space to present you with the **Pareto curve of performance/cost/latency tradeoffs** — so you can make an informed choice.
 
-AgentOpt works with **almost any agent implementation** and requires **minimal wrappers** to your existing agents.
+It does this on top of a single primitive — interception of every outbound LLM HTTP call — that you can also use directly:
+
+- **Selection** — search a combinatorial model space to find the best fixed combination for an agent.
+- **Routing** — swap models *per call* at runtime based on prompt, history, or any policy you write.
+- **Tracking** — just record token usage, latency, and per-query cost across an agent run.
+
+All three share the same proxy, the same record schema, and the same cache. AgentOpt works with **almost any agent implementation** — in-process Python (LangChain, CrewAI, LlamaIndex, OpenAI SDK) or subprocess (Claude Code, Gemini CLI, Terminal Bench, OpenClaw) — and requires **minimal wrappers** to your existing agents.
 
 ## Use Cases
 
@@ -156,22 +164,27 @@ LLM-as-judge is also supported — just call your judge LLM inside `eval_fn`.
 
 ## Framework Compatibility
 
-AgentOpt works with any LLM framework that uses `httpx` under the hood. Here we provide examples for a few popular frameworks, but it literally works with any custom implementation:
+AgentOpt works with any LLM framework or CLI agent that uses `httpx` (in-process) or honors `HTTPS_PROXY` (subprocess). Below are working examples — but it literally works with any custom implementation.
 
-| Framework | Status | Example |
-|-----------|--------|---------|
-| OpenAI Agents SDK | Supported | [openai_sdk_example.py](examples/openai_sdk_example.py) |
-| LangChain / LangGraph | Supported | [langchain_example.py](examples/langchain_example.py), [langgraph_example.py](examples/langgraph_example.py) |
-| CrewAI | Supported | [crewai_example.py](examples/crewai_example.py) |
-| LlamaIndex | Supported | [llamaindex_example.py](examples/llamaindex_example.py) |
-| AG2 | Supported | [ag2_example.py](examples/ag2_example.py) |
-| OpenAI-Compatible API SDK | Supported | [custom_agent_example.py](examples/custom_agent_example.py) |
-| Terminal Bench | Supported | [terminal_bench_example.py](examples/terminal_bench_example.py) |
-| OpenClaw | Supported | [openclaw_example.py](examples/openclaw_example.py) |
+Examples are organised into four quadrants under [`examples/`](examples/): `{selection, routing} × {local, daemon}`.
+
+| Framework | Type | Selection | Routing |
+|-----------|------|-----------|---------|
+| OpenAI Agents SDK | in-process | [openai_sdk.py](examples/selection/local/openai_sdk.py) | [openai_sdk.py](examples/routing/local/openai_sdk.py) |
+| LangChain | in-process | [langchain.py](examples/selection/local/langchain.py) | [langchain.py](examples/routing/local/langchain.py) |
+| LangGraph | in-process | [langgraph.py](examples/selection/local/langgraph.py) | [langgraph.py](examples/routing/local/langgraph.py) |
+| CrewAI | in-process | [crewai.py](examples/selection/local/crewai.py) | [crewai.py](examples/routing/local/crewai.py) |
+| LlamaIndex | in-process | [llamaindex.py](examples/selection/local/llamaindex.py) | [llamaindex.py](examples/routing/local/llamaindex.py) |
+| AG2 | in-process | [ag2.py](examples/selection/local/ag2.py) | [ag2.py](examples/routing/local/ag2.py) |
+| OpenAI-Compatible API | in-process | [custom_agent.py](examples/selection/local/custom_agent.py) | [custom_agent.py](examples/routing/local/custom_agent.py) |
+| Gemini CLI | subprocess | [gemini_cli.py](examples/selection/local/gemini_cli.py) | [gemini_cli.py](examples/routing/local/gemini_cli.py) |
+| OpenHarness | subprocess | [openharness.py](examples/selection/local/openharness.py) | [openharness.py](examples/routing/local/openharness.py) |
+| Terminal Bench | subprocess (Docker) | [terminal_bench.py](examples/selection/local/terminal_bench.py) | [terminal_bench.py](examples/routing/local/terminal_bench.py) |
+| OpenClaw | subprocess | [openclaw.py](examples/selection/local/openclaw.py) | [openclaw.py](examples/routing/local/openclaw.py) |
 
 ## Selection Algorithms
 
-AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_selection_example.py](examples/advanced_selection_example.py) for details.
+AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_algorithms.py](examples/selection/local/advanced_algorithms.py) for details.
 
 If you do not need the strict best model combination and want **lower search cost**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
 
@@ -216,33 +229,63 @@ For each model combination, AgentOpt:
 
 Response caching (in-memory + SQLite on disk) is enabled by default — identical LLM calls are never repeated, making iterative experimentation fast and cheap.
 
-### Subprocess / External Agents (OpenClaw, Terminal Bench, etc.)
+### Subprocess / External Agents (Claude Code, Gemini CLI, Terminal Bench, OpenClaw, …)
 
 For agents that run as **external processes** (not in-process Python), AgentOpt uses a localhost HTTP proxy with TLS interception via a local CA certificate. The subprocess's LLM calls route through the proxy, which tracks tokens, latency, and cost transparently.
 
-For most subprocess agents, `agentopt.get_current_session_env()` provides the right env vars (`HTTPS_PROXY`, `SSL_CERT_FILE`) to route calls through the proxy. For agents like **OpenClaw** that don't read env vars, AgentOpt provides a built-in integration that patches the agent's config file automatically:
+For most subprocess agents, `agentopt.get_current_session_proxy()` returns the right env vars to route calls through the proxy:
 
 ```python
-from agentopt import ModelSelector
-from agentopt.integrations.openclaw import OpenClawAgent
+import agentopt, subprocess
 
-selector = ModelSelector(
-    agent=OpenClawAgent,
-    models={
-        "agent": [
-            "anthropic/claude-sonnet-4-6",
-            "anthropic/claude-haiku-4-5",
-        ],
-    },
-    eval_fn=eval_fn,
-    dataset=dataset,
-)
-
-results = selector.select_best(parallel=False)  # sequential — shared config file
-results.print_summary()
+with LLMTracker(combo_id="cli-run") as tracker:
+    proxy = agentopt.get_current_session_proxy()
+    env = {**os.environ, **proxy.env_dict()}     # HTTPS_PROXY + CA bundle path
+    subprocess.run(["gemini", "cli", "-p", prompt], env=env)
 ```
 
-See [openclaw_example.py](examples/openclaw_example.py) for a complete working example.
+For agents like **OpenClaw** that don't read env vars, the [`OpenClawAgent`](examples/shared/openclaw_agent.py) wrapper under `examples/shared/` patches the agent's config file with the proxy URL + CA cert per call. See [openclaw.py](examples/selection/local/openclaw.py) for a complete working example.
+
+## Routing — pick a different model per call
+
+A `Router` is a policy that decides — **per individual LLM call** — which model to use. The swap happens transparently at the HTTP layer, so it works with every framework and CLI agent above with **no integration code**.
+
+```python
+from agentopt import LLMTracker, RandomRouter
+
+router = RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"], seed=0)
+with LLMTracker(router=router) as tracker:
+    for i, q in enumerate(questions, 1):
+        with tracker.track(data_id=f"q{i}"):
+            agent.run(q)                 # each LLM call routed independently
+tracker.print_summary()                  # model sequence, tokens per model, latency
+```
+
+Write your own by subclassing `Router` and implementing `route(ctx) -> Optional[str]` — return a model name to swap or `None` to keep the client's choice. Custom routers also work over the daemon's wire protocol via `--policy-module`. See the [router docs](https://agentoptimizer.github.io/agentopt/api/router/) and [`examples/routing/`](examples/routing/) for details.
+
+## Daemon mode — one gateway for many clients
+
+`agentopt serve` is a long-lived localhost daemon that owns the proxy state. Any number of clients — Python, other languages, subprocess agents — can share its cache, providers, and (optionally) a daemon-wide default router. Switching modes is a deployment decision, not an API change.
+
+```bash
+# Start the daemon
+agentopt serve --port 9000 --cache-dir ./shared_cache
+
+# (Optional) make every session that doesn't carry its own router use this one:
+agentopt serve --routing-policy random \
+    --candidate-models gpt-4o,gpt-4o-mini --seed 42
+
+# Preload custom Router subclasses so clients can push them per-session:
+agentopt serve --policy-module ./my_policies.py
+```
+
+The exact same Python code routes through the daemon when `AGENTOPT_GATEWAY_URL` is set:
+
+```bash
+AGENTOPT_GATEWAY_URL=http://127.0.0.1:9000 python my_script.py
+```
+
+See [`examples/selection/daemon/`](examples/selection/daemon/) and [`examples/routing/daemon/`](examples/routing/daemon/).
 
 ## Results API
 
@@ -297,7 +340,7 @@ selector = ModelSelector(
 
 ## Documentation
 
-Full documentation at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)** — including detailed guides on the [Results API](https://agentoptimizer.github.io/agentopt/api/results/), [response caching](https://agentoptimizer.github.io/agentopt/concepts/caching/), and [custom model pricing](https://agentoptimizer.github.io/agentopt/api/selectors/).
+Full documentation at **[agentoptimizer.github.io/agentopt](https://agentoptimizer.github.io/agentopt/)** — including the [Selectors](https://agentoptimizer.github.io/agentopt/api/selectors/), [Router](https://agentoptimizer.github.io/agentopt/api/router/), [Tracker](https://agentoptimizer.github.io/agentopt/api/tracker/), and [Results](https://agentoptimizer.github.io/agentopt/api/results/) API references, plus guides on [how it works](https://agentoptimizer.github.io/agentopt/concepts/how-it-works/) and [response caching](https://agentoptimizer.github.io/agentopt/concepts/caching/).
 
 ## License
 

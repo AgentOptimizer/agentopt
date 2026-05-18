@@ -25,7 +25,7 @@
 ---
 
 ## News
-[2026/05] 🔥 Per-call **routing** and a long-lived **`agentopt serve` daemon** ship in 0.2.0 — pick a different model on every LLM call, or point any number of clients at one shared gateway with `AGENTOPT_GATEWAY_URL`.
+[2026/05] 🔥 Per-call **routing** and a long-lived **`agentopt serve` daemon** shipped! Pick a different model on every LLM call, or point any number of clients at one shared gateway with `AGENTOPT_GATEWAY_URL`.
 
 [2026/04] Version 0.1.0 released.
 
@@ -259,6 +259,34 @@ with LLMTracker(router=router) as tracker:
         with tracker.track(data_id=f"q{i}"):
             agent.run(q)                 # each LLM call routed independently
 tracker.print_summary()                  # model sequence, tokens per model, latency
+```
+
+Example output (`examples/routing/local/openharness.py`):
+
+```
+Paris
+4
+Blue.
+============================================================
+Routing summary
+============================================================
+
+Model usage by datapoint:
+  [q1]  2 call(s), 4.11s
+      gpt-4.1-nano                     2.06s
+      gpt-4.1-nano                     2.06s
+  [q2]  2 call(s), 2.22s
+      gpt-4.1-nano                     1.11s
+      gpt-4.1-nano                     1.11s
+  [q3]  2 call(s), 6.03s
+      gpt-4o-mini                      3.01s
+      gpt-4o-mini                      3.01s
+
+Tokens per model:
+  gpt-4.1-nano   prompt= 19268   completion=     8   total= 19276
+  gpt-4o-mini    prompt=  9638   completion=     6   total=  9644
+
+Total latency: 12.37s across 6 call(s)
 ```
 
 Write your own by subclassing `Router` and implementing `route(ctx) -> Optional[str]` — return a model name to swap or `None` to keep the client's choice. Custom routers also work over the daemon's wire protocol via `--policy-module`. See the [router docs](https://agentoptimizer.github.io/agentopt/api/router/) and [`examples/routing/`](examples/routing/) for details.

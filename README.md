@@ -74,57 +74,7 @@ pip install agentopt-py
 ```
 ## Quick Start
 
-Say you have an agent with two LLM steps (a planner and a solver) and you want to find the best model for each:
-
-```python
-from agentopt import ModelSelector
-
-selector = ModelSelector(
-    agent=MyAgent,
-    models={
-        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],  # 3 options
-        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],  # 3 options
-    },  # → 3 × 3 = 9 combinations to evaluate
-    eval_fn=eval_fn,
-    dataset=dataset,
-    method="brute_force",  # or "auto" for smarter selection algorithms
-)
-
-results = selector.select_best(parallel=True, max_concurrent=50)
-results.print_summary()
-```
-
-Output:
-```
-    Model Selection Results
-    ----------------------------------------------------------------------------
-    Rank  Model                                     Accuracy  Latency      Price
-    ----------------------------------------------------------------------------
->>>    1  planner=gpt-4.1-nano + solver=gpt-4.1-nano 100.00%    0.85s  $0.000420
-       2  planner=gpt-4o-mini + solver=gpt-4o-mini   100.00%    1.20s  $0.002372
-       3  planner=gpt-4o + solver=gpt-4o              100.00%    2.70s  $0.014355
-    ...
-```
-
-Conceptually, this is what happens under the hood:
-
-```python
-for combo in all_combinations(models):       # e.g. {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
-    agent = MyAgent(combo)                   # build agent with this model combo
-    for input_data, expected in dataset:
-        actual = agent.run(input_data)       # run on each datapoint
-        score = eval_fn(expected, actual)    # score the output
-# rank combos by quality score, latency & per-query cost
-```
-
-But AgentOpt does this efficiently with **smart algorithms, parallelization, per-query cost & latency tracking, and caching**. With `method="auto"` (the default), it **automatically** homes in on the best combination (wired to `arm_elimination` — strong best-arm identification with far fewer evaluations than `brute_force`), eliminating clearly worse combinations after just a few datapoints.
-
-You just provide four things:
-
-**Agent** — wrap your agent into a class with `__init__(self, models)` and `run(self, input_data)`:
-
-- `__init__(self, models)` — receive a model configuration and do your agent creation. `models` is a dict that maps each step you want to optimize to a specific model, e.g. `{"planner": "gpt-4o-mini", "solver": "gpt-4o"}`.
-- `run(self, input_data)` — run your agent on a single datapoint and return the output.
+The two entry points share the same proxy and the same agent shape — pick selection when you want to find one fixed combination offline, pick routing when you want to swap models per call at runtime. The agent class below is reused by both.
 
 ```python
 from openai import OpenAI
@@ -151,28 +101,114 @@ class MyAgent:
         return answer
 ```
 
-**Dataset** — a list of `(input_data, expected_output)` pairs:
+### 1. Offline model selection
+
+Find the best fixed `{planner, solver}` combination against an evaluation dataset:
 
 ```python
+from agentopt import ModelSelector
+
 dataset = [
     ("What is the capital of France?", "Paris"),
     ("What is 2 + 2?", "4"),
     ("What color is the sky?", "blue"),
-    # We recommend at least 100 samples for production decisions,
-    # but even 10-20 samples can surface clear winners during development.
+    # 100+ samples recommended for production decisions;
+    # 10-20 already surfaces clear winners during development.
 ]
-```
 
-**Eval function** — compares the agent output against the expected answer, returns a score:
-
-```python
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
+
+selector = ModelSelector(
+    agent=MyAgent,
+    models={
+        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+    },                                  # → 3 × 3 = 9 combinations
+    eval_fn=eval_fn,
+    dataset=dataset,
+    method="auto",                      # arm_elimination — smart + cheap
+)
+
+results = selector.select_best(parallel=True, max_concurrent=50)
+results.print_summary()
 ```
 
-LLM-as-judge is also supported — just call your judge LLM inside `eval_fn`.
+Output:
+```
+    Model Selection Results
+    ----------------------------------------------------------------------------
+    Rank  Model                                     Accuracy  Latency      Price
+    ----------------------------------------------------------------------------
+>>>    1  planner=gpt-4.1-nano + solver=gpt-4.1-nano 100.00%    0.85s  $0.000420
+       2  planner=gpt-4o-mini + solver=gpt-4o-mini   100.00%    1.20s  $0.002372
+       3  planner=gpt-4o + solver=gpt-4o              100.00%    2.70s  $0.014355
+    ...
+```
 
-**Models** — a dict mapping each step name to a list of candidate models to try. AgentOpt picks one from each list, constructs the agent, and evaluates it.
+LLM-as-judge is also supported — just call your judge LLM inside `eval_fn`. With `method="auto"` (default) AgentOpt eliminates clearly worse combinations after just a few datapoints instead of evaluating every combo on every datapoint.
+
+### 2. Online model routing
+
+Same agent, no `models=` search space, no dataset — instead a `Router` decides per call:
+
+```python
+from agentopt import LLMTracker, RandomRouter
+
+# Instantiate the agent once; the router overrides the model on each LLM call.
+agent = MyAgent({"planner": "gpt-4o-mini", "solver": "gpt-4o-mini"})
+
+router = RandomRouter(candidates=["gpt-4o-mini", "gpt-4.1-nano"], seed=0)
+questions = [
+    "What is the capital of France?",
+    "What is 2 + 2?",
+    "What color is the sky?",
+]
+
+with LLMTracker(router=router) as tracker:
+    for i, q in enumerate(questions, 1):
+        with tracker.track(data_id=f"q{i}"):
+            print(agent.run(q))
+tracker.print_summary()
+```
+
+Output:
+```
+Paris
+4
+Blue.
+============================================================
+Routing summary
+============================================================
+
+Model usage by datapoint:
+  [q1]  2 call(s), 4.11s
+      gpt-4.1-nano                     2.06s
+      gpt-4.1-nano                     2.06s
+  [q2]  2 call(s), 2.22s
+      gpt-4.1-nano                     1.11s
+      gpt-4.1-nano                     1.11s
+  [q3]  2 call(s), 6.03s
+      gpt-4o-mini                      3.01s
+      gpt-4o-mini                      3.01s
+
+Tokens per model:
+  gpt-4.1-nano   prompt= 19268   completion=     8   total= 19276
+  gpt-4o-mini    prompt=  9638   completion=     6   total=  9644
+
+Total latency: 12.37s across 6 call(s)
+```
+
+`RandomRouter` is the simplest built-in policy. Write your own by subclassing `Router` and implementing `route(ctx) -> Optional[str]` — return a model name to swap or `None` to keep the client's choice. See the [router docs](https://agentoptimizer.github.io/agentopt/api/router/) for context fields (history, prompt, session) and the [`examples/routing/`](examples/routing/) folder for length-based, first-call-big, and bandit policies.
+
+### What you provide
+
+Both entry points share the same agent contract:
+
+- `MyAgent.__init__(self, models)` — receive a dict like `{"planner": "gpt-4o", "solver": "gpt-4o-mini"}` and build your agent. For routing, the dict is the *initial* model assignment; the router can override on any individual LLM call.
+- `MyAgent.run(self, input_data)` — run on a single datapoint and return the output.
+
+Selection additionally needs a `dataset` of `(input, expected)` pairs and an `eval_fn(expected, actual) -> float` — neither is required for routing.
 
 ## Framework Compatibility
 
@@ -255,51 +291,6 @@ with LLMTracker(combo_id="cli-run") as tracker:
 ```
 
 For agents like **OpenClaw** that don't read env vars, the [`OpenClawAgent`](examples/shared/openclaw_agent.py) wrapper under `examples/shared/` patches the agent's config file with the proxy URL + CA cert per call. See [openclaw.py](examples/selection/local/openclaw.py) for a complete working example.
-
-## Routing — pick a different model per call
-
-A `Router` is a policy that decides — **per individual LLM call** — which model to use. The swap happens transparently at the HTTP layer, so it works with every framework and CLI agent above with **no integration code**.
-
-```python
-from agentopt import LLMTracker, RandomRouter
-
-router = RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"], seed=0)
-with LLMTracker(router=router) as tracker:
-    for i, q in enumerate(questions, 1):
-        with tracker.track(data_id=f"q{i}"):
-            agent.run(q)                 # each LLM call routed independently
-tracker.print_summary()                  # model sequence, tokens per model, latency
-```
-
-Example output (`examples/routing/local/openharness.py`):
-
-```
-Paris
-4
-Blue.
-============================================================
-Routing summary
-============================================================
-
-Model usage by datapoint:
-  [q1]  2 call(s), 4.11s
-      gpt-4.1-nano                     2.06s
-      gpt-4.1-nano                     2.06s
-  [q2]  2 call(s), 2.22s
-      gpt-4.1-nano                     1.11s
-      gpt-4.1-nano                     1.11s
-  [q3]  2 call(s), 6.03s
-      gpt-4o-mini                      3.01s
-      gpt-4o-mini                      3.01s
-
-Tokens per model:
-  gpt-4.1-nano   prompt= 19268   completion=     8   total= 19276
-  gpt-4o-mini    prompt=  9638   completion=     6   total=  9644
-
-Total latency: 12.37s across 6 call(s)
-```
-
-Write your own by subclassing `Router` and implementing `route(ctx) -> Optional[str]` — return a model name to swap or `None` to keep the client's choice. Custom routers also work over the daemon's wire protocol via `--policy-module`. See the [router docs](https://agentoptimizer.github.io/agentopt/api/router/) and [`examples/routing/`](examples/routing/) for details.
 
 ## Daemon mode — one gateway for many clients
 

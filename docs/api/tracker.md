@@ -47,16 +47,18 @@ tracker.print_summary()
 
 ### Subprocess agent
 
+While a `track()` scope is active, `LLMTracker` patches `subprocess.Popen` so every child spawned inside it inherits `HTTPS_PROXY` + the merged CA bundle path automatically — no env-var plumbing in the agent's `run()`:
+
 ```python
-import agentopt, subprocess
+import subprocess
 
 with LLMTracker(combo_id="subproc") as tracker:
-    proxy = agentopt.get_current_session_proxy()
-    env = {**os.environ, **proxy.env_dict()}
-    subprocess.run(["claude", "-p", prompt], env=env)
+    subprocess.run(["claude", "-p", prompt])
 ```
 
-The session's mitmproxy port is exposed via `HTTPS_PROXY`; the CA bundle path via `SSL_CERT_FILE` (and friends for non-stdlib HTTP clients). See [proxy.md](proxy.md) for the full subprocess flow.
+Merge policy: when the caller passes `env=None` (the default), the patch sets `env = {**os.environ, **session_env}`. When the caller passes an explicit `env=` dict, the patch merges in the session env on top (`{**user_env, **session_env}`) — being inside `with LLMTracker:` is the signal that tracking is wanted.
+
+For agents that ignore `HTTPS_PROXY` and instead need the proxy URL / CA cert injected into a config file (OpenClaw is the canonical case), `agentopt.get_current_session_proxy()` is the escape hatch — see the helper below. See [proxy.md](proxy.md) for the full subprocess flow.
 
 ---
 

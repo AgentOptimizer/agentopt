@@ -34,7 +34,7 @@ Same pattern in local mode and daemon mode — the only deployment switch is whe
 Run any of them directly:
 
 ```bash
-python examples/routing/local/custom_agent.py
+uv run python examples/routing/local/custom_agent.py
 ```
 
 ## `daemon/` — same scripts, behind `agentopt serve`

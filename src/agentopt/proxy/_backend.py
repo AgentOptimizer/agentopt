@@ -126,8 +126,8 @@ class _Backend(ABC):
     @abstractmethod
     def track(
         self,
-        data_id: str,
-        combo_id: str,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         router: Optional["Router"] = None,
     ):

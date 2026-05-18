@@ -328,10 +328,9 @@ _active_session_var: ContextVar[Optional[ActiveSession]] = ContextVar(
 _original_sync_send: Optional[Callable] = None
 _original_async_send: Optional[Callable] = None
 _installed = False
-# Refcount so multiple coexisting ``LLMTracker`` instances (or the
-# ephemeral one ``Router.__enter__`` spins up) don't tear down each
-# other's httpx patch.  Only the first install actually patches;
-# only the matching last uninstall actually restores.
+# Refcount so multiple coexisting ``LLMTracker`` instances don't tear
+# down each other's httpx patch.  Only the first install actually
+# patches; only the matching last uninstall actually restores.
 _install_refcount = 0
 
 
@@ -407,8 +406,8 @@ def uninstall_redirect() -> None:
 
     Decrements the refcount; only the matching last call actually
     restores the original ``httpx`` methods.  Earlier calls are no-ops
-    so a nested auto-tracker exit can't tear down a still-active
-    user tracker's patch.
+    so coexisting ``LLMTracker`` instances don't tear down each
+    other's patch on exit.
     """
     global _original_sync_send, _original_async_send, _installed
     global _install_refcount

@@ -13,7 +13,7 @@ Prerequisites:
     3. Optional: set GEMINI_API_KEY or GOOGLE_API_KEY in your environment.
 
 Usage:
-    python examples/gemini_cli_example.py
+    python examples/selection/local/gemini_cli.py
 """
 
 import os

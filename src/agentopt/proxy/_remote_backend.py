@@ -370,21 +370,15 @@ class RemoteBackend(_Backend):
     @contextmanager
     def track(
         self,
-        data_id: str,
-        combo_id: str,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
-        # Resolve the router (explicit kwarg > with-router ContextVar).
-        if router is None:
-            from agentopt.routing.base import get_active_router
-
-            router = get_active_router()
-
-        # Serialize the router for the daemon.  ``config()`` raises
-        # NotImplementedError for custom routers that don't override
-        # ``_config_kwargs()``; surface that as-is so the user knows
-        # exactly what's missing.
+        # Serialize the router for the daemon if one was supplied.
+        # ``config()`` raises NotImplementedError for custom routers
+        # that don't override ``_config_kwargs()``; surface that as-is
+        # so the user knows exactly what's missing.
         router_config: Optional[Dict[str, Any]] = None
         if router is not None:
             router_config = router.config()

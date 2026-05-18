@@ -148,8 +148,8 @@ class LocalBackend(_Backend):
     @contextmanager
     def track(
         self,
-        data_id: str,
-        combo_id: str,
+        data_id: Optional[str] = None,
+        combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         router: Optional["Router"] = None,
     ) -> Iterator[SessionInfo]:
@@ -160,17 +160,9 @@ class LocalBackend(_Backend):
         ``SessionMaster`` so subprocesses can use ``get_session_env``
         without further setup.
 
-        Router resolution: an explicit ``router=`` argument always wins;
-        if omitted, the router activated by an enclosing ``with router:``
-        block (via :func:`agentopt.routing.get_active_router`) is used.
-        Either router applies to both the in-process httpx path and the
-        subprocess mitmproxy addon for this session.
+        If *router* is given, it applies to both the in-process httpx
+        path and the subprocess mitmproxy addon for this session.
         """
-        if router is None:
-            from agentopt.routing.base import get_active_router
-
-            router = get_active_router()
-
         session, port = self.open_session(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id, router=router,
         )

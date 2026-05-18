@@ -12,19 +12,23 @@ Prerequisites:
     4. Set ANTHROPIC_API_KEY (or other provider keys) in your environment
 
 Usage:
-    python examples/openclaw_example.py
+    python examples/selection/local/openclaw.py
 """
 
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from agentopt import ModelSelector
-from openclaw_agent import OpenClawAgent
+# OpenClawAgent is shared with examples/routing/local/openclaw.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "shared"))
+
+from agentopt import ModelSelector  # noqa: E402
+from openclaw_agent import OpenClawAgent  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Step 1: Evaluation dataset — (input_data, expected_output) pairs.

@@ -7,15 +7,12 @@ and prior LLM calls in the session, and returns either a model name
 
 Public API shape::
 
-    from agentopt import RandomRouter
+    from agentopt import LLMTracker, RandomRouter
 
-    # Standalone — one line, no tracker boilerplate
-    with RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"]):
+    router = RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"])
+    with LLMTracker(combo_id="X", router=router) as tracker:
         agent.run(question)
-
-    # Or, when you already have an LLMTracker, pass `router=` explicitly
-    with tracker.track(data_id="dp", combo_id="c", router=router):
-        agent.run(question)
+    tracker.print_summary()
 
 The swap happens transparently at the HTTP layer (in-process httpx
 patch + per-session mitmproxy addon), so any framework or subprocess
@@ -32,7 +29,6 @@ reconstructed remotely.
 from __future__ import annotations
 
 import logging
-from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
@@ -74,25 +70,6 @@ class RouteContext:
 
 
 # ---------------------------------------------------------------------------
-# Activation — ContextVar for `with router:` sugar
-# ---------------------------------------------------------------------------
-
-
-_active_router_var: ContextVar[Optional["Router"]] = ContextVar(
-    "agentopt_active_router", default=None,
-)
-
-
-def get_active_router() -> Optional["Router"]:
-    """Return the router activated by the enclosing ``with router:`` block.
-
-    Read by ``LLMTracker.track()`` when no explicit ``router=`` argument
-    is supplied.  Returns ``None`` when no router is active.
-    """
-    return _active_router_var.get()
-
-
-# ---------------------------------------------------------------------------
 # Router base class
 # ---------------------------------------------------------------------------
 
@@ -103,20 +80,16 @@ class Router:
     Subclasses implement :meth:`route`, which returns the model name to
     use (or ``None`` to keep the client's requested model).
 
-    Use the instance as a context manager — ``with router:`` spins up
-    an ephemeral :class:`LLMTracker` and a tracking session for you, so
-    you never have to write the lifecycle boilerplate manually::
+    Activation is always via :class:`agentopt.LLMTracker`::
 
-        with RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"]):
+        router = RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"])
+        with LLMTracker(combo_id="X", router=router) as tracker:
             agent.run(question)
+        tracker.print_summary()
 
-    If you already have an ``LLMTracker`` and want to attach a router
-    to a specific scope, pass ``router=`` to ``track()`` instead — and
-    do *not* nest ``with router:`` inside that ``track()`` (the
-    auto-spawn would clobber attribution; we raise a clear error).
-
-    **Not re-entrant on a single instance.**  Use distinct instances
-    for nested or concurrent scopes.
+    The same code works against a local proxy or a long-lived
+    ``agentopt serve`` daemon — setting ``AGENTOPT_GATEWAY_URL`` is the
+    entire deployment switch.
 
     **Daemon-mode serialization.**  When ``AGENTOPT_GATEWAY_URL`` is
     set, ``RemoteBackend`` describes the router to the daemon via
@@ -175,76 +148,6 @@ class Router:
             "of __init__ kwargs, or use a built-in router (e.g. RandomRouter), "
             "or unset AGENTOPT_GATEWAY_URL to run in library mode."
         )
-
-    # ------------------------------------------------------------------
-    # Context manager — auto-spins an ephemeral tracker when needed
-    # ------------------------------------------------------------------
-
-    def __enter__(self) -> "Router":
-        if getattr(self, "_routing_token", None) is not None:
-            raise RuntimeError(
-                "Router is already active — `with router:` is not "
-                "re-entrant on the same instance.  Instantiate a fresh "
-                "Router for nested or concurrent scopes."
-            )
-
-        # If the user is already inside an LLMTracker.track() scope, we'd
-        # silently fail to route (the handler was built without a router).
-        # Raise with a clear pointer to the correct pattern.
-        from agentopt.proxy.interceptor import _active_session_var
-
-        if _active_session_var.get() is not None:
-            raise RuntimeError(
-                "Cannot enter `with router:` inside an active "
-                "tracker.track() scope — the surrounding session was "
-                "constructed without this router and wouldn't see it.  "
-                "Either move `with router:` to wrap the track() block, "
-                "or pass `router=...` to track() directly."
-            )
-
-        self._routing_token = _active_router_var.set(self)
-
-        # Spin an ephemeral LLMTracker so this router does something on
-        # its own.  Users with attribution requirements should construct
-        # their own tracker and use `tracker.track(router=...)` instead.
-        from agentopt.proxy.tracker import LLMTracker
-
-        self._auto_tracker = LLMTracker()
-        try:
-            self._auto_tracker.start()
-            self._auto_track_ctx = self._auto_tracker.track(
-                data_id="__router__", combo_id="__router__", router=self,
-            )
-            self._auto_track_ctx.__enter__()
-        except Exception:
-            # Ensure ContextVar + tracker state are cleaned up on a
-            # failed enter so the next attempt isn't blocked.
-            try:
-                self._auto_tracker.close()
-            except Exception:
-                logger.debug("ignored error closing auto-tracker", exc_info=True)
-            _active_router_var.reset(self._routing_token)
-            self._routing_token = None
-            raise
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        token = getattr(self, "_routing_token", None)
-        if token is None:
-            return
-        self._routing_token = None
-        try:
-            track_ctx = getattr(self, "_auto_track_ctx", None)
-            if track_ctx is not None:
-                track_ctx.__exit__(exc_type, exc, tb)
-            tracker = getattr(self, "_auto_tracker", None)
-            if tracker is not None:
-                tracker.close()
-        finally:
-            _active_router_var.reset(token)
-            for attr in ("_auto_tracker", "_auto_track_ctx"):
-                if hasattr(self, attr):
-                    delattr(self, attr)
 
 
 # ---------------------------------------------------------------------------

@@ -7,20 +7,18 @@ want type annotations on their custom routers but isn't exported at
 the top level.
 """
 
-from .base import (
-    RouteContext,
-    Router,
-    get_active_router,
-)
+from .base import RouteContext, Router
 from .config import BUILTIN_POLICIES, load_policy_module, resolve_policy
 from .random_policy import RandomRouter
+from .summary import format_routing_summary, print_routing_summary
 
 __all__ = [
     "Router",
     "RouteContext",
     "RandomRouter",
     "BUILTIN_POLICIES",
-    "get_active_router",
+    "format_routing_summary",
     "load_policy_module",
+    "print_routing_summary",
     "resolve_policy",
 ]

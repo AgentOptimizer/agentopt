@@ -374,7 +374,7 @@ def register_serve_subparser(
     )
     # Routing — only the 'random' built-in is wired to CLI flags in v1.
     # Custom policies arrive per-session via POST /sessions; clients use
-    # their Python `with router:` API as usual.
+    # their Python `with LLMTracker(router=...)` API as usual.
     p.add_argument(
         "--routing-policy",
         default=None,

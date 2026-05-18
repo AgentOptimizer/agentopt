@@ -18,7 +18,7 @@ Prerequisites:
     3. Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY in your environment.
 
 Usage:
-    python examples/openharness_example.py
+    python examples/selection/local/openharness.py
 """
 
 import os

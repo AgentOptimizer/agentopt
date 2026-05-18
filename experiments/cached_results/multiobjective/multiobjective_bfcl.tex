@@ -1,0 +1,21 @@
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Selector} & \textbf{$\beta$} & \textbf{Mean Perf} & \textbf{$J(c)$} & \textbf{Budget Savings} & \textbf{Found Best} \\
+\midrule
+Brute Force & --- & 70.00\% & 0.6791 & 0.0\% & 100\% \\
+\midrule
+Hill Climbing & --- & 70.00\% & 0.6791 & 13.1\% & 100\% \\
+Arm Elimination & --- & 70.00\% & 0.6791 & 48.2\% & 100\% \\
+Matrix UCB-E & 0.5 & 70.00\% & 0.6790 & 50.0\% & 98\% \\
+Matrix UCB-E & 0.2 & 69.80\% & 0.6675 & 80.0\% & 46\% \\
+Bayesian Opt & --- & 69.47\% & 0.6647 & 44.4\% & 50\% \\
+Random Search & --- & 67.00\% & 0.6403 & 66.7\% & 34\% \\
+\bottomrule
+\end{tabular}
+\caption{Multi-objective selector comparison on BFCL ($\lambda_{cost}=\lambda_{latency}=0.1$, min-max normalized, 50 seeds). J-optimal configuration: Kimi K2.5 (Perf=70.00\%, $J$=0.6791).}
+\label{tab:multiobjective-bfcl}
+\end{table}

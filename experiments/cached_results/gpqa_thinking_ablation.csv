@@ -1,0 +1,9 @@
+Model,Effort,Accuracy,Samples,Cost/Sample,Server Lat/Sample (s)
+Opus,high,0.839,192,0.113,70.4
+Opus,medium,0.793,198,0.0341,23.9
+Opus,none,0.722,198,0.0120,8.79
+Haiku 4.5,16K,0.712,198,0.0192,30.6
+Haiku 4.5,32K,0.712,198,0.0361,57.4
+Opus,low,0.616,198,0.00302,3.06
+Haiku 4.5,5K,0.601,198,0.00925,15.0
+Haiku 4.5,none,0.596,198,0.00239,4.30

@@ -1,0 +1,10 @@
+Rank,Model,Accuracy,Server Latency (s),Wall Latency (s),Cost ($),Avg Calls/Sample
+1,agent=Claude Opus 4.6,0.7000,42.35,120.31,60.1326,12.2
+2,agent=Kimi K2.5,0.7000,21.30,101.98,3.8511,12.0
+3,agent=Qwen3 Next 80B A3B,0.7000,60.54,145.41,1.8962,15.3
+4,agent=Claude Haiku 4.5,0.6500,20.90,96.27,11.9840,11.1
+5,agent=gpt-oss-120b,0.5850,20.01,100.80,1.1608,14.5
+6,agent=Qwen3 32B,0.4700,10.78,95.00,1.0056,11.9
+7,agent=Claude 3 Haiku,0.4350,17.96,92.66,3.4191,16.4
+8,agent=gpt-oss-20b,0.4200,10.03,89.43,0.4290,9.8
+9,agent=Ministral 3 8B,0.3400,29.03,111.42,0.9265,9.7

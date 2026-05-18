@@ -1,0 +1,21 @@
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Selector} & \textbf{$\beta$} & \textbf{Mean Perf} & \textbf{$J(c)$} & \textbf{Budget Savings} & \textbf{Found Best} \\
+\midrule
+Brute Force & --- & 98.84\% & 0.9670 & 0.0\% & 100\% \\
+\midrule
+Matrix UCB-E & 0.5 & 98.84\% & 0.9670 & 50.0\% & 100\% \\
+Hill Climbing & --- & 98.53\% & 0.9639 & 74.8\% & 74\% \\
+Matrix UCB-E & 0.2 & 98.04\% & 0.9588 & 80.0\% & 18\% \\
+Random Search & --- & 97.99\% & 0.9584 & 74.1\% & 26\% \\
+Arm Elimination & --- & 97.51\% & 0.9535 & 79.5\% & 68\% \\
+Bayesian Opt & --- & 95.76\% & 0.9360 & 75.5\% & 4\% \\
+\bottomrule
+\end{tabular}
+\caption{Multi-objective selector comparison on MathQA ($\lambda_{cost}=\lambda_{latency}=0.1$, min-max normalized, 50 seeds). J-optimal configuration: Claude Opus 4.6 + Claude Haiku 4.5 (Perf=98.84\%, $J$=0.9670).}
+\label{tab:multiobjective-mathqa}
+\end{table}

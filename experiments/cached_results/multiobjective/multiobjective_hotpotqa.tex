@@ -1,0 +1,21 @@
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Selector} & \textbf{$\beta$} & \textbf{Mean Perf} & \textbf{$J(c)$} & \textbf{Budget Savings} & \textbf{Found Best} \\
+\midrule
+Brute Force & --- & 74.27\% & 0.6911 & 0.0\% & 100\% \\
+\midrule
+Matrix UCB-E & 0.5 & 74.27\% & 0.6911 & 50.0\% & 100\% \\
+Bayesian Opt & --- & 73.27\% & 0.6836 & 75.3\% & 2\% \\
+Hill Climbing & --- & 73.34\% & 0.6831 & 71.5\% & 50\% \\
+Arm Elimination & --- & 73.25\% & 0.6820 & 72.1\% & 86\% \\
+Matrix UCB-E & 0.2 & 73.17\% & 0.6819 & 80.0\% & 40\% \\
+Random Search & --- & 72.43\% & 0.6756 & 74.1\% & 28\% \\
+\bottomrule
+\end{tabular}
+\caption{Multi-objective selector comparison on HotpotQA ($\lambda_{cost}=\lambda_{latency}=0.1$, min-max normalized, 50 seeds). J-optimal configuration: Ministral 8B + Claude Opus 4.6 (Perf=74.27\%, $J$=0.6911).}
+\label{tab:multiobjective-hotpotqa}
+\end{table}

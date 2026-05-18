@@ -320,15 +320,25 @@ def test_remote_close_releases_control_plane_client(daemon, monkeypatch):
     tracker.close()
 
 
-def test_remote_context_manager_closes(daemon, monkeypatch):
-    """``with LLMTracker() as tracker:`` releases the control-plane client."""
+def test_remote_context_manager_keeps_http_alive_for_post_query(
+    daemon, monkeypatch,
+):
+    """``with LLMTracker() as tracker:`` exit calls ``stop()`` (not
+    ``close()``), so ``tracker.get_records()`` works *after* the block.
+    Explicit ``tracker.close()`` is what releases the http client.
+    """
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
     with LLMTracker() as tracker:
-        tracker.start()
         with tracker.track(data_id="dp", combo_id="c"):
             pass
-        tracker.stop()
         backend = tracker._backend
+
+    # After __exit__, http is still alive so post-exit queries succeed.
+    assert not backend._http.is_closed  # type: ignore[attr-defined]
+    tracker.get_records(combo_id="c")  # would raise if http were closed
+
+    # Explicit close() releases the http client.
+    tracker.close()
     assert backend._http.is_closed  # type: ignore[attr-defined]
 
 
@@ -396,7 +406,7 @@ def test_daemon_default_routing_policy_via_cli(
 
 
 def test_daemon_per_session_router_override(daemon, mock_upstream, monkeypatch):
-    """Python client's ``with RandomRouter:`` overrides daemon default."""
+    """Python client's per-session ``router=`` overrides daemon default."""
     from agentopt import LLMTracker, RandomRouter
 
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)

@@ -1,4 +1,4 @@
-"""Routing tests — auto-tracker, both interception paths, remote refusal."""
+"""Routing tests — both interception paths, daemon-side refusal of custom routers."""
 
 from __future__ import annotations
 
@@ -43,18 +43,18 @@ class _PassthroughRouter(Router):
 
 
 # ---------------------------------------------------------------------------
-# Standalone `with router:` — auto-spins an ephemeral tracker
+# Single-session sugar: ``with LLMTracker(router=...)`` is the one pattern
 # ---------------------------------------------------------------------------
 
 
-def test_with_router_standalone_routes_in_process_call(mock_upstream):
-    """``with router:`` alone is enough — no manual LLMTracker setup."""
-    router = _RecordingRouter(target_model="routed-by-with-router")
-    with router:
+def test_tracker_with_router_routes_in_process_call(mock_upstream):
+    """``with LLMTracker(router=...)`` routes the in-process httpx call."""
+    router = _RecordingRouter(target_model="routed-by-tracker")
+    with LLMTracker(combo_id="c", router=router, cache=False, cache_dir=None):
         client = httpx.Client(base_url=mock_upstream.base_url)
         resp = client.post(
             "/v1/chat/completions",
-            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}],},
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert resp.status_code == 200
 
@@ -64,56 +64,29 @@ def test_with_router_standalone_routes_in_process_call(mock_upstream):
     assert ctx.provider == "openai"
 
 
-def test_with_router_returning_none_passes_through(mock_upstream):
+def test_router_returning_none_passes_through(mock_upstream):
     """A router that returns ``None`` does not mutate the request body."""
     router = _PassthroughRouter()
-    with router:
+    with LLMTracker(combo_id="c", router=router, cache=False, cache_dir=None):
         client = httpx.Client(base_url=mock_upstream.base_url)
         resp = client.post(
             "/v1/chat/completions",
-            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}],},
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert resp.status_code == 200
     assert router.calls == 1
 
 
-def test_with_router_inside_active_track_raises():
-    """``with router:`` nested inside an existing ``track()`` is a clear error.
-
-    The outer session was constructed without this router and wouldn't
-    see it — silent miss would be worse than a loud error.
-    """
-    tracker = LLMTracker(cache=False, cache_dir=None)
-    tracker.start()
-    try:
-        with tracker.track(data_id="dp", combo_id="c"):
-            router = _RecordingRouter(target_model="x")
-            with pytest.raises(RuntimeError, match="track\\(\\) scope"):
-                router.__enter__()
-    finally:
-        tracker.stop()
-
-
-def test_router_reentry_on_same_instance_raises():
-    """Entering the same ``with router:`` twice is a clear error."""
-    router = _RecordingRouter(target_model="x")
-    with router:
-        with pytest.raises(RuntimeError, match="not re-entrant"):
-            router.__enter__()
-
-
 # ---------------------------------------------------------------------------
-# Explicit `tracker.track(router=...)` path
+# Explicit ``tracker.track(router=...)`` path — multi-session host
 # ---------------------------------------------------------------------------
 
 
-def test_router_explicit_swaps_model_in_request_body(mock_upstream):
+def test_router_via_explicit_track_swaps_model_in_request_body(mock_upstream):
     """``tracker.track(router=...)`` rewrites ``body['model']`` before
     the request leaves the in-process httpx wrapper."""
     router = _RecordingRouter(target_model="gpt-4o-mini-routed")
-    tracker = LLMTracker(cache=False, cache_dir=None)
-    tracker.start()
-    try:
+    with LLMTracker(cache=False, cache_dir=None) as tracker:
         with tracker.track(data_id="dp", combo_id="c", router=router) as session:
             client = httpx.Client(base_url=mock_upstream.base_url)
             resp = client.post(
@@ -135,8 +108,6 @@ def test_router_explicit_swaps_model_in_request_body(mock_upstream):
         # The recorded model reflects the router's decision, not the client's.
         rec = tracker.get_records(combo_id="c")[0]
         assert rec.model == "gpt-4o-mini-routed"
-    finally:
-        tracker.stop()
 
 
 def test_router_raising_does_not_break_agent(mock_upstream):
@@ -146,9 +117,7 @@ def test_router_raising_does_not_break_agent(mock_upstream):
         def route(self, ctx):
             raise RuntimeError("boom")
 
-    tracker = LLMTracker(cache=False, cache_dir=None)
-    tracker.start()
-    try:
+    with LLMTracker(cache=False, cache_dir=None) as tracker:
         with tracker.track(data_id="dp", combo_id="c", router=_Broken()):
             client = httpx.Client(base_url=mock_upstream.base_url)
             resp = client.post(
@@ -161,8 +130,6 @@ def test_router_raising_does_not_break_agent(mock_upstream):
             assert resp.status_code == 200
         # Original model survives.
         assert tracker.get_records(combo_id="c")[0].model == "gpt-4o"
-    finally:
-        tracker.stop()
 
 
 def test_route_returning_non_string_passes_through(mock_upstream):
@@ -172,9 +139,7 @@ def test_route_returning_non_string_passes_through(mock_upstream):
         def route(self, ctx):
             return {"model": "gpt-4o-mini"}  # not a string — should be Optional[str]
 
-    tracker = LLMTracker(cache=False, cache_dir=None)
-    tracker.start()
-    try:
+    with LLMTracker(cache=False, cache_dir=None) as tracker:
         with tracker.track(data_id="dp", combo_id="c", router=_Weird()):
             client = httpx.Client(base_url=mock_upstream.base_url)
             client.post(
@@ -185,36 +150,30 @@ def test_route_returning_non_string_passes_through(mock_upstream):
                 },
             )
         assert tracker.get_records(combo_id="c")[0].model == "gpt-4o"
-    finally:
-        tracker.stop()
 
 
 def test_random_router_picks_from_candidates(mock_upstream):
     """``RandomRouter(seed=...)`` is reproducible and chooses from the pool."""
     candidates = ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"]
-    tracker = LLMTracker(cache=False, cache_dir=None)
-    tracker.start()
-    try:
-        with tracker.track(
-            data_id="dp",
-            combo_id="c",
-            router=RandomRouter(candidates=candidates, seed=42),
-        ):
-            client = httpx.Client(base_url=mock_upstream.base_url)
-            for _ in range(5):
-                client.post(
-                    "/v1/chat/completions",
-                    json={
-                        "model": "ignored-by-router",
-                        "messages": [{"role": "user", "content": "hi"}],
-                    },
-                )
+    with LLMTracker(
+        combo_id="c",
+        router=RandomRouter(candidates=candidates, seed=42),
+        cache=False,
+        cache_dir=None,
+    ) as tracker:
+        client = httpx.Client(base_url=mock_upstream.base_url)
+        for _ in range(5):
+            client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "ignored-by-router",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
 
         recorded_models = {r.model for r in tracker.get_records(combo_id="c")}
         assert recorded_models <= set(candidates)
         assert recorded_models != {"ignored-by-router"}
-    finally:
-        tracker.stop()
 
 
 def test_router_runs_before_cache_so_keys_reflect_actual_model(mock_upstream):
@@ -234,18 +193,17 @@ def test_router_runs_before_cache_so_keys_reflect_actual_model(mock_upstream):
             self.next = "model-b" if picked == "model-a" else "model-a"
             return picked
 
-    tracker = LLMTracker(cache=True, cache_dir=None)
-    tracker.start()
-    try:
-        with tracker.track(data_id="dp", combo_id="c", router=_ToggleRouter()):
-            client = httpx.Client(base_url=mock_upstream.base_url)
-            payload = {
-                "model": "client-requested",
-                "messages": [{"role": "user", "content": "same content"}],
-            }
-            for _ in range(4):
-                resp = client.post("/v1/chat/completions", json=payload)
-                assert resp.status_code == 200
+    with LLMTracker(
+        combo_id="c", router=_ToggleRouter(), cache=True, cache_dir=None,
+    ) as tracker:
+        client = httpx.Client(base_url=mock_upstream.base_url)
+        payload = {
+            "model": "client-requested",
+            "messages": [{"role": "user", "content": "same content"}],
+        }
+        for _ in range(4):
+            resp = client.post("/v1/chat/completions", json=payload)
+            assert resp.status_code == 200
 
         # 2 distinct routed models → 2 upstream calls, then 2 cache hits.
         assert mock_upstream.request_count == 2
@@ -257,8 +215,6 @@ def test_router_runs_before_cache_so_keys_reflect_actual_model(mock_upstream):
             "model-b",
         ]
         assert [r.cached for r in records] == [False, False, True, True]
-    finally:
-        tracker.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +241,7 @@ with httpx.Client(base_url=base, timeout=10.0) as client:
 def test_subprocess_routing_via_https_proxy(mock_upstream, tmp_path):
     """A subprocess hitting the mock through ``HTTPS_PROXY`` gets routed too."""
     router = _RecordingRouter(target_model="subprocess-routed")
-    tracker = LLMTracker(cache=False, cache_dir=None)
-    tracker.start()
-    try:
+    with LLMTracker(cache=False, cache_dir=None) as tracker:
         with tracker.track(data_id="dp", combo_id="c", router=router) as session:
             env = tracker.get_session_env(session)
             env_full = {
@@ -310,12 +264,10 @@ def test_subprocess_routing_via_https_proxy(mock_upstream, tmp_path):
         assert result.stdout.strip() == "subprocess-routed" or len(router.seen) == 1
         rec = tracker.get_records(combo_id="c")[0]
         assert rec.model == "subprocess-routed"
-    finally:
-        tracker.stop()
 
 
 # ---------------------------------------------------------------------------
-# Custom-router serialization (refused in daemon mode for v1)
+# Custom-router serialization (refused in daemon mode unless overridden)
 # ---------------------------------------------------------------------------
 
 

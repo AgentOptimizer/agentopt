@@ -145,6 +145,13 @@ A small `aiohttp.web` app that owns one `LocalBackend` and exposes its surface o
 
 ```bash
 agentopt serve --port 9000 --cache-dir .agentopt_cache
+
+# With a daemon-wide default router (per-session overrides still allowed):
+agentopt serve --routing-policy random \
+    --candidate-models gpt-4o,gpt-4o-mini --seed 42
+
+# With user-defined Router subclasses preloaded:
+agentopt serve --policy-module ./my_policies.py
 ```
 
 Control plane:
@@ -152,7 +159,7 @@ Control plane:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET`    | `/health`                          | liveness probe |
-| `POST`   | `/sessions`                        | open a session — returns `{session_id, proxy_port, ca_pem_b64}` |
+| `POST`   | `/sessions`                        | open a session — body may include `data_id`, `combo_id`, `agent_id`, and an optional `router={"policy": "...", "kwargs": {...}}` override; returns `{session_id, proxy_port, ca_pem_b64}` |
 | `DELETE` | `/sessions/{session_id}`           | close a session |
 | `GET`    | `/records?data_id=&combo_id=…`     | filtered `CallRecord` list |
 | `GET`    | `/usage?…`                         | aggregated token usage |
@@ -182,7 +189,7 @@ Two motivations:
 1. **Multi-language / multi-process clients.** Subprocess agents work today via `HTTPS_PROXY`, but each Python process spins its own proxy. With a daemon, one gateway serves any number of clients in any language — they all just point `HTTPS_PROXY` at the same per-session port returned by `POST /sessions`.
 2. **State that outlives a process.** Cache survives across runs. Records can be queried later. A foundation for future features (concurrency caps, request coalescing, cross-call observability) that need a global view a single-process library can't supply.
 
-Routing is intentionally library-only for now — user-supplied Python `Router` callables don't translate cleanly across the wire and the cost of supporting them at v1 wasn't worth it. The daemon focuses on tracking, caching, and shared infrastructure.
+Routing also works over the wire: the daemon accepts a per-session `router` field on `POST /sessions` (built-in policies like `random`, plus custom `Router` subclasses preloaded via `--policy-module`), and supports a daemon-wide default via `--routing-policy`. See [router.md](router.md#daemon-mode) for details.
 
 ## The complete flow
 
@@ -198,7 +205,7 @@ Here's everything that happens end-to-end when you run an evaluation:
 
 **Session teardown**: `track()` scope exits → ContextVar is reset, the SessionMaster is shut down (drains in-flight requests, joins the thread), and the session is archived.
 
-**Shutdown**: `tracker.stop()` restores the original `httpx.Client.send`, stops any remaining masters, and flushes the cache. Record queries remain valid after `stop()`; `tracker.close()` does the final teardown (release the remote backend's long-lived HTTP client). `LLMTracker` is a context manager — `with LLMTracker() as t:` calls `close()` on exit.
+**Shutdown**: `tracker.stop()` restores the original `httpx.Client.send`, stops any remaining masters, and flushes the cache. Record queries remain valid after `stop()`; `tracker.close()` does the final teardown (releases the remote backend's long-lived HTTP client). `LLMTracker` is a context manager — `with LLMTracker() as t:` calls `stop()` (not `close()`) on exit so `tracker.print_summary()` immediately after the block still works.
 
 In daemon mode the same calls dispatch over HTTP: `start()` health-checks the daemon, `track()` POSTs `/sessions`, `stop()` closes any lingering sessions, `close()` releases the control-plane client.
 
@@ -283,15 +290,15 @@ The interception machinery, split between the in-process httpx wrapper, the per-
 
 ### `agentopt.proxy.LLMTracker` (the public surface)
 
-Identical between local and daemon modes. Reads `AGENTOPT_GATEWAY_URL` in `__init__` to pick the backend.
+Identical between local and daemon modes. Reads `AGENTOPT_GATEWAY_URL` in `__init__` to pick the backend. See [tracker.md](tracker.md) for the full surface; the highlights:
 
-- `tracker.start()` / `tracker.stop()` / `tracker.close()` lifecycle. Record queries remain valid after `stop()`; `close()` is the final-teardown hook that releases the remote backend's long-lived HTTP client.
-- `with LLMTracker() as tracker:` — context-manager sugar that calls `close()` on exit.
-- `tracker.track(data_id, combo_id, agent_id)` context manager — creates a session, eagerly spins up a SessionMaster (local) or POSTs `/sessions` (remote), sets the ContextVar.
-- `tracker.get_session_env(session)` — env-var dict for subprocess agents (`HTTPS_PROXY` + the merged CA bundle path). The proxy URL points at the local SessionMaster or the daemon's per-session port, transparently.
-- `tracker.register_provider(name, base_url, path_patterns)` — extends both the shared `ProviderRegistry` (subprocess intercept hosts) and the httpx wrapper's path-pattern set (in-process detection). In remote mode, also POSTs `/providers` to keep the daemon in sync.
-- `tracker.get_records(...)`, `tracker.get_usage(...)`, `tracker.get_cached_latency(...)` — query recorded calls.
-- `tracker.flush_cache()`, `tracker.clear_cache()`, `tracker.clear()`.
+- **Lifecycle.** `tracker.start()` / `tracker.stop()` / `tracker.close()`. Record queries remain valid after `stop()`; `close()` is the final-teardown hook that releases the remote backend's long-lived HTTP client.
+- **Context-manager sugar.** `with LLMTracker() as tracker:` calls `stop()` on exit (not `close()`, so `tracker.print_summary()` after the block still works). Passing any of `data_id` / `combo_id` / `agent_id` to the constructor also auto-opens a single tracking session for the lifetime of the `with`.
+- **Sessions.** `tracker.track(data_id, combo_id, agent_id, router)` context manager — creates a session, eagerly spins up a `SessionMaster` (local) or POSTs `/sessions` (remote), sets the `ContextVar`. All four args are optional; `router=` falls back to the one passed to `LLMTracker(...)`.
+- **Subprocess env.** `tracker.get_session_env(session)` returns `HTTPS_PROXY` + the merged CA bundle path. The URL points at the local `SessionMaster` or the daemon's per-session port, transparently. `agentopt.get_current_session_proxy()` is the module-level convenience reading the active session out of the `ContextVar`.
+- **Providers.** `tracker.register_provider(name, base_url, path_patterns)` extends both the shared `ProviderRegistry` (subprocess intercept hosts) and the httpx wrapper's path-pattern set; in remote mode also POSTs `/providers`.
+- **Queries.** `tracker.records`, `tracker.get_records(...)`, `tracker.get_usage(...)`, `tracker.get_cached_latency(...)`, `tracker.print_summary(...)`.
+- **Cache.** `tracker.flush_cache()`, `tracker.clear_cache()`, `tracker.clear()`.
 
 ### The httpx wrapper (no business logic — delegates to `Recorder` + `ResponseCache`)
 

@@ -3,13 +3,19 @@
 A `Router` is a policy that decides — **per individual LLM call** — which model to send the request to. The swap happens transparently at the HTTP layer, so it works with any framework (OpenAI SDK, Anthropic, LangChain, LangGraph, CrewAI) and any subprocess agent (Claude Code, Gemini CLI, etc.) — no integration code.
 
 ```python
-from agentopt import RandomRouter
+from agentopt import LLMTracker, RandomRouter
 
-with RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"], seed=0):
-    answer = agent.run(question)         # each LLM call routed independently
+router = RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"], seed=0)
+with LLMTracker(router=router) as tracker:
+    for i, q in enumerate(questions, 1):
+        with tracker.track(data_id=f"q{i}"):  # session per datapoint
+            agent.run(q)                       # each LLM call routed independently
+tracker.print_summary()                        # model sequence, tokens per model, total latency
 ```
 
-That's the whole user-facing API. The same code works whether the proxy runs in-process (default) or through a long-lived `agentopt serve` daemon (`AGENTOPT_GATEWAY_URL=…` env var). No `LLMTracker` boilerplate, no library/daemon code-path split.
+`router=` on `LLMTracker` alone sets a default that nested `tracker.track()` calls inherit; the per-datapoint sessions give the summary something to group by. If you don't need per-datapoint attribution, drop the inner `with` and pass a `combo_id=` to `LLMTracker` instead — the tracker will open one session for the whole block.
+
+The same code works whether the proxy runs in-process (default) or through a long-lived `agentopt serve` daemon (`AGENTOPT_GATEWAY_URL=…` env var) — setting the env var is the entire deployment switch.
 
 ---
 
@@ -22,32 +28,34 @@ A [model selector](selectors.md) picks **one combination** of models and evaluat
 | Grain | One combo per experiment | One model per call |
 | Decision time | Before the run | At each HTTP request |
 | Natural algorithm | UCB, arm elimination, Bayesian | Rule-based, classifier, bandit |
-| Activation | `selector.select_best()` | `with router:` / `track(router=…)` |
+| Activation | `selector.select_best()` | `with LLMTracker(router=...)` |
 
 ---
 
 ## Public API
 
 ```python
-from agentopt import Router, RandomRouter
+from agentopt import Router, RandomRouter, LLMTracker
 ```
 
-Two names. `RouteContext` (the type of `ctx` on `Router.route`) lives at `agentopt.routing.RouteContext` — only needed if you want a type annotation; most custom routers just access fields by attribute.
+`RouteContext` (the type of `ctx` on `Router.route`) lives at `agentopt.routing.RouteContext` — only needed if you want a type annotation; most custom routers just access fields by attribute.
 
 ### `Router`
 
 | Member | Description |
 |:---|:---|
 | `route(ctx) -> Optional[str]` | **Implement this.** Return a model name to swap, or `None` to keep the client's choice. |
-| `with router:` | Auto-spins an ephemeral `LLMTracker` and a tracking session so the router does something with no other setup. |
+| `config() / _config_kwargs()` | Wire serialization for daemon mode. Override `_config_kwargs()` to enable custom routers to travel to the daemon. |
+
+The `Router` class itself is **not** a context manager — activate it by passing it to `LLMTracker(router=...)` (or `tracker.track(router=...)`). The tracker owns the session and the records.
 
 ### `RouteContext`
 
-Read-only by contract.
+Read-only by contract — `request_body` is wrapped in `types.MappingProxyType`, so `ctx.request_body["foo"] = bar` raises `TypeError`. (Shallow guarantee: nested lists/dicts like `messages` stay mutable. Don't mutate them — cache keys and recording read the same dict.)
 
 | Field | Type | Description |
 |:---|:---|:---|
-| `request_body` | `dict` | Parsed inbound JSON. |
+| `request_body` | `Mapping[str, Any]` | Parsed inbound JSON (read-only view). |
 | `provider` | `str` | `"openai"`, `"anthropic"`, `"google"`, or `"unknown"`. |
 | `requested_model` | `str?` | The model the client originally asked for. |
 | `session` | `SessionInfo` | Active session (`data_id`, `combo_id`, `agent_id`, records). |
@@ -61,6 +69,17 @@ RandomRouter(candidates: Sequence[str], seed: int | None = None)
 
 Uniform random pick. `seed` makes choices reproducible.
 
+### `LLMTracker` (relevant surface for routing)
+
+| Member | Description |
+|:---|:---|
+| `LLMTracker(combo_id=..., router=...)` | Single-session sugar: `__enter__` opens a tracking session with the given IDs and router; `__exit__` closes it. Pass `router=` alone (no ID) and it's a default for nested `track()` calls instead. |
+| `tracker.track(data_id=..., combo_id=..., router=...)` | Multi-session host pattern. Inherits the constructor's `router=` when not overridden. |
+| `tracker.records` | All `CallRecord`s captured by this tracker. |
+| `tracker.print_summary(data_id=..., combo_id=...)` | Model sequence, per-model tokens, total latency. Grouped by `data_id` when records span multiple distinct values. |
+
+See [tracker.md](tracker.md) for the full tracker surface (cache, providers, queries, lifecycle).
+
 ---
 
 ## Writing a custom policy
@@ -68,7 +87,7 @@ Uniform random pick. `seed` makes choices reproducible.
 Subclass `Router` and implement `route`:
 
 ```python
-from agentopt import Router
+from agentopt import LLMTracker, Router
 
 class FirstCallBigRouter(Router):
     """Big model on the first call of a workflow, cheap model after."""
@@ -80,36 +99,17 @@ class FirstCallBigRouter(Router):
     def route(self, ctx):
         return self.big if not ctx.history else self.small
 
-with FirstCallBigRouter(big="gpt-4o", small="gpt-4o-mini"):
-    agent.run(question)
+router = FirstCallBigRouter(big="gpt-4o", small="gpt-4o-mini")
+with LLMTracker(router=router) as tracker:
+    for i, q in enumerate(questions, 1):
+        with tracker.track(data_id=f"q{i}"):
+            agent.run(q)
+tracker.print_summary()
 ```
 
 - Return `None` to keep the requested model.
 - Exceptions inside `route()` are caught and logged; the request proceeds unrouted. A router must never break an agent.
 - One policy per file, mirroring `agentopt.model_selection` — drop new policies into `agentopt/routing/` as siblings of `random_policy.py`.
-
----
-
-## Activation
-
-Two patterns. Pick one per scope — don't nest them.
-
-| Pattern | When to use |
-|:---|:---|
-| **`with router:`** (standalone) | Ad-hoc routing. Auto-spins an ephemeral tracker. The one-liner. |
-| **`tracker.track(router=…)`** | You already have an `LLMTracker` and want explicit `data_id` / `combo_id` attribution for `tracker.get_records()`. |
-
-```python
-# Standalone — one line
-with router:
-    agent.run(question)
-
-# Inside an explicit tracker
-with tracker.track(data_id="dp_1", combo_id="gpt4o-pool", router=router):
-    agent.run(question)
-```
-
-Opening `with router:` *inside* an already-active `tracker.track()` raises — the surrounding session was constructed without the router and would silently fail to apply it. The error message points you at `track(router=...)`.
 
 ---
 
@@ -129,9 +129,29 @@ agentopt serve --routing-policy random \
 
 Currently only `random` is wired to CLI flags. Pass `--candidate-models` without `--routing-policy` and the daemon refuses to start.
 
+A client running against this daemon simply opens sessions — no router code, no router import:
+
+```python
+with LLMTracker() as tracker:
+    for i, q in enumerate(questions, 1):
+        with tracker.track(data_id=f"q{i}"):
+            agent.run(q)
+tracker.print_summary()
+```
+
 ### Per-session override
 
-A Python client's `with RandomRouter(...):` always overrides the daemon default for that session — no extra code. To opt out of a daemon default for a single session (run that session unrouted), use the wire protocol directly (see [proxy.md](proxy.md) for `POST /sessions`'s `router` field).
+To override the daemon's default for one session, pass `router=` to the client's `LLMTracker` (or to `tracker.track()`):
+
+```python
+router = RandomRouter(candidates=["gpt-4o", "gpt-4o-mini"], seed=0)
+with LLMTracker(router=router) as tracker:
+    for i, q in enumerate(questions, 1):
+        with tracker.track(data_id=f"q{i}"):
+            agent.run(q)
+```
+
+The override applies only to sessions opened by this tracker — other clients on the same daemon keep using the default. To run a session *unrouted* against a daemon that has a default, drop down to the wire protocol (see [proxy.md](proxy.md) for `POST /sessions`'s `router` field).
 
 ### Custom routers in daemon mode
 
@@ -178,13 +198,18 @@ agentopt serve --policy-module ./my_policies.py
 Client side (Python with `AGENTOPT_GATEWAY_URL` set):
 
 ```python
+from agentopt import LLMTracker
 from my_policies import FirstCallBigRouter      # import for client-side use
 
-with FirstCallBigRouter(big="gpt-4o", small="gpt-4o-mini"):
-    agent.run(question)
+router = FirstCallBigRouter(big="gpt-4o", small="gpt-4o-mini")
+with LLMTracker(router=router) as tracker:
+    for i, q in enumerate(questions, 1):
+        with tracker.track(data_id=f"q{i}"):
+            agent.run(q)
+tracker.print_summary()
 ```
 
-Under the hood, the `with` block calls `router.config()` → `{"policy": "my_policies:FirstCallBigRouter", "kwargs": {"big": "...", "small": "..."}}` → POSTs to the daemon → daemon resolves via `importlib.import_module("my_policies")` (already in `sys.modules` from `--policy-module`) → instantiates.
+Under the hood, `LLMTracker` calls `router.config()` → `{"policy": "my_policies:FirstCallBigRouter", "kwargs": {"big": "...", "small": "..."}}` → POSTs to the daemon → daemon resolves via `importlib.import_module("my_policies")` (already in `sys.modules` from `--policy-module`) → instantiates.
 
 #### What you DON'T need to add
 
@@ -224,10 +249,7 @@ agent.run(q)
       └── (post-routing) cache lookup, forward to upstream, record
 ```
 
-Two invariants worth knowing:
-
-1. **Cache keys reflect the routed model, not the requested one.** Routing runs *before* `_make_cache_key`, so two identical request bodies routed to different models produce distinct cache entries. Otherwise a routed call could return a response generated by a different model.
-2. **The httpx-patch install/uninstall is refcounted**, so an ephemeral router-spawned tracker and a user-constructed `LLMTracker` coexist without one tearing down the other's patch on exit.
+**Cache keys reflect the routed model, not the requested one.** Routing runs *before* `_make_cache_key`, so two identical request bodies routed to different models produce distinct cache entries. Otherwise a routed call could return a response generated by a different model.
 
 ---
 
@@ -236,8 +258,6 @@ Two invariants worth knowing:
 - **Same-provider only.** `route()` returns `Optional[str]` — a model name in the same provider as the request URL. Cross-provider routing (host + auth + schema rewrites) is on the [roadmap](#roadmap).
 - **OpenAI / Anthropic body shape only.** The model lives in `request_body["model"]`. Gemini's URL-encoded model (`/v1beta/models/{model}:generateContent`) isn't rewritten yet — `route()` is still called, but a non-`None` decision logs at DEBUG and the request passes unrouted.
 - **Custom routers in daemon mode require an importable module** — either `--policy-module ./file.py` or `PYTHONPATH`. Routers must also implement `_config_kwargs()` so they serialize over the wire (the base class raises a clear error otherwise).
-- **Not re-entrant on a single instance.** `with router:` on the same instance twice raises. Use distinct instances for nested or concurrent scopes.
-- **No nesting `with router:` inside `tracker.track()`.** Raises with a pointer to use `track(router=...)`.
 
 ---
 
@@ -248,6 +268,7 @@ src/agentopt/routing/
 ├── base.py            Router, RouteContext, apply_router dispatcher, config/_config_kwargs
 ├── random_policy.py   RandomRouter
 ├── config.py          BUILTIN_POLICIES registry + resolve_policy()
+├── summary.py         print_routing_summary, format_routing_summary
 └── __init__.py        public re-exports
 ```
 

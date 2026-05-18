@@ -50,4 +50,4 @@ results = selector.select_best()
 results.print_summary()
 ```
 
-[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/crewai_example.py)
+[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/selection/local/crewai.py)

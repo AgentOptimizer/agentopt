@@ -102,7 +102,7 @@ Returns a [`SelectionResults`](results.md). `parallel=True` requires `agent.run`
       members: false
       show_bases: false
 
-::: agentopt.model_selection.matrix_ucb_factorization.MatrixUCBLRFModelSelector
+::: agentopt.model_selection.matrix_ucb.MatrixUCBLRFModelSelector
     options:
       members: false
       show_bases: false

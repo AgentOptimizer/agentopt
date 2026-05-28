@@ -29,6 +29,8 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
         confidence: float = 1.0,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -37,6 +39,8 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         n = len(self.dataset)
         if n_initial is None:
@@ -53,6 +57,17 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
             return asyncio.run(self._select_async(max_concurrent))
         return self._select_sequential()
 
+    def _arm_objectives(
+        self,
+        idx: int,
+        combo_scores: Dict[int, List[float]],
+        combo_latencies: Dict[int, List[float]],
+        combo_costs: Dict[int, List[Optional[float]]],
+    ) -> List[float]:
+        return self._compute_objectives(
+            combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+        )
+
     def _select_sequential(self) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
@@ -60,6 +75,9 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(len(all_combos))}
         combo_latencies: Dict[int, List[float]] = {
+            i: [] for i in range(len(all_combos))
+        }
+        combo_costs: Dict[int, List[Optional[float]]] = {
             i: [] for i in range(len(all_combos))
         }
         combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(len(all_combos))}
@@ -86,13 +104,18 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
             scores, latencies, dp_ids = self._evaluate_combo(
                 combo, init_batch, label=combo_name, dp_offset=offset
             )
+            costs = self._observe_combo(scores, latencies, dp_ids)
             combo_scores[idx].extend(scores)
             combo_latencies[idx].extend(latencies)
+            combo_costs[idx].extend(costs)
             combo_dp_ids[idx].extend(dp_ids)
-            mu, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+            objs = self._arm_objectives(
+                idx, combo_scores, combo_latencies, combo_costs
+            )
+            mu, lcb, ucb = self._confidence_bounds(objs)
             print(
                 f"  {combo_name}: mu={mu:.3f}, [{lcb:.3f}, {ucb:.3f}] "
-                f"(n={len(combo_scores[idx])})"
+                f"(n={len(objs)})"
             )
         offset += init_batch_size
 
@@ -113,18 +136,26 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 scores, latencies, dp_ids = self._evaluate_combo(
                     combo, batch, label=combo_name, dp_offset=offset - 1
                 )
+                costs = self._observe_combo(scores, latencies, dp_ids)
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
+                combo_costs[idx].extend(costs)
                 combo_dp_ids[idx].extend(dp_ids)
-                mu, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+                objs = self._arm_objectives(
+                    idx, combo_scores, combo_latencies, combo_costs
+                )
+                mu, lcb, ucb = self._confidence_bounds(objs)
                 print(
                     f"  {combo_name}: mu={mu:.3f}, [{lcb:.3f}, {ucb:.3f}] "
-                    f"(n={len(combo_scores[idx])})"
+                    f"(n={len(objs)})"
                 )
 
             newly_eliminated: Set[int] = set()
             for idx in active:
-                _, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+                objs = self._arm_objectives(
+                    idx, combo_scores, combo_latencies, combo_costs
+                )
+                _, lcb, ucb = self._confidence_bounds(objs)
                 # Classified wrt threshold, so this arm is no longer ambiguous.
                 if ucb < self.threshold or lcb > self.threshold:
                     newly_eliminated.add(idx)
@@ -132,7 +163,10 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
             if newly_eliminated:
                 for idx in sorted(newly_eliminated):
                     combo_name = self._combo_name(all_combos[idx])
-                    _, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+                    objs = self._arm_objectives(
+                        idx, combo_scores, combo_latencies, combo_costs
+                    )
+                    _, lcb, ucb = self._confidence_bounds(objs)
                     side = "below" if ucb < self.threshold else "above"
                     print(
                         f"  Eliminated: {combo_name} "
@@ -152,7 +186,7 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
             round_num += 1
 
         return self._build_results(
-            all_combos, combo_scores, combo_latencies, combo_dp_ids
+            all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
         )
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
@@ -162,6 +196,9 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(len(all_combos))}
         combo_latencies: Dict[int, List[float]] = {
+            i: [] for i in range(len(all_combos))
+        }
+        combo_costs: Dict[int, List[Optional[float]]] = {
             i: [] for i in range(len(all_combos))
         }
         combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(len(all_combos))}
@@ -212,14 +249,19 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                 logger.warning("Initial batch evaluation error: %s", res)
                 continue
             idx, scores, latencies, dp_ids = res
+            costs = self._observe_combo(scores, latencies, dp_ids)
             combo_scores[idx].extend(scores)
             combo_latencies[idx].extend(latencies)
+            combo_costs[idx].extend(costs)
             combo_dp_ids[idx].extend(dp_ids)
-            mu, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+            objs = self._arm_objectives(
+                idx, combo_scores, combo_latencies, combo_costs
+            )
+            mu, lcb, ucb = self._confidence_bounds(objs)
             print(
                 f"  {self._combo_name(all_combos[idx])}: "
                 f"mu={mu:.3f}, [{lcb:.3f}, {ucb:.3f}] "
-                f"(n={len(combo_scores[idx])})"
+                f"(n={len(objs)})"
             )
         offset += init_batch_size
 
@@ -263,26 +305,37 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
                     logger.warning("Batch evaluation error: %s", res)
                     continue
                 idx, scores, latencies, dp_ids = res
+                costs = self._observe_combo(scores, latencies, dp_ids)
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
+                combo_costs[idx].extend(costs)
                 combo_dp_ids[idx].extend(dp_ids)
-                mu, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+                objs = self._arm_objectives(
+                    idx, combo_scores, combo_latencies, combo_costs
+                )
+                mu, lcb, ucb = self._confidence_bounds(objs)
                 print(
                     f"  {self._combo_name(all_combos[idx])}: "
                     f"mu={mu:.3f}, [{lcb:.3f}, {ucb:.3f}] "
-                    f"(n={len(combo_scores[idx])})"
+                    f"(n={len(objs)})"
                 )
 
             newly_eliminated: Set[int] = set()
             for idx in active:
-                _, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+                objs = self._arm_objectives(
+                    idx, combo_scores, combo_latencies, combo_costs
+                )
+                _, lcb, ucb = self._confidence_bounds(objs)
                 if ucb < self.threshold or lcb > self.threshold:
                     newly_eliminated.add(idx)
 
             if newly_eliminated:
                 for idx in sorted(newly_eliminated):
                     combo_name = self._combo_name(all_combos[idx])
-                    _, lcb, ucb = self._confidence_bounds(combo_scores[idx])
+                    objs = self._arm_objectives(
+                        idx, combo_scores, combo_latencies, combo_costs
+                    )
+                    _, lcb, ucb = self._confidence_bounds(objs)
                     side = "below" if ucb < self.threshold else "above"
                     print(
                         f"  Eliminated: {combo_name} "
@@ -302,14 +355,14 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
             round_num += 1
 
         return self._build_results(
-            all_combos, combo_scores, combo_latencies, combo_dp_ids
+            all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
         )
 
-    def _confidence_bounds(self, scores: List[float]) -> Tuple[float, float, float]:
-        n = len(scores)
+    def _confidence_bounds(self, values: List[float]) -> Tuple[float, float, float]:
+        n = len(values)
         if n == 0:
             return 0.0, float("-inf"), float("inf")
-        mu, std = self._compute_stats(scores)
+        mu, std = self._compute_stats(values)
         se = std / math.sqrt(n)
         radius = self.confidence * se
         return mu, mu - radius, mu + radius
@@ -319,38 +372,37 @@ class ThresholdBanditSEModelSelector(BaseModelSelector):
         all_combos: List[Dict[str, ModelCandidate]],
         combo_scores: Dict[int, List[float]],
         combo_latencies: Dict[int, List[float]],
+        combo_costs: Dict[int, List[Optional[float]]],
         combo_dp_ids: Dict[int, List[str]],
     ) -> SelectionResults:
         all_results: List[ModelResult] = []
         for idx, combo in enumerate(all_combos):
             combo_name = self._combo_name(combo)
             scores = combo_scores[idx]
-            latencies = combo_latencies[idx]
-            dp_ids = combo_dp_ids[idx]
             if scores:
-                accuracy = sum(scores) / len(scores)
-                avg_latency = sum(latencies) / len(latencies)
-            else:
-                accuracy, avg_latency = 0.0, 0.0
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
-            dp_results = (
-                self._build_datapoint_results(scores, latencies, dp_ids)
-                if dp_ids
-                else []
-            )
-            all_results.append(
-                self._make_result(
-                    model_name=combo_name,
-                    accuracy=accuracy,
-                    latency_seconds=avg_latency,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    attribute="combination",
-                    is_best=False,
-                    datapoint_results=dp_results,
+                all_results.append(
+                    self._build_combo_result(
+                        combo_name,
+                        scores,
+                        combo_latencies[idx],
+                        combo_dp_ids[idx],
+                        costs=combo_costs[idx],
+                    )
                 )
-            )
+            else:
+                all_results.append(
+                    self._make_result(
+                        model_name=combo_name,
+                        accuracy=0.0,
+                        latency_seconds=0.0,
+                        input_tokens={},
+                        output_tokens={},
+                        attribute="combination",
+                        is_best=False,
+                    )
+                )
 
+        self._finalize_combined_objectives(all_results)
         best_info = self._find_best(all_results)
         if best_info is not None:
             best_name, _ = best_info

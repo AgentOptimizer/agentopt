@@ -227,7 +227,7 @@ Candidates may be model-name strings or framework-specific LLM instances, as lon
 | `lm_proposal` | Ask a proposer LLM to pick a combo, then evaluate it. | `proposer_model`, `proposer_client`, `objective`, `dataset_preview_size`, `node_descriptions` |
 | `bayesian` | Surrogate-model-guided search over medium/large spaces. | `batch_size`, `sample_fraction` |
 
-Other `ModelSelector` kwargs: `model_prices` (custom token pricing), `tracker` (e.g. `LLMTracker(cache_dir=...)` for disk-cache reuse), `node_descriptions` (used by `lm_proposal`).
+Other `ModelSelector` kwargs: `model_prices` (custom token pricing), `tracker` (e.g. `LLMTracker(cache_dir=...)` for disk-cache reuse), `node_descriptions` (used by `lm_proposal`), `lambda_cost` / `lambda_latency` (optional; default `0.0` — scalar combined objective `score - λ_cost·norm(cost) - λ_latency·norm(latency)`; see `docs/api/selectors.md#combined-objective-optional-costlatency-weights`).
 
 ### 5. Concurrency
 

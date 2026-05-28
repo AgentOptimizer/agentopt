@@ -123,6 +123,9 @@ The `models` dict maps each step name (matching the keys your `__init__` expects
 
 With 3 candidates per step and 2 steps, that's 9 combinations. Smart algorithms like `HillClimbingModelSelector` or `BayesianOptimizationModelSelector` can find the best combination without evaluating all of them — and they also select which datapoints to run on, stopping early when the winner is clear.
 
+!!! tip "Optional: trade accuracy for cost or latency"
+    Add `lambda_cost=0.3` and/or `lambda_latency=0.2` to the selector constructor to rank combinations by a scalar combined objective instead of accuracy alone. Omit them (default `0.0`) for accuracy-first selection. Details: [Combined objective](../api/selectors.md#combined-objective-optional-costlatency-weights).
+
 ## Step 5: Use the Results
 
 ```python

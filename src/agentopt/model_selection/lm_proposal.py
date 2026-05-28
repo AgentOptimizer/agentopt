@@ -48,6 +48,8 @@ class LMProposalModelSelector(BaseModelSelector):
         dataset_preview_size: int = 10,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -56,6 +58,8 @@ class LMProposalModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             node_descriptions=node_descriptions,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         if dataset_preview_size < 1:
             raise ValueError("dataset_preview_size must be >= 1.")
@@ -111,20 +115,8 @@ class LMProposalModelSelector(BaseModelSelector):
             scores, latencies, dp_ids = self._evaluate_combo(
                 combo, self.dataset, label=combo_name
             )
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
-            accuracy, _ = self._compute_stats(scores)
-            latency = sum(latencies) / len(latencies) if latencies else 0.0
-            dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
-
-            result = self._make_result(
-                model_name=combo_name,
-                accuracy=accuracy,
-                latency_seconds=latency,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                attribute="combination",
-                is_best=True,
-                datapoint_results=dp_results,
+            result = self._build_combo_result(
+                combo_name, scores, latencies, dp_ids, is_best=True,
             )
             print(f"  {result}")
         except Exception as e:
@@ -139,7 +131,9 @@ class LMProposalModelSelector(BaseModelSelector):
                 is_best=True,
             )
 
-        return SelectionResults(results=[result])
+        results = [result]
+        self._finalize_combined_objectives(results)
+        return SelectionResults(results=results)
 
     # ------------------------------------------------------------------
     # Prompt construction

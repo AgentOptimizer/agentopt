@@ -90,6 +90,6 @@ For each model combination:
 3. **Track** — Record token usage, latency, and cost via the interception layer
 4. **Score** — Evaluate each output using `eval_fn(expected, actual)`
 5. **Aggregate** — Compute mean accuracy, latency, and estimated cost
-6. **Rank** — Sort by accuracy (ties broken by latency), report results
+6. **Rank** — By default, sort by accuracy (ties broken by latency, then price). If you pass optional `lambda_cost` / `lambda_latency` on the selector, rank by the scalar [combined objective](../api/selectors.md#combined-objective-optional-costlatency-weights) instead.
 
 Different [selection algorithms](algorithms.md) vary in how they choose *which* combinations to evaluate, but steps 1-6 are the same for all of them.

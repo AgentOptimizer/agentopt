@@ -6,7 +6,7 @@ Returned by `selector.select_best()`. Holds every evaluated combination and the 
 
 | Method | Returns | Description |
 |:---|:---|:---|
-| `print_summary()` | `None` | Print a ranked table with accuracy, latency, tokens, and price. |
+| `print_summary()` | `None` | Print a ranked table with accuracy, latency, tokens, and price. When any result has `combined_objective` set, the table sorts by that value. |
 | `get_best(attribute=None)` | `ModelResult?` | The `is_best` combination. Pass `attribute` to scope the lookup to a single metric track. |
 | `get_best_combo()` | `Dict[str, str]?` | Best combination as `{"node": "model_name"}`. |
 | `get_by_attribute(attribute)` | `List[ModelResult]` | All results for a given attribute. |
@@ -40,6 +40,7 @@ One per evaluated combination.
 |:---|:---|:---|
 | `model_name` | `str` | Combination label, e.g. `"planner=gpt-4o + solver=gpt-4o-mini"`. |
 | `accuracy` | `float` | Mean eval score across evaluated datapoints. |
+| `combined_objective` | `float?` | Mean per-datapoint combined score when `lambda_cost` and/or `lambda_latency` were set on the selector; `None` otherwise. See [selectors.md — Combined objective](selectors.md#combined-objective-optional-costlatency-weights). |
 | `latency_seconds` | `float` | Mean latency per datapoint. |
 | `input_tokens` | `Dict[str, int]` | Input tokens by model. |
 | `output_tokens` | `Dict[str, int]` | Output tokens by model. |

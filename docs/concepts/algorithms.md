@@ -28,6 +28,8 @@ AgentOpt provides 8 selection algorithms. Choose based on your search space size
     results = selector.select_best(parallel=True, max_concurrent=20)
     ```
 
+    To optionally weight cost and latency against accuracy, pass `lambda_cost` and/or `lambda_latency` (default `0.0`). See [Combined objective](../api/selectors.md#combined-objective-optional-costlatency-weights).
+
 ---
 
 ## Brute Force

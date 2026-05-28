@@ -137,7 +137,9 @@ def ModelSelector(
             ``"lm_proposal"``, ``"bayesian"``.
         **kwargs: Additional arguments passed to the selector
             (e.g. ``epsilon``, ``threshold``, ``sample_fraction``, ``warmup_fraction``
-            for matrix UCB-LRF).
+            for matrix UCB-LRF; ``lambda_cost``, ``lambda_latency`` for the optional
+            combined objective ``score - lambda_cost*norm_cost -
+            lambda_latency*norm_latency`` — both default to ``0.0`` / accuracy-only).
 
     Returns:
         A selector instance. Call ``.select_best()`` to run.

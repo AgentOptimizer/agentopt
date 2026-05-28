@@ -29,6 +29,8 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
         confidence: float = 1.0,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -37,6 +39,8 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         self.epsilon = max(0.0, float(epsilon))
         self.n_initial = max(1, int(n_initial))
@@ -57,6 +61,7 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(n_arms)}
         combo_latencies: Dict[int, List[float]] = {i: [] for i in range(n_arms)}
+        combo_costs: Dict[int, List[Optional[float]]] = {i: [] for i in range(n_arms)}
         combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(n_arms)}
         active: Set[int] = set(range(n_arms))
 
@@ -77,14 +82,18 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
             scores, latencies, dp_ids = self._evaluate_combo(
                 combo, init_batch, label=combo_name, dp_offset=offset
             )
+            costs = self._observe_combo(scores, latencies, dp_ids)
             combo_scores[idx].extend(scores)
             combo_latencies[idx].extend(latencies)
+            combo_costs[idx].extend(costs)
             combo_dp_ids[idx].extend(dp_ids)
         offset += init_batch_size
 
         round_num = 1
         while active and offset < n_total:
-            h_idx, l_idx, h_lcb, l_ucb = self._choose_lucb_pair(active, combo_scores)
+            h_idx, l_idx, h_lcb, l_ucb = self._choose_lucb_pair(
+                active, combo_scores, combo_latencies, combo_costs
+            )
             gap = l_ucb - h_lcb
             if gap <= self.epsilon or l_idx is None:
                 break
@@ -105,16 +114,21 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
                 scores, latencies, dp_ids = self._evaluate_combo(
                     combo, batch, label=combo_name, dp_offset=offset - 1
                 )
+                costs = self._observe_combo(scores, latencies, dp_ids)
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
+                combo_costs[idx].extend(costs)
                 combo_dp_ids[idx].extend(dp_ids)
-                mu, _ = self._compute_stats(combo_scores[idx])
-                print(f"  {combo_name}: mu={mu:.3f} (n={len(combo_scores[idx])})")
+                objs = self._compute_objectives(
+                    combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+                )
+                mu, _ = self._compute_stats(objs)
+                print(f"  {combo_name}: mu={mu:.3f} (n={len(objs)})")
 
             round_num += 1
 
         return self._build_results(
-            all_combos, combo_scores, combo_latencies, combo_dp_ids
+            all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
         )
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
@@ -125,6 +139,7 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(n_arms)}
         combo_latencies: Dict[int, List[float]] = {i: [] for i in range(n_arms)}
+        combo_costs: Dict[int, List[Optional[float]]] = {i: [] for i in range(n_arms)}
         combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(n_arms)}
         active: Set[int] = set(range(n_arms))
 
@@ -168,8 +183,10 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
                 logger.warning("Initial LUCB batch evaluation error: %s", res)
                 continue
             idx, scores, latencies, dp_ids = res
+            costs = self._observe_combo(scores, latencies, dp_ids)
             combo_scores[idx].extend(scores)
             combo_latencies[idx].extend(latencies)
+            combo_costs[idx].extend(costs)
             combo_dp_ids[idx].extend(dp_ids)
         offset += init_batch_size
 
@@ -181,7 +198,9 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
         round_combo_sem = asyncio.Semaphore(n_combo_round)
 
         while active and offset < n_total:
-            h_idx, l_idx, h_lcb, l_ucb = self._choose_lucb_pair(active, combo_scores)
+            h_idx, l_idx, h_lcb, l_ucb = self._choose_lucb_pair(
+                active, combo_scores, combo_latencies, combo_costs
+            )
             gap = l_ucb - h_lcb
             if gap <= self.epsilon or l_idx is None:
                 break
@@ -219,27 +238,39 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
                     logger.warning("LUCB pair evaluation error: %s", res)
                     continue
                 idx, scores, latencies, dp_ids = res
+                costs = self._observe_combo(scores, latencies, dp_ids)
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
+                combo_costs[idx].extend(costs)
                 combo_dp_ids[idx].extend(dp_ids)
-                mu, _ = self._compute_stats(combo_scores[idx])
+                objs = self._compute_objectives(
+                    combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+                )
+                mu, _ = self._compute_stats(objs)
                 print(
                     f"  {self._combo_name(all_combos[idx])}: "
-                    f"mu={mu:.3f} (n={len(combo_scores[idx])})"
+                    f"mu={mu:.3f} (n={len(objs)})"
                 )
 
             round_num += 1
 
         return self._build_results(
-            all_combos, combo_scores, combo_latencies, combo_dp_ids
+            all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
         )
 
     def _choose_lucb_pair(
-        self, active: Set[int], combo_scores: Dict[int, List[float]],
+        self,
+        active: Set[int],
+        combo_scores: Dict[int, List[float]],
+        combo_latencies: Dict[int, List[float]],
+        combo_costs: Dict[int, List[Optional[float]]],
     ) -> Tuple[int, Optional[int], float, float]:
         stats: Dict[int, Tuple[float, float, float]] = {}
         for idx in active:
-            stats[idx] = self._confidence_bounds(combo_scores[idx])
+            objs = self._compute_objectives(
+                combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+            )
+            stats[idx] = self._confidence_bounds(objs)
 
         h_idx = max(active, key=lambda i: stats[i][0])  # highest empirical mean
         if len(active) == 1:
@@ -252,11 +283,11 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
         l_ucb = stats[l_idx][2]
         return h_idx, l_idx, h_lcb, l_ucb
 
-    def _confidence_bounds(self, scores: List[float]) -> Tuple[float, float, float]:
-        n = len(scores)
+    def _confidence_bounds(self, values: List[float]) -> Tuple[float, float, float]:
+        n = len(values)
         if n == 0:
             return 0.0, float("-inf"), float("inf")
-        mu, std = self._compute_stats(scores)
+        mu, std = self._compute_stats(values)
         se = std / math.sqrt(n)
         radius = self.confidence * se
         return mu, mu - radius, mu + radius
@@ -266,38 +297,37 @@ class EpsilonLUCBModelSelector(BaseModelSelector):
         all_combos: List[Dict[str, ModelCandidate]],
         combo_scores: Dict[int, List[float]],
         combo_latencies: Dict[int, List[float]],
+        combo_costs: Dict[int, List[Optional[float]]],
         combo_dp_ids: Dict[int, List[str]],
     ) -> SelectionResults:
         all_results: List[ModelResult] = []
         for idx, combo in enumerate(all_combos):
             combo_name = self._combo_name(combo)
             scores = combo_scores[idx]
-            latencies = combo_latencies[idx]
-            dp_ids = combo_dp_ids[idx]
             if scores:
-                accuracy = sum(scores) / len(scores)
-                avg_latency = sum(latencies) / len(latencies)
-            else:
-                accuracy, avg_latency = 0.0, 0.0
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
-            dp_results = (
-                self._build_datapoint_results(scores, latencies, dp_ids)
-                if dp_ids
-                else []
-            )
-            all_results.append(
-                self._make_result(
-                    model_name=combo_name,
-                    accuracy=accuracy,
-                    latency_seconds=avg_latency,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    attribute="combination",
-                    is_best=False,
-                    datapoint_results=dp_results,
+                all_results.append(
+                    self._build_combo_result(
+                        combo_name,
+                        scores,
+                        combo_latencies[idx],
+                        combo_dp_ids[idx],
+                        costs=combo_costs[idx],
+                    )
                 )
-            )
+            else:
+                all_results.append(
+                    self._make_result(
+                        model_name=combo_name,
+                        accuracy=0.0,
+                        latency_seconds=0.0,
+                        input_tokens={},
+                        output_tokens={},
+                        attribute="combination",
+                        is_best=False,
+                    )
+                )
 
+        self._finalize_combined_objectives(all_results)
         best_info = self._find_best(all_results)
         if best_info is not None:
             best_name, _ = best_info

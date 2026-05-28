@@ -66,7 +66,9 @@ def _resolve_class(policy: str) -> Type[Router]:
     except ImportError as exc:
         raise ValueError(
             f"Could not import routing policy module {module_name!r}: {exc}. "
-            "Custom routers must be importable on the daemon's PYTHONPATH."
+            f"Restart the daemon with `agentopt serve --policy-module "
+            f"path/to/{module_name}.py` so the file is pre-imported, or put "
+            "its parent directory on the daemon's PYTHONPATH before starting."
         ) from exc
     try:
         cls = getattr(module, class_name)

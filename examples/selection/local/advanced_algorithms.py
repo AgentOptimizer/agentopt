@@ -98,7 +98,13 @@ models = {
 def run_auto():
     """method="auto" — automatically finds the best combination (default; wired to arm_elimination — strong best-arm identification, cheaper than brute_force)."""
     selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset, method="auto",
+        agent=MyAgent,
+        models=models,
+        eval_fn=eval_fn,
+        dataset=dataset,
+        method="auto",
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -112,6 +118,8 @@ def run_random():
         dataset=dataset,
         method="random",
         sample_fraction=0.25,  # evaluate 25% of all combinations
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -125,6 +133,8 @@ def run_hill_climbing():
         dataset=dataset,
         method="hill_climbing",
         batch_size=4,  # number of neighbors to evaluate per step
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -137,6 +147,8 @@ def run_arm_elimination():
         eval_fn=eval_fn,
         dataset=dataset,
         method="arm_elimination",
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -150,6 +162,8 @@ def run_epsilon_lucb():
         dataset=dataset,
         method="epsilon_lucb",
         epsilon=0.01,  # acceptable gap from the true best
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -163,6 +177,8 @@ def run_threshold():
         dataset=dataset,
         method="threshold",
         threshold=0.75,  # minimum acceptable accuracy
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -175,6 +191,8 @@ def run_lm_proposal():
         eval_fn=eval_fn,
         dataset=dataset,
         method="lm_proposal",
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -189,6 +207,8 @@ def run_bayesian():
         method="bayesian",
         batch_size=4,
         sample_fraction=0.25,  # evaluate 25% of all combinations
+        objective_mode="weighted",
+        lambda_latency=0.2,
     )
     return selector.select_best(parallel=True)
 
@@ -203,6 +223,7 @@ def run_matrix_ucb():
         method="matrix_ucb",
         a=1.0,
         sample_fraction=0.1,
+        objective_mode="pareto",
     )
     return selector.select_best(max_concurrent=4)
 
@@ -221,6 +242,7 @@ def run_matrix_ucb_lrf():
         eta=5.0,
         warmup_fraction=0.05,
         sample_fraction=0.1,
+        objective_mode="pareto",
     )
     # Unlike matrix_ucb (which always uses async eval), LRF still uses parallel=True
     # for concurrent cell evaluation; sequential path is sync-only.

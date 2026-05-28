@@ -23,6 +23,14 @@ from ..base_models import (
     validate_dataset,
 )
 from ..model_price import compute_price
+from .objectives import (
+    ObjectiveMode,
+    chebyshev_scalar,
+    chebyshev_weight_at,
+    pareto_mask_3d,
+    score_to_error,
+    validate_objective_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +55,10 @@ class ModelResult(BaseModel):
     output_tokens: Dict[str, int] = Field(default_factory=dict)
     attribute: str
     is_best: bool = False
+    is_pareto_optimal: bool = Field(
+        default=False,
+        description="True when this combo lies on the empirical Pareto frontier.",
+    )
     datapoint_results: List[DatapointResult] = Field(default_factory=list)
     combined_objective: Optional[float] = Field(
         default=None,
@@ -57,6 +69,11 @@ class ModelResult(BaseModel):
         ),
     )
     _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
+
+    @property
+    def error(self) -> float:
+        """Per-combo error rate ``1 - accuracy`` (for Pareto plots; scores in [0, 1])."""
+        return score_to_error(self.accuracy)
 
     @property
     def num_samples(self) -> int:
@@ -102,6 +119,10 @@ class SelectionResults(BaseModel):
     """Results from model selection."""
 
     results: List[ModelResult] = Field(default_factory=list)
+    objective_mode: Optional[ObjectiveMode] = Field(
+        default=None,
+        description="``weighted`` (single best) or ``pareto`` (frontier).",
+    )
     selection_wall_time_seconds: Optional[float] = None
     selection_cost: Optional[float] = Field(
         default=None, description="Total selection cost in USD.",
@@ -141,6 +162,37 @@ class SelectionResults(BaseModel):
     def get_by_attribute(self, attribute: str) -> List[ModelResult]:
         """Get all results for a specific attribute."""
         return [r for r in self.results if r.attribute == attribute]
+
+    def get_pareto_front(self) -> List[ModelResult]:
+        """Return Pareto-optimal combinations (error, latency, cost all minimized).
+
+        Uses the same deduplication and final-layer filtering as :meth:`plot_pareto`.
+        """
+        unique = self._comparable_results()
+        if not unique:
+            return []
+        return [r for r in unique if r.is_pareto_optimal]
+
+    def _comparable_results(self) -> List[ModelResult]:
+        """Deduplicated results at the fullest evaluation depth."""
+        seen: Dict[str, ModelResult] = {}
+        for r in self.results:
+            if r.model_name not in seen or (
+                r.is_best and not seen[r.model_name].is_best
+            ):
+                seen[r.model_name] = r
+        unique = list(seen.values())
+        if not unique:
+            return []
+        if any(r.datapoint_results for r in unique):
+            max_samples = max(
+                r.num_samples for r in unique if r.datapoint_results
+            )
+            unique = [
+                r for r in unique
+                if r.datapoint_results and r.num_samples == max_samples
+            ]
+        return unique
 
     def export_config(
         self, output_path: str, api_key_env_vars: Optional[Dict[str, str]] = None,
@@ -487,8 +539,22 @@ class SelectionResults(BaseModel):
 
         lines.append(sep)
 
+        pareto_results = self.get_pareto_front() if self.objective_mode == "pareto" else []
         best_result = next((r for r in unique if r.is_best), None)
-        if best_result:
+        if self.objective_mode == "pareto" and pareto_results:
+            lines.append("")
+            lines.append(
+                f"{pad} Pareto-optimal: {len(pareto_results)} combination(s) "
+                f"(ideal: 0% error, 0s latency, $0)"
+            )
+            for r in pareto_results[:8]:
+                lines.append(
+                    f"{pad}   {r.model_name} — error {r.error:.2%}, "
+                    f"{r.latency_seconds:.2f}s, {fmt_price(r)}"
+                )
+            if len(pareto_results) > 8:
+                lines.append(f"{pad}   ... and {len(pareto_results) - 8} more")
+        elif best_result:
             lines.append(
                 f"{pad} Best: {best_result.model_name} "
                 f"(accuracy: {best_result.accuracy:.2%}, "
@@ -544,14 +610,15 @@ class SelectionResults(BaseModel):
                     break
         return mask
 
-    def plot_pareto(self, path: Optional[str] = None) -> None:
-        """Generate two pairwise Pareto frontier plots.
+    def plot_pareto(
+        self, path: Optional[str] = None, *, show_ideal: bool = True,
+    ) -> None:
+        """Generate pairwise Pareto frontier plots (error, latency, price).
 
-        Subplots: Accuracy vs Latency, Accuracy vs Price.
+        Both axes are **lower is better**. The ideal wish corner is
+        (0 error, 0s latency, $0) when ``show_ideal`` is True.
 
         Requires ``matplotlib`` (install with ``pip install agentopt-py[plot]``).
-        If *path* is given the figure is saved to that file, otherwise
-        ``plt.show()`` is called.
         """
         try:
             import matplotlib.pyplot as plt
@@ -561,114 +628,97 @@ class SelectionResults(BaseModel):
                 "Install it with: pip install agentopt-py[plot]"
             )
 
-        # Deduplicate (same logic as __str__).
-        seen: Dict[str, "ModelResult"] = {}
-        for r in self.results:
-            if r.model_name not in seen or (
-                r.is_best and not seen[r.model_name].is_best
-            ):
+        unique = self._comparable_results()
+        if not unique:
+            seen: Dict[str, ModelResult] = {}
+            for r in self.results:
                 seen[r.model_name] = r
-        all_unique = [r for r in seen.values() if r.price is not None]
+            unique = list(seen.values())
 
-        # For bandit algorithms, only plot the final layer (combos with the
-        # most datapoints) so all plotted combos are directly comparable.
-        if all_unique:
-            max_samples = max(r.num_samples for r in all_unique)
-            unique = [r for r in all_unique if r.num_samples == max_samples]
-        else:
-            unique = all_unique
+        # Prefer combos with price for the cost panel; keep all for error/latency.
+        with_price = [r for r in unique if r.price is not None]
+        plot_set = with_price if len(with_price) >= 2 else unique
 
-        # Sort so numbering matches the final results table rank order.
-        unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+        plot_set = list(plot_set)
+        plot_set.sort(key=lambda r: (r.error, r.latency_seconds))
 
-        if len(unique) < 2:
-            print("Not enough results with pricing data to plot.")
+        if len(plot_set) < 2:
+            print("Not enough comparable results to plot (need at least 2).")
             return
 
-        names = [r.model_name for r in unique]
-        accs = [r.accuracy for r in unique]
-        lats = [r.latency_seconds for r in unique]
-        prices = [r.price for r in unique]  # type: ignore[misc]
-        is_best = [r.is_best for r in unique]
+        names = [r.model_name for r in plot_set]
+        errors = [r.error for r in plot_set]
+        lats = [r.latency_seconds for r in plot_set]
+        prices = [r.price for r in plot_set]
+        has_price = [p is not None for p in prices]
+        is_pareto = [r.is_pareto_optimal for r in plot_set]
+        is_best = [r.is_best for r in plot_set]
 
-        # Build numbered labels: (1), (2), ...
-        num_labels = [f"({i})" for i in range(1, len(unique) + 1)]
+        num_labels = [f"({i})" for i in range(1, len(plot_set) + 1)]
 
-        pairs = [
-            (lats, accs, "Latency (s)", "Accuracy", True, False),
-            (prices, accs, "Price ($)", "Accuracy", True, False),
+        pairs: List[Tuple[List[float], List[float], str, str]] = [
+            (lats, errors, "Latency (s)", "Error"),
         ]
+        if any(has_price):
+            px = [p for p, ok in zip(prices, has_price) if ok]  # type: ignore[misc]
+            ey = [e for e, ok in zip(errors, has_price) if ok]
+            if len(px) >= 2:
+                pairs.append((px, ey, "Price ($)", "Error"))
 
-        fig = plt.figure(figsize=(14, 5))
-        # Reserve right margin for the legend.
-        gs = fig.add_gridspec(1, 2, left=0.06, right=0.68, wspace=0.3)
-        axes = [fig.add_subplot(gs[0, i]) for i in range(2)]
-        fig.suptitle("Pareto Frontiers", fontsize=14, fontweight="bold")
+        fig = plt.figure(figsize=(7 * len(pairs), 5))
+        gs = fig.add_gridspec(1, len(pairs), left=0.06, right=0.68, wspace=0.3)
+        axes = [fig.add_subplot(gs[0, i]) for i in range(len(pairs))]
+        title = "Pareto Frontiers (lower is better)"
+        if self.objective_mode == "weighted":
+            title += " — weighted run"
+        fig.suptitle(title, fontsize=14, fontweight="bold")
 
-        for ax, (xs, ys, xlabel, ylabel, x_min, y_min) in zip(axes, pairs):
-            mask = self._pareto_mask(xs, ys, x_min, y_min)
+        for ax, (xs, ys, xlabel, ylabel) in zip(axes, pairs):
+            mask = self._pareto_mask(xs, ys, True, True)
 
-            # Non-Pareto points.
             np_x = [x for x, m in zip(xs, mask) if not m]
             np_y = [y for y, m in zip(ys, mask) if not m]
             ax.scatter(
-                np_x,
-                np_y,
-                c="lightgray",
-                edgecolors="gray",
-                s=60,
-                zorder=2,
-                label="Dominated",
+                np_x, np_y, c="lightgray", edgecolors="gray", s=60,
+                zorder=2, label="Dominated",
             )
 
-            # Pareto-optimal points.
             p_x = [x for x, m in zip(xs, mask) if m]
             p_y = [y for y, m in zip(ys, mask) if m]
             ax.scatter(
-                p_x,
-                p_y,
-                c="steelblue",
-                edgecolors="navy",
-                s=80,
-                zorder=3,
-                label="Pareto-optimal",
+                p_x, p_y, c="steelblue", edgecolors="navy", s=80,
+                zorder=3, label="Pareto-optimal",
             )
 
-            # Connect frontier with a line (sorted by x).
             if p_x:
                 order = sorted(range(len(p_x)), key=lambda i: p_x[i])
                 ax.plot(
-                    [p_x[i] for i in order],
-                    [p_y[i] for i in order],
-                    c="steelblue",
-                    linewidth=1.5,
-                    alpha=0.6,
-                    zorder=2,
+                    [p_x[i] for i in order], [p_y[i] for i in order],
+                    c="steelblue", linewidth=1.5, alpha=0.6, zorder=2,
                 )
 
-            # Highlight best combo.
-            for x, y, b in zip(xs, ys, is_best):
+            if show_ideal:
+                ax.scatter(
+                    [0.0], [0.0], c="none", edgecolors="green", s=120,
+                    linewidths=2, marker="o", zorder=1, label="Ideal (0, 0)",
+                )
+
+            for x, y, b, po in zip(xs, ys, is_best, is_pareto):
                 if b:
                     ax.scatter(
-                        [x],
-                        [y],
-                        c="gold",
-                        edgecolors="darkorange",
-                        s=140,
-                        zorder=4,
-                        marker="*",
-                        label="Best",
+                        [x], [y], c="gold", edgecolors="darkorange", s=140,
+                        zorder=5, marker="*", label="Best (weighted)",
+                    )
+                elif po and self.objective_mode == "pareto":
+                    ax.scatter(
+                        [x], [y], facecolors="none", edgecolors="darkorange",
+                        s=120, zorder=4, linewidths=1.5, label="Frontier",
                     )
 
-            # Number labels on points.
             for x, y, lbl in zip(xs, ys, num_labels):
                 ax.annotate(
-                    lbl,
-                    (x, y),
-                    textcoords="offset points",
-                    xytext=(5, 5),
-                    fontsize=7,
-                    fontweight="bold",
+                    lbl, (x, y), textcoords="offset points", xytext=(5, 5),
+                    fontsize=7, fontweight="bold",
                 )
 
             ax.set_xlabel(xlabel)
@@ -718,6 +768,7 @@ class BaseModelSelector(ABC):
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
         tracker: Optional[LLMTracker] = None,
+        objective_mode: Optional[ObjectiveMode] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
     ) -> None:
@@ -744,20 +795,23 @@ class BaseModelSelector(ABC):
                 ``{"planner": "Decomposes queries into sub-tasks"}``.
             tracker: Optional :class:`LLMTracker` instance. If not provided,
                 one is created and started automatically.
-            lambda_cost: Weight on normalized per-sample cost in the combined
-                objective ``score - lambda_cost*norm_cost - lambda_latency*norm_latency``.
-                Cost is normalized adaptively against the running min/max of all
-                samples observed during this selector's lifetime. Default 0.0
-                (pure accuracy, backwards compatible).
-            lambda_latency: Weight on normalized per-sample latency in the
-                combined objective. Default 0.0.
+            objective_mode: Required. ``"weighted"`` — pass ``lambda_cost``
+                and/or ``lambda_latency`` > 0 for a single recommended combo.
+                ``"pareto"`` — omit lambdas; explore the error/latency/cost
+                frontier (Chebyshev-driven matrix UCB; full eval otherwise).
+            lambda_cost: Weight on normalized per-sample cost (weighted mode only).
+            lambda_latency: Weight on normalized per-sample latency (weighted mode only).
         """
         if agent is None:
             raise TypeError("'agent' is required")
         if models is None or eval_fn is None or dataset is None:
             raise TypeError("'models', 'eval_fn', and 'dataset' are required")
-        if float(lambda_cost) < 0 or float(lambda_latency) < 0:
-            raise ValueError("lambda_cost and lambda_latency must be non-negative")
+
+        self.objective_mode = validate_objective_config(
+            objective_mode, lambda_cost, lambda_latency,
+        )
+        self.lambda_cost = float(lambda_cost)
+        self.lambda_latency = float(lambda_latency)
 
         validate_dataset(dataset)
 
@@ -777,14 +831,15 @@ class BaseModelSelector(ABC):
         self._node_names = list(models.keys())
         self.model_prices = model_prices
         self.node_descriptions = node_descriptions
-        self.lambda_cost = float(lambda_cost)
-        self.lambda_latency = float(lambda_latency)
 
-        # Running min/max for adaptive [0,1] normalization of cost/latency.
+        # Running min/max for adaptive [0,1] normalization of cost/latency/gaps.
         self._cost_min: float = float("inf")
         self._cost_max: float = float("-inf")
         self._latency_min: float = float("inf")
         self._latency_max: float = float("-inf")
+        self._error_min: float = float("inf")
+        self._error_max: float = float("-inf")
+        self._chebyshev_step: int = 0
 
         # Detect whether agent.run() is async
         run_method = getattr(agent, "run", None)
@@ -997,8 +1052,17 @@ class BaseModelSelector(ABC):
 
     @property
     def _has_combined_objective(self) -> bool:
-        """True when at least one of the cost/latency lambdas is nonzero."""
-        return self.lambda_cost > 0.0 or self.lambda_latency > 0.0
+        """True in weighted mode with cost/latency lambdas configured."""
+        return self.objective_mode == "weighted"
+
+    @property
+    def _pareto_exploration(self) -> bool:
+        return self.objective_mode == "pareto"
+
+    @property
+    def _uses_matrix_scalar_refresh(self) -> bool:
+        """Matrix UCB cells need recomputation when the normalizer moves."""
+        return self._has_combined_objective or self._pareto_exploration
 
     def _per_sample_costs(self, dp_ids: List[str]) -> List[Optional[float]]:
         """Look up per-datapoint cost from tracked tokens; ``None`` if unpriced."""
@@ -1013,11 +1077,48 @@ class BaseModelSelector(ABC):
             )
         return costs
 
+    def _absorb_pareto_gaps(
+        self, scores: List[float], latencies: List[float], costs: List[Optional[float]],
+    ) -> None:
+        """Update running min/max for error, latency, and cost gaps (Pareto mode)."""
+        if not self._pareto_exploration:
+            return
+        for sc in scores:
+            err = score_to_error(sc)
+            if err < self._error_min:
+                self._error_min = err
+            if err > self._error_max:
+                self._error_max = err
+        self._absorb_observations(latencies, costs)
+
+    def _normalized_pareto_gaps(
+        self, score: float, latency: float, cost: Optional[float],
+    ) -> Tuple[float, float, float]:
+        """Min-max normalized (error, latency, cost) gaps in [0, 1] (ideal = 0)."""
+        err = score_to_error(score)
+        ne = self._minmax_norm(err, self._error_min, self._error_max)
+        nl = self._minmax_norm(latency, self._latency_min, self._latency_max)
+        nc = self._minmax_norm(cost, self._cost_min, self._cost_max)
+        return ne, nl, nc
+
+    def _chebyshev_cell_scalar(
+        self, score: float, latency: float, cost: Optional[float],
+        weights: Optional[Tuple[float, float, float]] = None,
+    ) -> float:
+        """Chebyshev achievement scalar for one cell (lower is better)."""
+        w = weights if weights is not None else chebyshev_weight_at(self._chebyshev_step)
+        ne, nl, nc = self._normalized_pareto_gaps(score, latency, cost)
+        use_cost = cost is not None and math.isfinite(cost)
+        return chebyshev_scalar(ne, nl, nc, w, use_cost=use_cost)
+
+    def _advance_chebyshev_direction(self) -> None:
+        self._chebyshev_step += 1
+
     def _absorb_observations(
         self, latencies: List[float], costs: List[Optional[float]],
     ) -> None:
         """Update the running min/max with new samples."""
-        if not self._has_combined_objective:
+        if not self._has_combined_objective and not self._pareto_exploration:
             return
         for lat in latencies:
             if lat is None or not math.isfinite(lat):
@@ -1097,7 +1198,10 @@ class BaseModelSelector(ABC):
         recomputation when the normalizer changes.
         """
         costs = self._per_sample_costs(dp_ids)
-        self._absorb_observations(latencies, costs)
+        if self._pareto_exploration:
+            self._absorb_pareto_gaps(scores, latencies, costs)
+        else:
+            self._absorb_observations(latencies, costs)
         return costs
 
     def _recover_costs(self, result: ModelResult) -> List[Optional[float]]:
@@ -1142,6 +1246,50 @@ class BaseModelSelector(ABC):
         for r, scores, lats, costs in cached:
             r.combined_objective = self._mean_objective(scores, lats, costs)
 
+    def _mark_pareto_optimal(self, results: List[ModelResult]) -> None:
+        """Set ``is_pareto_optimal`` on results at the fullest evaluation depth."""
+        for r in results:
+            r.is_pareto_optimal = False
+        candidates = [
+            r for r in results
+            if r.datapoint_results and r.accuracy >= 0.0
+        ]
+        if not candidates:
+            return
+        max_samples = max(r.num_samples for r in candidates)
+        layer = [r for r in candidates if r.num_samples == max_samples]
+        errors = [r.error for r in layer]
+        lats = [r.latency_seconds for r in layer]
+        costs: List[Optional[float]] = [r.price for r in layer]
+        mask = pareto_mask_3d(errors, lats, costs)
+        names = {layer[i].model_name for i, m in enumerate(mask) if m}
+        for r in results:
+            if r.model_name in names and r.num_samples == max_samples:
+                r.is_pareto_optimal = True
+
+    def _finalize_selection_outcomes(
+        self, results: List[ModelResult],
+    ) -> SelectionResults:
+        """Apply weighted best pick or Pareto marking; wrap :class:`SelectionResults`."""
+        self._finalize_combined_objectives(results)
+        if self.objective_mode == "pareto":
+            self._mark_pareto_optimal(results)
+            return SelectionResults(
+                results=results, objective_mode="pareto",
+            )
+        best_info = self._find_best(results)
+        if best_info is not None:
+            best_name, _ = best_info
+            for r in results:
+                if r.model_name == best_name:
+                    r.is_best = True
+                    break
+        else:
+            print("\n  No combinations succeeded.")
+        return SelectionResults(
+            results=results, objective_mode="weighted",
+        )
+
     # ------------------------------------------------------------------
     # Result helpers
     # ------------------------------------------------------------------
@@ -1180,9 +1328,15 @@ class BaseModelSelector(ABC):
         )
         if costs is None:
             costs = self._observe_combo(scores, latencies, dp_ids)
+        elif self._pareto_exploration:
+            self._absorb_pareto_gaps(scores, latencies, costs)
         else:
             self._absorb_observations(latencies, costs)
-        combined = self._mean_objective(scores, latencies, costs)
+        combined = (
+            self._mean_objective(scores, latencies, costs)
+            if self._has_combined_objective
+            else None
+        )
         return self._make_result(
             model_name=combo_name,
             accuracy=accuracy,
@@ -1359,6 +1513,8 @@ class BaseModelSelector(ABC):
         result.selection_cost = compute_price(
             input_tokens, output_tokens, custom_prices=self._custom_prices,
         )
+        if result.objective_mode is None:
+            result.objective_mode = self.objective_mode
 
         return result
 

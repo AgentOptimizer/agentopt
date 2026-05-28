@@ -31,6 +31,7 @@ class HillClimbingModelSelector(BaseModelSelector):
         batch_size: int = 1,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        objective_mode: Optional[str] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
     ) -> None:
@@ -41,6 +42,7 @@ class HillClimbingModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            objective_mode=objective_mode,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
         )
@@ -255,33 +257,14 @@ class HillClimbingModelSelector(BaseModelSelector):
         global_best_combo: Optional[Dict[str, ModelCandidate]],
         global_best_value: float,
     ) -> SelectionResults:
-        """Finalize combined objectives, mark the best result, return results."""
-        self._finalize_combined_objectives(all_results)
+        """Finalize weighted best or Pareto frontier marking."""
+        del global_best_value
         if global_best_combo is None:
             print("\nNo combinations succeeded\n")
-            return SelectionResults(results=all_results)
-
-        # Prefer the combined-objective-aware _find_best when lambdas are set;
-        # otherwise honor the within-search global best to preserve the
-        # original tie-breaking semantics.
-        if self._has_combined_objective:
-            best_info = self._find_best(all_results)
-            best_name = best_info[0] if best_info else self._combo_name(global_best_combo)
-        else:
-            best_name = self._combo_name(global_best_combo)
-
-        tol = 1e-9
-        for result in all_results:
-            if result.model_name != best_name:
-                continue
-            if self._has_combined_objective:
-                result.is_best = True
-                break
-            # Accuracy-mode: match by name AND the tracked best value.
-            if abs(result.accuracy - global_best_value) < tol:
-                result.is_best = True
-                break
-        return SelectionResults(results=all_results)
+            return SelectionResults(
+                results=all_results, objective_mode=self.objective_mode,
+            )
+        return self._finalize_selection_outcomes(all_results)
 
     # ------------------------------------------------------------------
     # Single restart (sequential)

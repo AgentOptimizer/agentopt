@@ -48,6 +48,7 @@ class LMProposalModelSelector(BaseModelSelector):
         dataset_preview_size: int = 10,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
+        objective_mode: Optional[str] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
     ) -> None:
@@ -58,6 +59,7 @@ class LMProposalModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             node_descriptions=node_descriptions,
+            objective_mode=objective_mode,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
         )
@@ -131,9 +133,7 @@ class LMProposalModelSelector(BaseModelSelector):
                 is_best=True,
             )
 
-        results = [result]
-        self._finalize_combined_objectives(results)
-        return SelectionResults(results=results)
+        return self._finalize_selection_outcomes([result])
 
     # ------------------------------------------------------------------
     # Prompt construction

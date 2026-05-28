@@ -45,16 +45,19 @@ def _eval_fn(expected, actual):
     return 1.0 if str(expected).lower() in str(actual).lower() else 0.0
 
 
-def _selector(lambda_cost: float = 0.0, lambda_latency: float = 0.0):
-    """Build a BruteForceModelSelector with stub agent/eval/dataset.
-
-    Used to access the BaseModelSelector helper methods under test.
-    """
+def _selector(
+    lambda_cost: float = 0.0,
+    lambda_latency: float = 0.1,
+    *,
+    objective_mode: str = "weighted",
+):
+    """Build a BruteForceModelSelector with stub agent/eval/dataset."""
     return BruteForceModelSelector(
         agent=_NoopAgent,
         models={"node": ["m"]},
         eval_fn=_eval_fn,
         dataset=[("x", "ok")],
+        objective_mode=objective_mode,
         lambda_cost=lambda_cost,
         lambda_latency=lambda_latency,
     )
@@ -106,27 +109,27 @@ class TestMinMaxNorm:
         assert BruteForceModelSelector._minmax_norm(2.0, 1.0, 5.0) == pytest.approx(0.25)
 
 
-class TestCombinedObjectiveZeroLambdas:
-    """When both lambdas are zero, behaviour must match raw accuracy."""
+class TestCombinedObjectiveParetoVsWeighted:
+    """Pareto mode skips linear scalar; weighted mode uses lambdas."""
 
-    def test_returns_score_unchanged(self):
-        sel = _selector(0.0, 0.0)
+    def test_pareto_returns_score_from_combined_helper(self):
+        sel = _selector(0.0, 0.0, objective_mode="pareto")
         assert sel._combined_objective(0.42, 100.0, 5.0) == 0.42
 
-    def test_has_combined_objective_false(self):
-        assert _selector(0.0, 0.0)._has_combined_objective is False
-        assert _selector(0.0, 0.1)._has_combined_objective is True
-        assert _selector(0.1, 0.0)._has_combined_objective is True
+    def test_has_combined_objective_by_mode(self):
+        assert _selector(0.0, 0.0, objective_mode="pareto")._has_combined_objective is False
+        assert _selector(0.0, 0.1, objective_mode="weighted")._has_combined_objective is True
+        assert _selector(0.1, 0.0, objective_mode="weighted")._has_combined_objective is True
 
-    def test_compute_objectives_returns_score_copy(self):
-        sel = _selector(0.0, 0.0)
+    def test_pareto_compute_objectives_returns_score_copy(self):
+        sel = _selector(0.0, 0.0, objective_mode="pareto")
         scores = [1.0, 0.0]
         out = sel._compute_objectives(scores, [10.0, 1.0], [0.5, 0.01])
         assert out == scores
-        assert out is not scores  # defensive copy
+        assert out is not scores
 
-    def test_mean_objective_none_without_lambdas(self):
-        sel = _selector(0.0, 0.0)
+    def test_pareto_mean_objective_none(self):
+        sel = _selector(0.0, 0.0, objective_mode="pareto")
         assert sel._mean_objective([1.0, 0.0], [1.0, 1.0], [0.0, 0.0]) is None
 
 
@@ -139,12 +142,11 @@ class TestAbsorbObservations:
         assert sel._cost_min == 0.001
         assert sel._cost_max == 0.005
 
-    def test_noop_when_no_lambdas(self):
-        sel = _selector(0.0, 0.0)
+    def test_noop_in_pareto_absorb_observations_only(self):
+        sel = _selector(0.0, 0.0, objective_mode="pareto")
         sel._absorb_observations([1.0, 5.0], [0.001, 0.005])
-        # Sentinel unchanged.
-        assert sel._latency_min == float("inf")
-        assert sel._cost_max == float("-inf")
+        assert sel._latency_min == 1.0
+        assert sel._latency_max == 5.0
 
     def test_skips_none_cost(self):
         sel = _selector(lambda_cost=0.1)
@@ -219,8 +221,8 @@ class TestFindBest:
 
 
 class TestFinalizeCombinedObjectives:
-    def test_noop_when_no_lambdas(self):
-        sel = _selector(0.0, 0.0)
+    def test_noop_when_pareto_mode(self):
+        sel = _selector(0.0, 0.0, objective_mode="pareto")
         r = _result("a", 1.0, 1.0, [_dp(0, 1.0, 1.0)])
         sel._finalize_combined_objectives([r])
         assert r.combined_objective is None
@@ -272,19 +274,18 @@ class _LatencyTunedAgent:
 
 
 class TestBruteForceLatencyWeighting:
-    def test_zero_lambdas_preserves_accuracy_pick(self):
+    def test_pareto_mode_marks_frontier_not_single_best(self):
         sel = BruteForceModelSelector(
             agent=_LatencyTunedAgent,
             models={"node": ["fast", "slow"]},
             eval_fn=_eval_fn,
             dataset=[("?", "correct"), ("?", "correct")],
+            objective_mode="pareto",
         )
         results = sel.select_best(parallel=False)
-        best = results.get_best()
-        # Both are equally accurate; latency tiebreak picks 'fast'.
-        assert best is not None
-        assert best.model_name == "node=fast"
-        # combined_objective stays unset when no lambdas configured.
+        assert results.objective_mode == "pareto"
+        assert results.get_best() is None
+        assert len(results.get_pareto_front()) >= 1
         assert all(r.combined_objective is None for r in results.results)
 
     def test_lambda_latency_picks_fast_when_accuracy_tied(self):
@@ -293,6 +294,7 @@ class TestBruteForceLatencyWeighting:
             models={"node": ["fast", "slow"]},
             eval_fn=_eval_fn,
             dataset=[("?", "correct"), ("?", "correct")],
+            objective_mode="weighted",
             lambda_latency=0.5,
         )
         results = sel.select_best(parallel=False)

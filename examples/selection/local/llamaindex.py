@@ -103,6 +103,7 @@ if __name__ == "__main__":
         eval_fn=eval_fn,
         dataset=dataset,
         method="brute_force",  # or "auto" for smarter selection algorithms
+        objective_mode="pareto",
     )
 
     results = selector.select_best(parallel=True)

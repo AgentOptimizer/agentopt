@@ -29,6 +29,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
         confidence: float = 1.0,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        objective_mode: Optional[str] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
     ) -> None:
@@ -39,6 +40,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            objective_mode=objective_mode,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
         )
@@ -152,7 +154,9 @@ class ArmEliminationModelSelector(BaseModelSelector):
         all_results = self._build_results(
             all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
         )
-        return SelectionResults(results=all_results)
+        return SelectionResults(
+            results=all_results, objective_mode=self.objective_mode,
+        )
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
@@ -274,7 +278,9 @@ class ArmEliminationModelSelector(BaseModelSelector):
         all_results = self._build_results(
             all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
         )
-        return SelectionResults(results=all_results)
+        return SelectionResults(
+            results=all_results, objective_mode=self.objective_mode,
+        )
 
     # ------------------------------------------------------------------
     # Statistical helpers
@@ -341,13 +347,16 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 )
 
         self._finalize_combined_objectives(all_results)
-        best_info = self._find_best(all_results)
-        if best_info is not None:
-            best_name, _ = best_info
-            for result in all_results:
-                if result.model_name == best_name:
-                    result.is_best = True
-                    break
+        if self.objective_mode == "pareto":
+            self._mark_pareto_optimal(all_results)
         else:
-            print("\n  No combinations succeeded.")
+            best_info = self._find_best(all_results)
+            if best_info is not None:
+                best_name, _ = best_info
+                for result in all_results:
+                    if result.model_name == best_name:
+                        result.is_best = True
+                        break
+            else:
+                print("\n  No combinations succeeded.")
         return all_results

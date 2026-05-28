@@ -25,6 +25,7 @@ class BruteForceModelSelector(BaseModelSelector):
         dataset: Dataset = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        objective_mode: Optional[str] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
     ) -> None:
@@ -35,6 +36,7 @@ class BruteForceModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            objective_mode=objective_mode,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
         )
@@ -83,19 +85,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     )
                 )
 
-        self._finalize_combined_objectives(all_results)
-        best_info = self._find_best(all_results)
-        if best_info is not None:
-            best_name, _ = best_info
-            for result in all_results:
-                if result.model_name == best_name:
-                    result.is_best = True
-                    break
-        else:
-            print("\n  No combinations succeeded")
-
-        results = SelectionResults(results=all_results)
-        return results
+        return self._finalize_selection_outcomes(all_results)
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
@@ -151,16 +141,4 @@ class BruteForceModelSelector(BaseModelSelector):
                 _, result = res
                 all_results.append(result)
 
-        self._finalize_combined_objectives(all_results)
-        best_info = self._find_best(all_results)
-        if best_info is not None:
-            best_name, _ = best_info
-            for r in all_results:
-                if r.model_name == best_name:
-                    r.is_best = True
-                    break
-        else:
-            print("\n  No combinations succeeded")
-
-        results = SelectionResults(results=all_results)
-        return results
+        return self._finalize_selection_outcomes(all_results)

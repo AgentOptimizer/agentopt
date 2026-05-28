@@ -9,6 +9,7 @@ from .lm_proposal import LMProposalModelSelector
 from .random_search import RandomSearchModelSelector
 from .threshold_successive_elimination import ThresholdBanditSEModelSelector
 from .matrix_ucb import MatrixUCBLRFModelSelector, MatrixUCBModelSelector
+from .objectives import ObjectiveMode
 
 # Bayesian is optional (requires torch/botorch)
 try:
@@ -31,4 +32,5 @@ __all__ = [
     "DatapointResult",
     "ModelResult",
     "SelectionResults",
+    "ObjectiveMode",
 ]

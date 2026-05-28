@@ -20,6 +20,7 @@ Usage::
         eval_fn=my_eval_fn,
         dataset=my_dataset,
         method="brute_force",
+        objective_mode="pareto",
     )
     results = selector.select_best(parallel=False)
 

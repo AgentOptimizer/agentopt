@@ -11,6 +11,8 @@ selector = ModelSelector(
     eval_fn=lambda expected, actual: float(actual == expected),
     dataset=[(inp, expected), ...],
     method="auto",                # arm_elimination — strong + cheap
+    objective_mode="weighted",
+    lambda_latency=0.2,
 )
 results = selector.select_best(parallel=True, max_concurrent=20)
 results.print_summary()
@@ -24,9 +26,10 @@ results.print_summary()
 | `models` | `Dict[str, List]` | Maps node names to candidate model lists (e.g. `{"planner": ["gpt-4o", "gpt-4o-mini"]}`). |
 | `eval_fn` | `Callable` | `(expected, actual) -> float` score (higher is better). |
 | `dataset` | `Sequence[Tuple]` | `[(input_data, expected_answer), ...]`. |
+| `objective_mode` | `str`, **required** | `"weighted"` — one recommended combo via `lambda_cost` / `lambda_latency`. `"pareto"` — empirical frontier (error, latency, cost); matrix UCB uses Chebyshev exploration internally. |
 | `model_prices` | `Dict`, optional | Custom pricing overrides: `{"model": {"input_price": x, "output_price": y}}` in $/MTok. Required for cost terms when `lambda_cost > 0`. |
-| `lambda_cost` | `float`, optional | Weight on **normalized** per-sample cost in the combined objective. Default `0.0` (disabled). See [Combined objective](#combined-objective-optional-costlatency-weights) below. |
-| `lambda_latency` | `float`, optional | Weight on **normalized** per-sample latency in the combined objective. Default `0.0` (disabled). |
+| `lambda_cost` | `float` | Weight on **normalized** per-sample cost (**weighted** mode only). |
+| `lambda_latency` | `float` | Weight on **normalized** per-sample latency (**weighted** mode only). |
 | `node_descriptions` | `Dict[str, str]`, optional | Human-readable descriptions per node — surfaced in `LMProposalModelSelector`. |
 | `tracker` | `LLMTracker`, optional | Bring your own. Defaults to a fresh `LLMTracker()` started in the constructor. Pass one in to share a cache across runs, route via a daemon (`AGENTOPT_GATEWAY_URL`), or post-process records after `select_best()` returns. |
 
@@ -41,67 +44,55 @@ print(tracker.get_usage())          # tracker.stop() already called; records sti
 
 See [tracker.md](tracker.md) for the full tracker surface.
 
-## Combined objective (optional cost/latency weights)
+## Objective mode (required)
 
-By default, selectors optimize **`eval_fn` score only** (typically accuracy) and break ties with latency, then price. To trade accuracy against cost and latency in one scalar reward, pass optional weights on the constructor (or via `ModelSelector(..., **kwargs)`):
+You must set `objective_mode` on every selector.
 
-| Parameter | Default | Effect |
-|:---|:---|:---|
-| `lambda_cost` | `0.0` | Penalizes normalized per-sample **token cost** (USD from the tracker, or `model_prices`). |
-| `lambda_latency` | `0.0` | Penalizes normalized per-sample **wall-clock latency** (seconds). |
+### `objective_mode="weighted"`
 
-Omit both parameters (or leave them at `0.0`) for the original accuracy-centric behavior. Set one or both when you want multi-metric selection.
-
-### Formula
-
-For each datapoint, after observations are recorded:
+Pass at least one of `lambda_cost > 0` or `lambda_latency > 0`. The library returns a single **`is_best`** combo using a linear scalar (accuracy minus weighted normalized cost/latency):
 
 ```
-combined = score
-         - lambda_cost    * norm(cost)
-         - lambda_latency * norm(latency)
+combined = score - lambda_cost * norm(cost) - lambda_latency * norm(latency)
 ```
-
-- **`score`** — return value of `eval_fn` (higher is better).
-- **`norm(·)`** — min–max scale to `[0, 1]` using running min/max over **all** samples seen during that selector run (updated as more combos are evaluated).
-- **Per combination** — mean of per-datapoint combined values → `ModelResult.combined_objective` (see [results.md](results.md)).
-
-This is a **linear scalarization**, not Pareto exploration. Larger `lambda_*` penalize cost/latency more strongly relative to score.
-
-### Example
 
 ```python
 selector = ModelSelector(
-    agent=MyAgent,
-    models=models,
-    eval_fn=eval_fn,
-    dataset=dataset,
-    method="matrix_ucb",
-    lambda_cost=0.3,      # optional — omit for accuracy-only
+    ...,
+    objective_mode="weighted",
+    lambda_cost=0.3,
     lambda_latency=0.2,
-    model_prices={        # recommended when lambda_cost > 0
-        "gpt-4o": {"input_price": 2.5, "output_price": 10.0},
-        "gpt-4o-mini": {"input_price": 0.15, "output_price": 0.6},
-    },
+    model_prices={...},
 )
-results = selector.select_best(parallel=True)
-results.print_summary()   # ranks by combined_objective when lambdas are set
+results = selector.select_best()
+best = results.get_best()
 ```
 
-### How each method uses the weights
+### `objective_mode="pareto"`
 
-| Methods | During search | Final `is_best` |
+Do **not** pass `lambda_cost` or `lambda_latency`. The library minimizes **error** (`1 - score`), **latency**, and **cost** (when priced), marks nondominated combos, and exposes `results.get_pareto_front()` and `results.plot_pareto()` (error on the y-axis; ideal corner at 0).
+
+```python
+selector = ModelSelector(
+    ...,
+    method="matrix_ucb",
+    objective_mode="pareto",
+)
+results = selector.select_best()
+results.get_pareto_front()
+results.plot_pareto()
+```
+
+For `matrix_ucb` / `matrix_ucb_lrf`, exploration uses **Chebyshev scalarization** over normalized gaps (ideal = 0 error, 0s, $0); tradeoff directions rotate automatically — no extra knobs.
+
+| Methods | Weighted search | Pareto search |
 |:---|:---|:---|
-| `matrix_ucb`, `matrix_ucb_lrf` | UCB rewards use per-cell combined objective | `_find_best` on `combined_objective` |
-| `arm_elimination`, `epsilon_lucb`, `threshold` | Elimination / LUCB stats on combined per-sample objectives | same |
-| `hill_climbing`, `bayesian` | Move / surrogate target uses combined objective | same |
-| `brute_force`, `random` | Does not steer *which* combos to try | same |
-| `lm_proposal` | Proposer uses `objective=` **text**, not these lambdas | `combined_objective` on the one evaluated combo only |
-
-After `select_best()`, a final pass recomputes every result’s `combined_objective` against the **full-run** normalizer so rankings are comparable.
+| `matrix_ucb`, `matrix_ucb_lrf` | Per-cell linear combined objective | Chebyshev cell reward |
+| Other bandits | Combined per-sample stats where applicable | Full eval → frontier marking |
+| `brute_force`, `random` | Final rank only | Final frontier only |
 
 !!! note "`lm_proposal` vs lambdas"
-    `LMProposalModelSelector(objective="...")` is a natural-language hint to the **proposer LLM**. It is separate from `lambda_cost` / `lambda_latency`, which only affect the scalar reward used for ranking and bandit methods.
+    `LMProposalModelSelector(objective="...")` is a natural-language hint to the **proposer LLM**. It is separate from `objective_mode` and `lambda_*`.
 
 ## `select_best()`
 

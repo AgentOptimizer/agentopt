@@ -135,11 +135,10 @@ def ModelSelector(
             ``"epsilon_lucb"``, ``"matrix_ucb"``, ``"matrix_ucb_lrf"``,
             ``"threshold"``,
             ``"lm_proposal"``, ``"bayesian"``.
-        **kwargs: Additional arguments passed to the selector
-            (e.g. ``epsilon``, ``threshold``, ``sample_fraction``, ``warmup_fraction``
-            for matrix UCB-LRF; ``lambda_cost``, ``lambda_latency`` for the optional
-            combined objective ``score - lambda_cost*norm_cost -
-            lambda_latency*norm_latency`` — both default to ``0.0`` / accuracy-only).
+        **kwargs: Additional arguments passed to the selector. Required:
+            ``objective_mode`` — ``"weighted"`` (pass ``lambda_cost`` and/or
+            ``lambda_latency`` > 0) or ``"pareto"`` (frontier; Chebyshev matrix UCB).
+            Other options: ``epsilon``, ``threshold``, ``sample_fraction``, etc.
 
     Returns:
         A selector instance. Call ``.select_best()`` to run.

@@ -69,7 +69,7 @@ results.export_config("artifacts/best_config.yaml")
 print("best:", results.get_best_combo(), "cost:", results.selection_cost)
 ```
 
-A working fuller version lives at `examples/custom_agent_example.py`.
+A working fuller version lives at `examples/selection/local/custom_agent.py`.
 
 ---
 

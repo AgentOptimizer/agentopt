@@ -10,6 +10,7 @@ import random
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..base_models import Dataset, EvalFn, ModelCandidate
+from ..model_price import compute_price
 from ..model_topology import get_faster_neighbor, get_higher_quality_neighbor
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 
@@ -30,6 +31,8 @@ class HillClimbingModelSelector(BaseModelSelector):
         batch_size: int = 1,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -38,6 +41,8 @@ class HillClimbingModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         self.max_iterations = max_iterations
         self.num_restarts = num_restarts
@@ -55,6 +60,27 @@ class HillClimbingModelSelector(BaseModelSelector):
             str,
             Tuple[float, float, Dict[str, int], Dict[str, int], List[DatapointResult]],
         ] = {}
+
+    def _objective_from_dp(self, dp_results: List[DatapointResult]) -> Optional[float]:
+        """Recompute the mean combined objective from cached datapoint results."""
+        if not self._has_combined_objective or not dp_results:
+            return None
+        scores = [dp.score for dp in dp_results]
+        lats = [dp.latency_seconds for dp in dp_results]
+        costs = [
+            compute_price(
+                dp.input_tokens, dp.output_tokens, custom_prices=self._custom_prices,
+            )
+            for dp in dp_results
+        ]
+        return self._mean_objective(scores, lats, costs)
+
+    def _primary_value(
+        self, accuracy: float, dp_results: List[DatapointResult],
+    ) -> float:
+        """Ranking key for tiebreaks: combined objective if configured, else accuracy."""
+        obj = self._objective_from_dp(dp_results)
+        return obj if obj is not None else accuracy
 
     # ------------------------------------------------------------------
     # Shared helpers
@@ -78,7 +104,8 @@ class HillClimbingModelSelector(BaseModelSelector):
     ) -> Tuple[
         str, float, float, Dict[str, int], Dict[str, int], List[DatapointResult], bool
     ]:
-        """Compute stats, cache, and return the standard eval tuple."""
+        """Compute stats, absorb cost samples, cache, and return the eval tuple."""
+        self._observe_combo(scores, latencies, dp_ids)
         input_tokens, output_tokens = self._fetch_tokens(combo_name)
         accuracy, _ = self._compute_stats(scores)
         latency = sum(latencies) / len(latencies) if latencies else 0.0
@@ -189,28 +216,33 @@ class HillClimbingModelSelector(BaseModelSelector):
         eval_results: List[Tuple],
         neighbors: List[Dict[str, ModelCandidate]],
         seen: Set[str],
-        current_accuracy: float,
+        current_value: float,
         current_latency: float,
         tol: float,
     ) -> Optional[Dict[str, ModelCandidate]]:
-        """Select the best neighbor from eval results, or None if none improves."""
+        """Select the best neighbor from eval results, or None if none improves.
+
+        Ranks by primary value (combined objective when ``lambda_*`` are set,
+        else accuracy), with latency as the tiebreaker.
+        """
         best_neighbor: Optional[Dict[str, ModelCandidate]] = None
-        best_n_acc = float("-inf")
+        best_n_val = float("-inf")
         best_n_lat = float("inf")
 
         for neighbor, eval_result in zip(neighbors, eval_results):
-            n_name, n_acc, n_lat, *_ = eval_result
+            n_name, n_acc, n_lat, _, _, n_dp_results, _ = eval_result
             seen.add(n_name)
+            n_val = self._primary_value(n_acc, n_dp_results)
 
-            if n_acc > best_n_acc + tol:
-                best_neighbor, best_n_acc, best_n_lat = neighbor, n_acc, n_lat
-            elif abs(n_acc - best_n_acc) <= tol and n_lat < best_n_lat:
-                best_neighbor, best_n_acc, best_n_lat = neighbor, n_acc, n_lat
+            if n_val > best_n_val + tol:
+                best_neighbor, best_n_val, best_n_lat = neighbor, n_val, n_lat
+            elif abs(n_val - best_n_val) <= tol and n_lat < best_n_lat:
+                best_neighbor, best_n_val, best_n_lat = neighbor, n_val, n_lat
 
         if best_neighbor is None or (
-            best_n_acc < current_accuracy - tol
+            best_n_val < current_value - tol
             or (
-                abs(best_n_acc - current_accuracy) <= tol
+                abs(best_n_val - current_value) <= tol
                 and best_n_lat >= current_latency
             )
         ):
@@ -221,21 +253,34 @@ class HillClimbingModelSelector(BaseModelSelector):
         self,
         all_results: List[ModelResult],
         global_best_combo: Optional[Dict[str, ModelCandidate]],
-        global_best_accuracy: float,
+        global_best_value: float,
     ) -> SelectionResults:
-        """Mark best result and return SelectionResults."""
-        tol = 1e-9
-        if global_best_combo is not None:
-            best_name = self._combo_name(global_best_combo)
-            for result in all_results:
-                if (
-                    result.model_name == best_name
-                    and abs(result.accuracy - global_best_accuracy) < tol
-                ):
-                    result.is_best = True
-                    break
-        else:
+        """Finalize combined objectives, mark the best result, return results."""
+        self._finalize_combined_objectives(all_results)
+        if global_best_combo is None:
             print("\nNo combinations succeeded\n")
+            return SelectionResults(results=all_results)
+
+        # Prefer the combined-objective-aware _find_best when lambdas are set;
+        # otherwise honor the within-search global best to preserve the
+        # original tie-breaking semantics.
+        if self._has_combined_objective:
+            best_info = self._find_best(all_results)
+            best_name = best_info[0] if best_info else self._combo_name(global_best_combo)
+        else:
+            best_name = self._combo_name(global_best_combo)
+
+        tol = 1e-9
+        for result in all_results:
+            if result.model_name != best_name:
+                continue
+            if self._has_combined_objective:
+                result.is_best = True
+                break
+            # Accuracy-mode: match by name AND the tracked best value.
+            if abs(result.accuracy - global_best_value) < tol:
+                result.is_best = True
+                break
         return SelectionResults(results=all_results)
 
     # ------------------------------------------------------------------
@@ -251,7 +296,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
         results: List[ModelResult] = []
         best_combo = dict(combo)
-        best_accuracy = float("-inf")
+        best_value = float("-inf")
         best_latency = float("inf")
         tol = 1e-9
         no_improve_count = 0
@@ -284,13 +329,14 @@ class HillClimbingModelSelector(BaseModelSelector):
             print(f"  Iter {iteration + 1}: {result}{suffix}")
             results.append(result)
 
+            current_value = self._primary_value(accuracy, dp_results)
             should_update = (
-                best_accuracy == float("-inf")
-                or accuracy > best_accuracy + tol
-                or (abs(accuracy - best_accuracy) <= tol and latency < best_latency)
+                best_value == float("-inf")
+                or current_value > best_value + tol
+                or (abs(current_value - best_value) <= tol and latency < best_latency)
             )
             if should_update:
-                best_accuracy, best_latency, best_combo = accuracy, latency, dict(combo)
+                best_value, best_latency, best_combo = current_value, latency, dict(combo)
                 no_improve_count = 0
             else:
                 no_improve_count += 1
@@ -309,7 +355,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             eval_results = [self._evaluate_cached(n) for n in neighbors]
             best_neighbor = self._pick_best_neighbor(
-                eval_results, neighbors, seen, accuracy, latency, tol
+                eval_results, neighbors, seen, current_value, latency, tol
             )
             if best_neighbor is None:
                 print(
@@ -320,7 +366,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             combo = dict(best_neighbor)
 
-        return best_combo, best_accuracy, best_latency, results
+        return best_combo, best_value, best_latency, results
 
     # ------------------------------------------------------------------
     # Single restart (async)
@@ -335,7 +381,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
         results: List[ModelResult] = []
         best_combo = dict(combo)
-        best_accuracy = float("-inf")
+        best_value = float("-inf")
         best_latency = float("inf")
         tol = 1e-9
         no_improve_count = 0
@@ -368,13 +414,14 @@ class HillClimbingModelSelector(BaseModelSelector):
             print(f"  Iter {iteration + 1}: {result}{suffix}")
             results.append(result)
 
+            current_value = self._primary_value(accuracy, dp_results)
             should_update = (
-                best_accuracy == float("-inf")
-                or accuracy > best_accuracy + tol
-                or (abs(accuracy - best_accuracy) <= tol and latency < best_latency)
+                best_value == float("-inf")
+                or current_value > best_value + tol
+                or (abs(current_value - best_value) <= tol and latency < best_latency)
             )
             if should_update:
-                best_accuracy, best_latency, best_combo = accuracy, latency, dict(combo)
+                best_value, best_latency, best_combo = current_value, latency, dict(combo)
                 no_improve_count = 0
             else:
                 no_improve_count += 1
@@ -409,7 +456,7 @@ class HillClimbingModelSelector(BaseModelSelector):
                 *(_eval_neighbor_throttled(n) for n in neighbors)
             )
             best_neighbor = self._pick_best_neighbor(
-                eval_results, neighbors, seen, accuracy, latency, tol
+                eval_results, neighbors, seen, current_value, latency, tol
             )
             if best_neighbor is None:
                 print(
@@ -420,7 +467,7 @@ class HillClimbingModelSelector(BaseModelSelector):
 
             combo = dict(best_neighbor)
 
-        return best_combo, best_accuracy, best_latency, results
+        return best_combo, best_value, best_latency, results
 
     # ------------------------------------------------------------------
     # Public API
@@ -436,7 +483,7 @@ class HillClimbingModelSelector(BaseModelSelector):
     def _run_selection_sequential(self) -> SelectionResults:
         all_results: List[ModelResult] = []
         global_best_combo: Optional[Dict[str, ModelCandidate]] = None
-        global_best_accuracy = float("-inf")
+        global_best_value = float("-inf")
         global_best_latency = float("inf")
         tol = 1e-9
 
@@ -454,27 +501,27 @@ class HillClimbingModelSelector(BaseModelSelector):
             if result is None:
                 print("  All combinations exhausted. Stopping.\n")
                 break
-            best_combo, best_acc, best_lat, run_results = result
+            best_combo, best_val, best_lat, run_results = result
             all_results.extend(run_results)
 
             if (
                 global_best_combo is None
-                or best_acc > global_best_accuracy + tol
+                or best_val > global_best_value + tol
                 or (
-                    abs(best_acc - global_best_accuracy) <= tol
+                    abs(best_val - global_best_value) <= tol
                     and best_lat < global_best_latency
                 )
             ):
-                global_best_accuracy = best_acc
+                global_best_value = best_val
                 global_best_latency = best_lat
                 global_best_combo = best_combo
 
-        return self._hc_finalize(all_results, global_best_combo, global_best_accuracy)
+        return self._hc_finalize(all_results, global_best_combo, global_best_value)
 
     async def _run_selection_async(self, max_concurrent: int = 20,) -> SelectionResults:
         all_results: List[ModelResult] = []
         global_best_combo: Optional[Dict[str, ModelCandidate]] = None
-        global_best_accuracy = float("-inf")
+        global_best_value = float("-inf")
         global_best_latency = float("inf")
         tol = 1e-9
 
@@ -494,19 +541,19 @@ class HillClimbingModelSelector(BaseModelSelector):
             if result is None:
                 print("  All combinations exhausted. Stopping.\n")
                 break
-            best_combo, best_acc, best_lat, run_results = result
+            best_combo, best_val, best_lat, run_results = result
             all_results.extend(run_results)
 
             if (
                 global_best_combo is None
-                or best_acc > global_best_accuracy + tol
+                or best_val > global_best_value + tol
                 or (
-                    abs(best_acc - global_best_accuracy) <= tol
+                    abs(best_val - global_best_value) <= tol
                     and best_lat < global_best_latency
                 )
             ):
-                global_best_accuracy = best_acc
+                global_best_value = best_val
                 global_best_latency = best_lat
                 global_best_combo = best_combo
 
-        return self._hc_finalize(all_results, global_best_combo, global_best_accuracy)
+        return self._hc_finalize(all_results, global_best_combo, global_best_value)

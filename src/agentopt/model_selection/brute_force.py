@@ -25,6 +25,8 @@ class BruteForceModelSelector(BaseModelSelector):
         dataset: Dataset = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -33,6 +35,8 @@ class BruteForceModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
 
     def _run_selection(
@@ -46,10 +50,6 @@ class BruteForceModelSelector(BaseModelSelector):
         all_combos = self._all_combos()
 
         all_results: List[ModelResult] = []
-        best_combo_name = None
-        best_accuracy = float("-inf")
-        best_latency = float("inf")
-        tol = 1e-9
 
         print(f"\n{'='*60}")
         print(f"Brute force (sequential): {len(all_combos)} combinations")
@@ -63,30 +63,11 @@ class BruteForceModelSelector(BaseModelSelector):
                 scores, latencies, dp_ids = self._evaluate_combo(
                     combo, self.dataset, label=combo_name
                 )
-                input_tokens, output_tokens = self._fetch_tokens(combo_name)
-                accuracy, _ = self._compute_stats(scores)
-                latency = sum(latencies) / len(latencies) if latencies else 0.0
-                dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
-
-                result = self._make_result(
-                    model_name=combo_name,
-                    accuracy=accuracy,
-                    latency_seconds=latency,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    attribute="combination",
-                    is_best=False,
-                    datapoint_results=dp_results,
+                result = self._build_combo_result(
+                    combo_name, scores, latencies, dp_ids,
                 )
                 print(f"  {result}")
                 all_results.append(result)
-
-                if (accuracy > best_accuracy + tol) or (
-                    abs(accuracy - best_accuracy) <= tol and latency < best_latency
-                ):
-                    best_accuracy = accuracy
-                    best_latency = latency
-                    best_combo_name = combo_name
 
             except Exception as e:
                 print(f"  [{combo_name}] failed: {e}")
@@ -102,9 +83,12 @@ class BruteForceModelSelector(BaseModelSelector):
                     )
                 )
 
-        if best_combo_name is not None:
+        self._finalize_combined_objectives(all_results)
+        best_info = self._find_best(all_results)
+        if best_info is not None:
+            best_name, _ = best_info
             for result in all_results:
-                if result.model_name == best_combo_name:
+                if result.model_name == best_name:
                     result.is_best = True
                     break
         else:
@@ -137,20 +121,8 @@ class BruteForceModelSelector(BaseModelSelector):
                 scores, latencies, dp_ids = await self._evaluate_combo_async(
                     combo, self.dataset, label=combo_name, max_concurrent=dp_concurrent
                 )
-                input_tokens, output_tokens = self._fetch_tokens(combo_name)
-                accuracy, _ = self._compute_stats(scores)
-                latency = sum(latencies) / len(latencies) if latencies else 0.0
-                dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
-
-                result = self._make_result(
-                    model_name=combo_name,
-                    accuracy=accuracy,
-                    latency_seconds=latency,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    attribute="combination",
-                    is_best=False,
-                    datapoint_results=dp_results,
+                result = self._build_combo_result(
+                    combo_name, scores, latencies, dp_ids,
                 )
                 print(f"  {result}")
                 return combo_name, result
@@ -179,6 +151,7 @@ class BruteForceModelSelector(BaseModelSelector):
                 _, result = res
                 all_results.append(result)
 
+        self._finalize_combined_objectives(all_results)
         best_info = self._find_best(all_results)
         if best_info is not None:
             best_name, _ = best_info

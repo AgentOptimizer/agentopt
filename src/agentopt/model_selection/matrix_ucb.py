@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from ..base_models import Dataset, EvalFn, ModelCandidate
+from ..model_price import compute_price
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ def _ucb_plain_next_batch(
 def _build_selection_results(
     selector: BaseModelSelector,
     all_combos: List[Dict[str, ModelCandidate]],
-    cell_data: Dict[Tuple[int, int], Tuple[float, float, str]],
+    cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
     n_datapoints: int,
 ) -> SelectionResults:
     all_results: List[ModelResult] = []
@@ -115,37 +116,35 @@ def _build_selection_results(
         combo_name = selector._combo_name(combo)
         scores: List[float] = []
         latencies: List[float] = []
+        costs: List[Optional[float]] = []
         dp_ids: List[str] = []
         for datapoint_idx in range(n_datapoints):
             t = cell_data.get((combo_idx, datapoint_idx))
             if t:
                 scores.append(t[0])
                 latencies.append(t[1])
-                dp_ids.append(t[2])
+                costs.append(t[2])
+                dp_ids.append(t[3])
         if scores:
-            accuracy = sum(scores) / len(scores)
-            avg_latency = sum(latencies) / len(latencies)
-        else:
-            accuracy, avg_latency = 0.0, 0.0
-        input_tokens, output_tokens = selector._fetch_tokens(combo_name)
-        dp_results = (
-            selector._build_datapoint_results(scores, latencies, dp_ids)
-            if dp_ids
-            else []
-        )
-        all_results.append(
-            selector._make_result(
-                model_name=combo_name,
-                accuracy=accuracy,
-                latency_seconds=avg_latency,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                attribute="combination",
-                is_best=False,
-                datapoint_results=dp_results,
+            all_results.append(
+                selector._build_combo_result(
+                    combo_name, scores, latencies, dp_ids, costs=costs,
+                )
             )
-        )
+        else:
+            all_results.append(
+                selector._make_result(
+                    model_name=combo_name,
+                    accuracy=0.0,
+                    latency_seconds=0.0,
+                    input_tokens={},
+                    output_tokens={},
+                    attribute="combination",
+                    is_best=False,
+                )
+            )
 
+    selector._finalize_combined_objectives(all_results)
     best_info = selector._find_best(all_results)
     if best_info is not None:
         best_name, _ = best_info
@@ -160,21 +159,59 @@ def _build_selection_results(
 
 
 def _record_cells(
-    cell_data: Dict[Tuple[int, int], Tuple[float, float, str]],
+    cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
     combo_idx: int,
     datapoint_idx: int,
     scores: List[float],
     latencies: List[float],
+    costs: List[Optional[float]],
     dp_ids: List[str],
 ) -> None:
     if not scores:
         cell_data[(combo_idx, datapoint_idx)] = (
             0.0,
             0.0,
+            None,
             f"missing::{combo_idx}:{datapoint_idx}",
         )
         return
-    cell_data[(combo_idx, datapoint_idx)] = (scores[0], latencies[0], dp_ids[0])
+    cost = costs[0] if costs else None
+    cell_data[(combo_idx, datapoint_idx)] = (
+        scores[0], latencies[0], cost, dp_ids[0],
+    )
+
+
+def _refresh_observed_np(
+    selector: BaseModelSelector,
+    observed: np.ndarray,
+    cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
+) -> None:
+    """Rewrite ``observed`` from ``cell_data`` against the selector's current normalizer.
+
+    Called after absorbing new observations so plain-UCB row means use the
+    latest combined objective rather than stale values. No-op (preserves prior
+    contents) when no lambdas are configured.
+    """
+    if not selector._has_combined_objective:
+        return
+    for (ci, di), (sc, lat, cost, dp_id) in cell_data.items():
+        if dp_id.startswith("missing::"):
+            continue
+        observed[ci, di] = selector._combined_objective(sc, lat, cost)
+
+
+def _refresh_observed_t(
+    selector: BaseModelSelector,
+    observed_t: "torch.Tensor",
+    cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
+) -> None:
+    """Torch counterpart of :func:`_refresh_observed_np` for the LRF variant."""
+    if not selector._has_combined_objective:
+        return
+    for (ci, di), (sc, lat, cost, dp_id) in cell_data.items():
+        if dp_id.startswith("missing::"):
+            continue
+        observed_t[ci, di] = float(selector._combined_objective(sc, lat, cost))
 
 
 class MatrixUCBModelSelector(BaseModelSelector):
@@ -202,6 +239,8 @@ class MatrixUCBModelSelector(BaseModelSelector):
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -210,6 +249,8 @@ class MatrixUCBModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         self.a = float(a)
         self.observation_budget_fraction = _resolve_observation_budget_fraction(
@@ -239,7 +280,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
         n_datapoints = len(dataset_list)
         n_combos = len(all_combos)
         observed = np.full((n_combos, n_datapoints), np.nan, dtype=np.float64)
-        cell_data: Dict[Tuple[int, int], Tuple[float, float, str]] = {}
+        cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]] = {}
         mc = max(max_concurrent, 1)
         target_n = _target_observation_count(
             n_combos, n_datapoints, self.observation_budget_fraction,
@@ -305,9 +346,13 @@ class MatrixUCBModelSelector(BaseModelSelector):
                     logger.warning("Matrix UCB async cell error: %s", res)
                     continue
                 combo_i, dp_i, sc, lat, ids = res
-                _record_cells(cell_data, combo_i, dp_i, sc, lat, ids)
+                costs = self._observe_combo(sc, lat, ids) if sc else []
+                _record_cells(cell_data, combo_i, dp_i, sc, lat, costs, ids)
                 if sc:
-                    observed[combo_i, dp_i] = sc[0]
+                    observed[combo_i, dp_i] = self._combined_objective(
+                        sc[0], lat[0], costs[0],
+                    )
+            _refresh_observed_np(self, observed, cell_data)
 
         return _build_selection_results(self, all_combos, cell_data, n_datapoints)
 
@@ -342,6 +387,8 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         try:
             import torch  # noqa: F401
@@ -367,6 +414,8 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         self.Factorization = Factorization
         self.rank = int(rank)
@@ -475,7 +524,7 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
             device=self.device,
             dtype=torch.float64,
         )
-        cell_data: Dict[Tuple[int, int], Tuple[float, float, str]] = {}
+        cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]] = {}
         mc = max(max_concurrent, 1)
         target_n = _target_observation_count(
             n_combos, n_datapoints, self.observation_budget_fraction,
@@ -519,9 +568,15 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
                 sc, lat, ids = self._evaluate_combo(
                     combo, [dataset_list[int(dp_i)]], label=name, dp_offset=int(dp_i),
                 )
-                _record_cells(cell_data, int(combo_i), int(dp_i), sc, lat, ids)
+                costs = self._observe_combo(sc, lat, ids) if sc else []
+                _record_cells(
+                    cell_data, int(combo_i), int(dp_i), sc, lat, costs, ids,
+                )
                 if sc:
-                    observed_t[int(combo_i), int(dp_i)] = float(sc[0])
+                    observed_t[int(combo_i), int(dp_i)] = float(
+                        self._combined_objective(sc[0], lat[0], costs[0])
+                    )
+            _refresh_observed_t(self, observed_t, cell_data)
 
         return _build_selection_results(self, all_combos, cell_data, n_datapoints)
 
@@ -547,7 +602,7 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
             device=self.device,
             dtype=torch.float64,
         )
-        cell_data: Dict[Tuple[int, int], Tuple[float, float, str]] = {}
+        cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]] = {}
         mc = max(max_concurrent, 1)
         target_n = _target_observation_count(
             n_combos, n_datapoints, self.observation_budget_fraction,
@@ -613,8 +668,12 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
                     logger.warning("Matrix UCB-LRF async cell error: %s", res)
                     continue
                 combo_i, dp_i, sc, lat, ids = res
-                _record_cells(cell_data, combo_i, dp_i, sc, lat, ids)
+                costs = self._observe_combo(sc, lat, ids) if sc else []
+                _record_cells(cell_data, combo_i, dp_i, sc, lat, costs, ids)
                 if sc:
-                    observed_t[combo_i, dp_i] = float(sc[0])
+                    observed_t[combo_i, dp_i] = float(
+                        self._combined_objective(sc[0], lat[0], costs[0])
+                    )
+            _refresh_observed_t(self, observed_t, cell_data)
 
         return _build_selection_results(self, all_combos, cell_data, n_datapoints)

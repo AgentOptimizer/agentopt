@@ -42,6 +42,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         sample_fraction: float = 0.25,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -50,6 +52,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         _require_botorch()
         self.batch_size = max(1, int(batch_size))
@@ -189,6 +193,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         return [unseen[i] for i in topk]
 
     def _bo_finalize(self, all_results: List[ModelResult]) -> SelectionResults:
+        self._finalize_combined_objectives(all_results)
         best_info = self._find_best(all_results)
         if best_info is not None:
             best_name, _ = best_info
@@ -200,6 +205,41 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             logger.warning("No successful evaluations.")
         return SelectionResults(results=all_results)
 
+    def _bo_target_from_result(self, result: ModelResult) -> float:
+        """BO target: combined objective if lambdas set, else accuracy."""
+        if not self._has_combined_objective or not result.datapoint_results:
+            return result.accuracy
+        scores = [dp.score for dp in result.datapoint_results]
+        lats = [dp.latency_seconds for dp in result.datapoint_results]
+        from ..model_price import compute_price
+
+        costs = [
+            compute_price(
+                dp.input_tokens, dp.output_tokens, custom_prices=self._custom_prices,
+            )
+            for dp in result.datapoint_results
+        ]
+        obj = self._mean_objective(scores, lats, costs)
+        return obj if obj is not None else result.accuracy
+
+    def _bo_refresh_targets(
+        self, X_list: List[List[int]], Y_list: List[float],
+        results_by_index: Dict[Tuple[int, ...], ModelResult],
+    ) -> None:
+        """Recompute all Y_list entries against the current normalizer.
+
+        Called before each GP fit so the surrogate is trained on objectives
+        normalized with all observations to date.
+        """
+        if not self._has_combined_objective:
+            return
+        for i, x in enumerate(X_list):
+            key = tuple(x)
+            result = results_by_index.get(key)
+            if result is None:
+                continue
+            Y_list[i] = self._bo_target_from_result(result)
+
     def _bo_eval_single(
         self,
         combo: Tuple[int, ...],
@@ -210,6 +250,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         X_list: List[List[int]],
         Y_list: List[float],
         all_results: List[ModelResult],
+        results_by_index: Dict[Tuple[int, ...], ModelResult],
         label: str,
     ) -> bool:
         """Evaluate a single combo, record results. Returns True on success."""
@@ -222,7 +263,6 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 combo
             )
             X_list.append(list(combo))
-            Y_list.append(accuracy)
             result = self._bo_record_result(
                 combo_name,
                 accuracy,
@@ -232,6 +272,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 dp_results,
                 all_results,
             )
+            results_by_index[tuple(combo)] = result
+            Y_list.append(self._bo_target_from_result(result))
             print(f"  {label}{result}")
             return True
         except Exception as e:
@@ -285,6 +327,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         X_list: List[List[int]] = []
         Y_list: List[float] = []
         all_results: List[ModelResult] = []
+        results_by_index: Dict[Tuple[int, ...], ModelResult] = {}
 
         def evaluate_combo(combo: Tuple[int, ...]) -> Tuple:
             combo_dict = self._bo_index_combo_to_dict(
@@ -294,6 +337,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             scores, latencies, dp_ids = self._evaluate_combo(
                 combo_dict, self.dataset, label=combo_name
             )
+            self._observe_combo(scores, latencies, dp_ids)
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
             latency = sum(latencies) / len(latencies) if latencies else 0.0
@@ -326,6 +370,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 X_list,
                 Y_list,
                 all_results,
+                results_by_index,
                 label="",
             )
 
@@ -350,10 +395,12 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     X_list,
                     Y_list,
                     all_results,
+                    results_by_index,
                     label="",
                 )
                 continue
 
+            self._bo_refresh_targets(X_list, Y_list, results_by_index)
             batch = self._bo_fit_and_acquire(
                 torch_mod,
                 LogExpectedImprovement,
@@ -386,6 +433,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     X_list,
                     Y_list,
                     all_results,
+                    results_by_index,
                     label=f"[BO {it+1}/{n_iterations} | {j}/{len(batch)}] ",
                 )
 
@@ -416,6 +464,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         X_list: List[List[int]] = []
         Y_list: List[float] = []
         all_results: List[ModelResult] = []
+        results_by_index: Dict[Tuple[int, ...], ModelResult] = {}
 
         async def evaluate_combo(
             combo: Tuple[int, ...], dp_concurrent: int = max_concurrent,
@@ -430,6 +479,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 label=combo_name,
                 max_concurrent=dp_concurrent,
             )
+            self._observe_combo(scores, latencies, dp_ids)
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
             latency = sum(latencies) / len(latencies) if latencies else 0.0
@@ -449,7 +499,6 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 dp_results,
             ) = await evaluate_combo(combo)
             X_list.append(list(combo))
-            Y_list.append(accuracy)
             result = self._bo_record_result(
                 combo_name,
                 accuracy,
@@ -459,6 +508,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 dp_results,
                 all_results,
             )
+            results_by_index[tuple(combo)] = result
+            Y_list.append(self._bo_target_from_result(result))
             print(f"  {label}{result}")
             return True
 
@@ -521,6 +572,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     logger.warning("[random] [%s] failed: %s", combo_name, e)
                 continue
 
+            self._bo_refresh_targets(X_list, Y_list, results_by_index)
             batch = self._bo_fit_and_acquire(
                 torch_mod,
                 LogExpectedImprovement,
@@ -570,7 +622,6 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     continue
                 accuracy, latency, input_tokens, output_tokens, dp_results = res
                 X_list.append(list(combo))
-                Y_list.append(accuracy)
                 result = self._bo_record_result(
                     combo_name,
                     accuracy,
@@ -580,6 +631,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     dp_results,
                     all_results,
                 )
+                results_by_index[tuple(combo)] = result
+                Y_list.append(self._bo_target_from_result(result))
                 print(f"  [BO {it+1}/{n_iterations} | {j}/{len(batch)}] {result}")
 
         return self._bo_finalize(all_results)

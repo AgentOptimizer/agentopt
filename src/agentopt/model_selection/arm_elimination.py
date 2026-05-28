@@ -29,6 +29,8 @@ class ArmEliminationModelSelector(BaseModelSelector):
         confidence: float = 1.0,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -37,6 +39,8 @@ class ArmEliminationModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            lambda_cost=lambda_cost,
+            lambda_latency=lambda_latency,
         )
         n = len(self.dataset)
         if n_initial is None:
@@ -60,6 +64,9 @@ class ArmEliminationModelSelector(BaseModelSelector):
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(len(all_combos))}
         combo_latencies: Dict[int, List[float]] = {
+            i: [] for i in range(len(all_combos))
+        }
+        combo_costs: Dict[int, List[Optional[float]]] = {
             i: [] for i in range(len(all_combos))
         }
         combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(len(all_combos))}
@@ -91,17 +98,30 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 scores, latencies, dp_ids = self._evaluate_combo(
                     combo, batch, label=combo_name, dp_offset=offset
                 )
+                costs = self._observe_combo(scores, latencies, dp_ids)
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
+                combo_costs[idx].extend(costs)
                 combo_dp_ids[idx].extend(dp_ids)
-                mu, _ = self._compute_stats(combo_scores[idx])
-                print(f"  {combo_name}: mu={mu:.3f} (n={len(combo_scores[idx])})")
+                objs = self._compute_objectives(
+                    combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+                )
+                mu, _ = self._compute_stats(objs)
+                print(f"  {combo_name}: mu={mu:.3f} (n={len(objs)})")
 
-            # Eliminate dominated combinations.
+            # Eliminate dominated combinations on the current combined objective.
+            arm_objectives = {
+                idx: self._compute_objectives(
+                    combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+                )
+                for idx in active
+            }
             newly_eliminated: Set[int] = set()
             for i in active:
                 for j in active:
-                    if i != j and self._is_dominated(combo_scores[i], combo_scores[j]):
+                    if i != j and self._is_dominated(
+                        arm_objectives[i], arm_objectives[j]
+                    ):
                         newly_eliminated.add(i)
                         break
 
@@ -109,7 +129,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 for idx in newly_eliminated:
                     combo_name = self._combo_name(all_combos[idx])
                     winner = self._find_dominator_name(
-                        idx, active - newly_eliminated, all_combos, combo_scores
+                        idx, active - newly_eliminated, all_combos, arm_objectives
                     )
                     print(
                         f"  Eliminated: {combo_name}"
@@ -129,49 +149,10 @@ class ArmEliminationModelSelector(BaseModelSelector):
             batch_size = max(1, int(batch_size * self.growth_factor))
             round_num += 1
 
-        # Build results.
-        all_results: List[ModelResult] = []
-        for idx, combo in enumerate(all_combos):
-            combo_name = self._combo_name(combo)
-            scores = combo_scores[idx]
-            latencies = combo_latencies[idx]
-            dp_ids = combo_dp_ids[idx]
-            if scores:
-                accuracy = sum(scores) / len(scores)
-                avg_latency = sum(latencies) / len(latencies)
-            else:
-                accuracy, avg_latency = 0.0, 0.0
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
-            dp_results = (
-                self._build_datapoint_results(scores, latencies, dp_ids)
-                if dp_ids
-                else []
-            )
-            all_results.append(
-                self._make_result(
-                    model_name=combo_name,
-                    accuracy=accuracy,
-                    latency_seconds=avg_latency,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    attribute="combination",
-                    is_best=False,
-                    datapoint_results=dp_results,
-                )
-            )
-
-        best_info = self._find_best(all_results)
-        if best_info is not None:
-            best_name, _ = best_info
-            for result in all_results:
-                if result.model_name == best_name:
-                    result.is_best = True
-                    break
-        else:
-            print("\n  No combinations succeeded.")
-
-        results = SelectionResults(results=all_results)
-        return results
+        all_results = self._build_results(
+            all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
+        )
+        return SelectionResults(results=all_results)
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
@@ -180,6 +161,9 @@ class ArmEliminationModelSelector(BaseModelSelector):
 
         combo_scores: Dict[int, List[float]] = {i: [] for i in range(len(all_combos))}
         combo_latencies: Dict[int, List[float]] = {
+            i: [] for i in range(len(all_combos))
+        }
+        combo_costs: Dict[int, List[Optional[float]]] = {
             i: [] for i in range(len(all_combos))
         }
         combo_dp_ids: Dict[int, List[str]] = {i: [] for i in range(len(all_combos))}
@@ -234,19 +218,32 @@ class ArmEliminationModelSelector(BaseModelSelector):
                     logger.warning("Batch evaluation error: %s", res)
                     continue
                 idx, scores, latencies, dp_ids = res
+                costs = self._observe_combo(scores, latencies, dp_ids)
                 combo_scores[idx].extend(scores)
                 combo_latencies[idx].extend(latencies)
+                combo_costs[idx].extend(costs)
                 combo_dp_ids[idx].extend(dp_ids)
-                mu, _ = self._compute_stats(combo_scores[idx])
+                objs = self._compute_objectives(
+                    combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+                )
+                mu, _ = self._compute_stats(objs)
                 print(
                     f"  {self._combo_name(all_combos[idx])}: "
-                    f"mu={mu:.3f} (n={len(combo_scores[idx])})"
+                    f"mu={mu:.3f} (n={len(objs)})"
                 )
 
+            arm_objectives = {
+                idx: self._compute_objectives(
+                    combo_scores[idx], combo_latencies[idx], combo_costs[idx]
+                )
+                for idx in active
+            }
             newly_eliminated: Set[int] = set()
             for i in active:
                 for j in active:
-                    if i != j and self._is_dominated(combo_scores[i], combo_scores[j]):
+                    if i != j and self._is_dominated(
+                        arm_objectives[i], arm_objectives[j]
+                    ):
                         newly_eliminated.add(i)
                         break
 
@@ -254,7 +251,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
                 for idx in newly_eliminated:
                     combo_name = self._combo_name(all_combos[idx])
                     winner = self._find_dominator_name(
-                        idx, active - newly_eliminated, all_combos, combo_scores
+                        idx, active - newly_eliminated, all_combos, arm_objectives
                     )
                     print(
                         f"  Eliminated: {combo_name}"
@@ -274,48 +271,10 @@ class ArmEliminationModelSelector(BaseModelSelector):
             batch_size = max(1, int(batch_size * self.growth_factor))
             round_num += 1
 
-        all_results: List[ModelResult] = []
-        for idx, combo in enumerate(all_combos):
-            combo_name = self._combo_name(combo)
-            scores = combo_scores[idx]
-            latencies = combo_latencies[idx]
-            dp_ids = combo_dp_ids[idx]
-            if scores:
-                accuracy = sum(scores) / len(scores)
-                avg_latency = sum(latencies) / len(latencies)
-            else:
-                accuracy, avg_latency = 0.0, 0.0
-            input_tokens, output_tokens = self._fetch_tokens(combo_name)
-            dp_results = (
-                self._build_datapoint_results(scores, latencies, dp_ids)
-                if dp_ids
-                else []
-            )
-            all_results.append(
-                self._make_result(
-                    model_name=combo_name,
-                    accuracy=accuracy,
-                    latency_seconds=avg_latency,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    attribute="combination",
-                    is_best=False,
-                    datapoint_results=dp_results,
-                )
-            )
-
-        best_info = self._find_best(all_results)
-        if best_info is not None:
-            best_name, _ = best_info
-            for result in all_results:
-                if result.model_name == best_name:
-                    result.is_best = True
-                    break
-        else:
-            print("\n  No combinations succeeded.")
-
-        results = SelectionResults(results=all_results)
-        return results
+        all_results = self._build_results(
+            all_combos, combo_scores, combo_latencies, combo_costs, combo_dp_ids
+        )
+        return SelectionResults(results=all_results)
 
     # ------------------------------------------------------------------
     # Statistical helpers
@@ -337,9 +296,58 @@ class ArmEliminationModelSelector(BaseModelSelector):
         dominated_idx: int,
         active_remaining: Set[int],
         all_combos: List[Dict[str, ModelCandidate]],
-        combo_scores: Dict[int, List[float]],
+        arm_values: Dict[int, List[float]],
     ) -> Optional[str]:
+        """Find the name of an arm that dominates ``dominated_idx`` on ``arm_values``."""
         for j in active_remaining:
-            if self._is_dominated(combo_scores[dominated_idx], combo_scores[j]):
+            if self._is_dominated(arm_values[dominated_idx], arm_values[j]):
                 return self._combo_name(all_combos[j])
         return None
+
+    def _build_results(
+        self,
+        all_combos: List[Dict[str, ModelCandidate]],
+        combo_scores: Dict[int, List[float]],
+        combo_latencies: Dict[int, List[float]],
+        combo_costs: Dict[int, List[Optional[float]]],
+        combo_dp_ids: Dict[int, List[str]],
+    ) -> List[ModelResult]:
+        """Build final per-combo results, finalize the combined objective, mark best."""
+        all_results: List[ModelResult] = []
+        for idx, combo in enumerate(all_combos):
+            combo_name = self._combo_name(combo)
+            scores = combo_scores[idx]
+            if scores:
+                all_results.append(
+                    self._build_combo_result(
+                        combo_name,
+                        scores,
+                        combo_latencies[idx],
+                        combo_dp_ids[idx],
+                        costs=combo_costs[idx],
+                    )
+                )
+            else:
+                all_results.append(
+                    self._make_result(
+                        model_name=combo_name,
+                        accuracy=0.0,
+                        latency_seconds=0.0,
+                        input_tokens={},
+                        output_tokens={},
+                        attribute="combination",
+                        is_best=False,
+                    )
+                )
+
+        self._finalize_combined_objectives(all_results)
+        best_info = self._find_best(all_results)
+        if best_info is not None:
+            best_name, _ = best_info
+            for result in all_results:
+                if result.model_name == best_name:
+                    result.is_best = True
+                    break
+        else:
+            print("\n  No combinations succeeded.")
+        return all_results

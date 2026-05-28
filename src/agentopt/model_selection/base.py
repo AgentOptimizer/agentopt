@@ -48,6 +48,14 @@ class ModelResult(BaseModel):
     attribute: str
     is_best: bool = False
     datapoint_results: List[DatapointResult] = Field(default_factory=list)
+    combined_objective: Optional[float] = Field(
+        default=None,
+        description=(
+            "Per-sample mean of the combined objective "
+            "(score - lambda_cost*norm_cost - lambda_latency*norm_latency). "
+            "None when no lambdas were configured."
+        ),
+    )
     _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
 
     @property
@@ -710,6 +718,8 @@ class BaseModelSelector(ABC):
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
         tracker: Optional[LLMTracker] = None,
+        lambda_cost: float = 0.0,
+        lambda_latency: float = 0.0,
     ) -> None:
         """
         Initialize the model selector.
@@ -734,11 +744,20 @@ class BaseModelSelector(ABC):
                 ``{"planner": "Decomposes queries into sub-tasks"}``.
             tracker: Optional :class:`LLMTracker` instance. If not provided,
                 one is created and started automatically.
+            lambda_cost: Weight on normalized per-sample cost in the combined
+                objective ``score - lambda_cost*norm_cost - lambda_latency*norm_latency``.
+                Cost is normalized adaptively against the running min/max of all
+                samples observed during this selector's lifetime. Default 0.0
+                (pure accuracy, backwards compatible).
+            lambda_latency: Weight on normalized per-sample latency in the
+                combined objective. Default 0.0.
         """
         if agent is None:
             raise TypeError("'agent' is required")
         if models is None or eval_fn is None or dataset is None:
             raise TypeError("'models', 'eval_fn', and 'dataset' are required")
+        if float(lambda_cost) < 0 or float(lambda_latency) < 0:
+            raise ValueError("lambda_cost and lambda_latency must be non-negative")
 
         validate_dataset(dataset)
 
@@ -758,6 +777,14 @@ class BaseModelSelector(ABC):
         self._node_names = list(models.keys())
         self.model_prices = model_prices
         self.node_descriptions = node_descriptions
+        self.lambda_cost = float(lambda_cost)
+        self.lambda_latency = float(lambda_latency)
+
+        # Running min/max for adaptive [0,1] normalization of cost/latency.
+        self._cost_min: float = float("inf")
+        self._cost_max: float = float("-inf")
+        self._latency_min: float = float("inf")
+        self._latency_max: float = float("-inf")
 
         # Detect whether agent.run() is async
         run_method = getattr(agent, "run", None)
@@ -965,6 +992,157 @@ class BaseModelSelector(ABC):
         return result
 
     # ------------------------------------------------------------------
+    # Combined objective (cost / latency weighted)
+    # ------------------------------------------------------------------
+
+    @property
+    def _has_combined_objective(self) -> bool:
+        """True when at least one of the cost/latency lambdas is nonzero."""
+        return self.lambda_cost > 0.0 or self.lambda_latency > 0.0
+
+    def _per_sample_costs(self, dp_ids: List[str]) -> List[Optional[float]]:
+        """Look up per-datapoint cost from tracked tokens; ``None`` if unpriced."""
+        if not dp_ids:
+            return []
+        by_dp = self._fetch_tokens_by_datapoint(dp_ids)
+        costs: List[Optional[float]] = []
+        for dp_id in dp_ids:
+            in_tok, out_tok = by_dp.get(dp_id, ({}, {}))
+            costs.append(
+                compute_price(in_tok, out_tok, custom_prices=self._custom_prices)
+            )
+        return costs
+
+    def _absorb_observations(
+        self, latencies: List[float], costs: List[Optional[float]],
+    ) -> None:
+        """Update the running min/max with new samples."""
+        if not self._has_combined_objective:
+            return
+        for lat in latencies:
+            if lat is None or not math.isfinite(lat):
+                continue
+            if lat < self._latency_min:
+                self._latency_min = lat
+            if lat > self._latency_max:
+                self._latency_max = lat
+        for c in costs:
+            if c is None or not math.isfinite(c):
+                continue
+            if c < self._cost_min:
+                self._cost_min = c
+            if c > self._cost_max:
+                self._cost_max = c
+
+    @staticmethod
+    def _minmax_norm(value: Optional[float], lo: float, hi: float) -> float:
+        """Min-max normalize to [0,1]; returns 0.0 if value/range is degenerate."""
+        if value is None or not math.isfinite(value):
+            return 0.0
+        if not math.isfinite(lo) or not math.isfinite(hi) or hi <= lo:
+            return 0.0
+        return (value - lo) / (hi - lo)
+
+    def _combined_objective(
+        self, score: float, latency: float, cost: Optional[float],
+    ) -> float:
+        """Per-sample combined objective, computed against the current normalizer."""
+        if not self._has_combined_objective:
+            return score
+        norm_lat = self._minmax_norm(latency, self._latency_min, self._latency_max)
+        norm_cost = self._minmax_norm(cost, self._cost_min, self._cost_max)
+        return (
+            score
+            - self.lambda_cost * norm_cost
+            - self.lambda_latency * norm_lat
+        )
+
+    def _compute_objectives(
+        self,
+        scores: List[float],
+        latencies: List[float],
+        costs: List[Optional[float]],
+    ) -> List[float]:
+        """Vectorized per-sample combined objectives using current normalizer."""
+        if not self._has_combined_objective:
+            return list(scores)
+        return [
+            self._combined_objective(s, lat, c)
+            for s, lat, c in zip(scores, latencies, costs)
+        ]
+
+    def _mean_objective(
+        self,
+        scores: List[float],
+        latencies: List[float],
+        costs: List[Optional[float]],
+    ) -> Optional[float]:
+        """Mean combined objective across samples, or ``None`` if no lambdas set."""
+        if not self._has_combined_objective or not scores:
+            return None
+        objs = self._compute_objectives(scores, latencies, costs)
+        return sum(objs) / len(objs)
+
+    def _observe_combo(
+        self,
+        scores: List[float],
+        latencies: List[float],
+        dp_ids: List[str],
+    ) -> List[Optional[float]]:
+        """Fetch per-sample costs and absorb them into the running normalizer.
+
+        Returns the per-sample costs aligned with ``scores`` / ``latencies``.
+        Always returns a list (possibly all ``None`` if pricing is unavailable);
+        selectors can cache it alongside scores/latencies for later objective
+        recomputation when the normalizer changes.
+        """
+        costs = self._per_sample_costs(dp_ids)
+        self._absorb_observations(latencies, costs)
+        return costs
+
+    def _recover_costs(self, result: ModelResult) -> List[Optional[float]]:
+        """Reconstruct per-sample costs for a finalized result from its dp tokens."""
+        return [
+            compute_price(
+                dp.input_tokens,
+                dp.output_tokens,
+                custom_prices=result._custom_prices,
+            )
+            for dp in result.datapoint_results
+        ]
+
+    def _finalize_combined_objectives(self, results: List[ModelResult]) -> None:
+        """Recompute ``combined_objective`` on every result using all observed data.
+
+        Selectors typically evaluate combos in arbitrary order. ``_build_combo_result``
+        sets ``combined_objective`` against the normalizer at observation time;
+        this pass rebuilds it against the **final** normalizer so that all
+        results are ranked on a consistent scale.
+
+        Idempotent and a no-op when no lambdas are configured.
+        """
+        if not self._has_combined_objective:
+            return
+
+        # Pass 1: absorb every result's samples so the normalizer reflects the
+        # full set (cheap; observe_combo during search may have missed some
+        # samples if a selector skipped it).
+        cached: List[Tuple[ModelResult, List[float], List[float], List[Optional[float]]]] = []
+        for r in results:
+            if not r.datapoint_results:
+                cached.append((r, [], [], []))
+                continue
+            scores = [dp.score for dp in r.datapoint_results]
+            lats = [dp.latency_seconds for dp in r.datapoint_results]
+            costs = self._recover_costs(r)
+            self._absorb_observations(lats, costs)
+            cached.append((r, scores, lats, costs))
+
+        # Pass 2: recompute objectives against the now-final normalizer.
+        for r, scores, lats, costs in cached:
+            r.combined_objective = self._mean_objective(scores, lats, costs)
+
+    # ------------------------------------------------------------------
     # Result helpers
     # ------------------------------------------------------------------
 
@@ -973,6 +1151,49 @@ class BaseModelSelector(ABC):
         result = ModelResult(**kwargs)
         result._custom_prices = self._custom_prices
         return result
+
+    def _build_combo_result(
+        self,
+        combo_name: str,
+        scores: List[float],
+        latencies: List[float],
+        dp_ids: List[str],
+        costs: Optional[List[Optional[float]]] = None,
+        attribute: str = "combination",
+        is_best: bool = False,
+    ) -> ModelResult:
+        """Build a :class:`ModelResult` and absorb the samples into the normalizer.
+
+        Centralizes the boilerplate selectors share for end-of-search result
+        construction. Computes accuracy, average latency, datapoint results,
+        token totals, and (when ``lambda_cost``/``lambda_latency`` are set)
+        the mean combined objective using the current running normalizer.
+
+        ``costs`` may be passed if the selector already cached per-sample costs
+        during search; otherwise they are looked up from the tracker.
+        """
+        input_tokens, output_tokens = self._fetch_tokens(combo_name)
+        accuracy, _ = self._compute_stats(scores)
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+        dp_results = (
+            self._build_datapoint_results(scores, latencies, dp_ids) if dp_ids else []
+        )
+        if costs is None:
+            costs = self._observe_combo(scores, latencies, dp_ids)
+        else:
+            self._absorb_observations(latencies, costs)
+        combined = self._mean_objective(scores, latencies, costs)
+        return self._make_result(
+            model_name=combo_name,
+            accuracy=accuracy,
+            latency_seconds=avg_latency,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            attribute=attribute,
+            is_best=is_best,
+            datapoint_results=dp_results,
+            combined_objective=combined,
+        )
 
     def _build_datapoint_results(
         self, scores: List[float], latencies: List[float], datapoint_ids: List[str],
@@ -1005,39 +1226,50 @@ class BaseModelSelector(ABC):
 
     @staticmethod
     def _find_best(results: List[ModelResult]) -> Optional[Tuple[str, float]]:
-        """Find best result by accuracy > latency > cost tiebreaker."""
+        """Find the best result.
+
+        When any result has ``combined_objective`` set, picks the result with
+        the highest combined objective (latency/cost tiebreakers within ties).
+        Otherwise falls back to accuracy > latency > cost.
+        """
+        has_combined = any(r.combined_objective is not None for r in results)
         best = None
-        best_accuracy = float("-inf")
+        best_primary = float("-inf")
         best_latency = float("inf")
         best_cost = float("inf")
         tol = 1e-9
 
         for r in results:
+            primary = (
+                r.combined_objective
+                if has_combined and r.combined_objective is not None
+                else r.accuracy
+            )
             r_cost = r.price if r.price is not None else float("inf")
-            if r.accuracy > best_accuracy + tol:
+            if primary > best_primary + tol:
                 best = r
-                best_accuracy = r.accuracy
+                best_primary = primary
                 best_latency = r.latency_seconds
                 best_cost = r_cost
             elif (
-                abs(r.accuracy - best_accuracy) <= tol
+                abs(primary - best_primary) <= tol
                 and r.latency_seconds < best_latency - tol
             ):
                 best = r
-                best_accuracy = r.accuracy
+                best_primary = primary
                 best_latency = r.latency_seconds
                 best_cost = r_cost
             elif (
-                abs(r.accuracy - best_accuracy) <= tol
+                abs(primary - best_primary) <= tol
                 and abs(r.latency_seconds - best_latency) <= tol
                 and r_cost < best_cost - tol
             ):
                 best = r
-                best_accuracy = r.accuracy
+                best_primary = primary
                 best_latency = r.latency_seconds
                 best_cost = r_cost
 
-        return (best.model_name, best.accuracy) if best else None
+        return (best.model_name, best_primary) if best else None
 
     @staticmethod
     def _compute_stats(scores: List[float]) -> Tuple[float, float]:

@@ -51,6 +51,11 @@ class ModelResult(BaseModel):
     _custom_prices: Optional[Dict[str, Tuple[float, float]]] = PrivateAttr(default=None)
 
     @property
+    def num_samples(self) -> int:
+        """Number of datapoints evaluated; falls back to 1 for failed combos."""
+        return len(self.datapoint_results) or 1
+
+    @property
     def total_input_tokens(self) -> int:
         return sum(self.input_tokens.values())
 
@@ -60,10 +65,13 @@ class ModelResult(BaseModel):
 
     @property
     def price(self) -> Optional[float]:
-        """Total cost in USD, or ``None`` if pricing is unavailable."""
-        return compute_price(
+        """Per-sample cost in USD, or ``None`` if pricing is unavailable."""
+        total = compute_price(
             self.input_tokens, self.output_tokens, custom_prices=self._custom_prices
         )
+        if total is None:
+            return None
+        return total / self.num_samples
 
     def __str__(self) -> str:
         tok_parts = []
@@ -207,12 +215,58 @@ class SelectionResults(BaseModel):
                 row["price"] = f"{p:.6f}" if p is not None else ""
                 writer.writerow(row)
 
+    @staticmethod
+    def _build_prefix_sums(
+        r: "ModelResult",
+    ) -> Tuple[List[float], List[float], Dict[str, List[int]], Dict[str, List[int]]]:
+        """Build cumulative sums from datapoint_results for O(1) layer lookups.
+
+        Returns (cum_scores, cum_latencies, cum_input_tokens, cum_output_tokens)
+        where each list has length len(datapoint_results)+1 and index 0 is 0.
+        """
+        dps = r.datapoint_results
+        n = len(dps)
+        cum_scores = [0.0] * (n + 1)
+        cum_lats = [0.0] * (n + 1)
+        # Collect all model names first.
+        all_models: set = set()
+        for dp in dps:
+            all_models.update(dp.input_tokens)
+            all_models.update(dp.output_tokens)
+        cum_in: Dict[str, List[int]] = {m: [0] * (n + 1) for m in all_models}
+        cum_out: Dict[str, List[int]] = {m: [0] * (n + 1) for m in all_models}
+        for i, dp in enumerate(dps):
+            cum_scores[i + 1] = cum_scores[i] + dp.score
+            cum_lats[i + 1] = cum_lats[i] + dp.latency_seconds
+            for m in all_models:
+                cum_in[m][i + 1] = cum_in[m][i] + dp.input_tokens.get(m, 0)
+                cum_out[m][i + 1] = cum_out[m][i] + dp.output_tokens.get(m, 0)
+        return cum_scores, cum_lats, cum_in, cum_out
+
+    @staticmethod
+    def _metrics_at(
+        prefix: Tuple[
+            List[float], List[float], Dict[str, List[int]], Dict[str, List[int]]
+        ],
+        n: int,
+        custom_prices: Optional[Dict[str, Tuple[float, float]]],
+    ) -> Tuple[float, float, Optional[float]]:
+        """Look up accuracy, latency, per-sample price at *n* datapoints using prefix sums."""
+        cum_scores, cum_lats, cum_in, cum_out = prefix
+        acc = cum_scores[n] / n
+        lat = cum_lats[n] / n
+        agg_in = {m: vals[n] for m, vals in cum_in.items()}
+        agg_out = {m: vals[n] for m, vals in cum_out.items()}
+        total = compute_price(agg_in, agg_out, custom_prices=custom_prices)
+        price = total / n if total is not None else None
+        return acc, lat, price
+
     def __str__(self) -> str:
         if not self.results:
             return "No results."
 
         # Deduplicate by model_name, preferring entries with is_best=True.
-        seen: Dict[str, ModelResult] = {}
+        seen: Dict[str, "ModelResult"] = {}
         for r in self.results:
             if r.model_name not in seen or (
                 r.is_best and not seen[r.model_name].is_best
@@ -220,8 +274,9 @@ class SelectionResults(BaseModel):
                 seen[r.model_name] = r
         unique = list(seen.values())
 
-        # Sort: best accuracy first, ties broken by lowest latency.
-        unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+        # Determine layer boundaries from distinct num_samples values.
+        sample_counts = sorted({r.num_samples for r in unique if r.datapoint_results})
+        use_layers = len(sample_counts) > 1
 
         # Format helpers.
         def fmt_acc(v: float) -> str:
@@ -230,11 +285,151 @@ class SelectionResults(BaseModel):
         def fmt_lat(v: float) -> str:
             return f"{v:.2f}s"
 
-        def fmt_price(r: ModelResult) -> str:
-            p = r.price
+        def fmt_price_val(p: Optional[float]) -> str:
             return f"${p:.6f}" if p is not None else "N/A"
 
-        # Compute column widths.
+        def fmt_price(r: "ModelResult") -> str:
+            return fmt_price_val(r.price)
+
+        marker = ">>>"
+        pad = " " * len(marker)
+
+        if not use_layers:
+            # --- Flat table (single layer / non-bandit) ---
+            unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+            return self._render_flat(unique, fmt_acc, fmt_lat, fmt_price, marker, pad)
+
+        # --- Layered table (bandit algorithms) ---
+        total_combos = len(unique)
+        lines: List[str] = []
+        lines.append("")
+        lines.append(pad + " Model Selection Results")
+
+        # Precompute prefix sums once per result for O(1) layer lookups.
+        prefix_cache = {
+            id(r): self._build_prefix_sums(r) for r in unique if r.datapoint_results
+        }
+
+        for layer_idx, n_samples in enumerate(sample_counts):
+            is_final = layer_idx == len(sample_counts) - 1
+            layer_results = [r for r in unique if r.num_samples >= n_samples]
+            # Look up metrics at this layer's sample count.
+            recomputed: List[Tuple["ModelResult", float, float, Optional[float]]] = []
+            for r in layer_results:
+                pfx = prefix_cache.get(id(r))
+                if pfx is not None:
+                    acc, lat, price = self._metrics_at(pfx, n_samples, r._custom_prices)
+                else:
+                    acc, lat, price = r.accuracy, r.latency_seconds, r.price
+                recomputed.append((r, acc, lat, price))
+            recomputed.sort(key=lambda t: (-t[1], t[2]))
+
+            # Eliminated = combos with exactly this num_samples (won't appear next layer).
+            eliminated = (
+                [r.model_name for r in unique if r.num_samples == n_samples]
+                if not is_final
+                else []
+            )
+
+            # Column widths for this layer.
+            rank_h, model_h, acc_h, lat_h, price_h = (
+                "Rank",
+                "Model",
+                "Accuracy",
+                "Latency",
+                "Price",
+            )
+            rank_w = max(len(rank_h), len(str(len(recomputed))))
+            model_w = max(len(model_h), *(len(t[0].model_name) for t in recomputed),)
+            acc_w = max(len(acc_h), *(len(fmt_acc(t[1])) for t in recomputed))
+            lat_w = max(len(lat_h), *(len(fmt_lat(t[2])) for t in recomputed))
+            price_w = max(
+                len(price_h), *(len(fmt_price_val(t[3])) for t in recomputed),
+            )
+
+            def row(
+                rank_s: str,
+                model_s: str,
+                acc_s: str,
+                lat_s: str,
+                price_s: str,
+                best: bool,
+            ) -> str:
+                prefix = marker if best else pad
+                return (
+                    f"{prefix} {rank_s:>{rank_w}}  "
+                    f"{model_s:<{model_w}}  "
+                    f"{acc_s:>{acc_w}}  "
+                    f"{lat_s:>{lat_w}}  "
+                    f"{price_s:>{price_w}}"
+                )
+
+            header_row = row(rank_h, model_h, acc_h, lat_h, price_h, False)
+            sep = pad + " " + "-" * (len(header_row) - len(pad) - 1)
+
+            label = "Final" if is_final else f"Round {layer_idx + 1}"
+            lines.append("")
+            lines.append(
+                f"{pad} {label} "
+                f"({n_samples} datapoints, "
+                f"{len(layer_results)}/{total_combos} combos):"
+            )
+            lines.append(sep)
+            lines.append(header_row)
+            lines.append(sep)
+
+            for i, (r, acc, lat, price) in enumerate(recomputed, 1):
+                is_best = r.is_best and is_final
+                lines.append(
+                    row(
+                        str(i),
+                        r.model_name,
+                        fmt_acc(acc),
+                        fmt_lat(lat),
+                        fmt_price_val(price),
+                        is_best,
+                    )
+                )
+
+            lines.append(sep)
+
+            if eliminated:
+                lines.append(f"{pad} Eliminated: {', '.join(eliminated)}")
+
+        # Best result summary.
+        best_result = next((r for r in unique if r.is_best), None)
+        if best_result:
+            lines.append("")
+            lines.append(
+                f"{pad} Best: {best_result.model_name} "
+                f"(accuracy: {best_result.accuracy:.2%}, "
+                f"latency: {best_result.latency_seconds:.2f}s, "
+                f"price: {fmt_price(best_result)})"
+            )
+        lines.append("")
+
+        # Selection overhead.
+        parts: List[str] = []
+        if self.selection_wall_time_seconds is not None:
+            parts.append(f"{self.selection_wall_time_seconds:.2f}s")
+        if self.selection_cost is not None:
+            parts.append(f"${self.selection_cost:.6f}")
+        if parts:
+            lines.append(f"{pad} Selection overhead: {', '.join(parts)}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def _render_flat(
+        self,
+        unique: List["ModelResult"],
+        fmt_acc: Callable[[float], str],
+        fmt_lat: Callable[[float], str],
+        fmt_price: Callable[["ModelResult"], str],
+        marker: str,
+        pad: str,
+    ) -> str:
+        """Render the original flat table for non-bandit selectors."""
         rank_h, model_h, acc_h, lat_h, price_h = (
             "Rank",
             "Model",
@@ -247,10 +442,6 @@ class SelectionResults(BaseModel):
         acc_w = max(len(acc_h), *(len(fmt_acc(r.accuracy)) for r in unique))
         lat_w = max(len(lat_h), *(len(fmt_lat(r.latency_seconds)) for r in unique))
         price_w = max(len(price_h), *(len(fmt_price(r)) for r in unique))
-
-        # Row builder.
-        marker = ">>>"
-        pad = " " * len(marker)
 
         def row(
             rank_s: str, model_s: str, acc_s: str, lat_s: str, price_s: str, best: bool,
@@ -298,8 +489,7 @@ class SelectionResults(BaseModel):
             )
         lines.append("")
 
-        # Selection overhead
-        parts = []
+        parts: List[str] = []
         if self.selection_wall_time_seconds is not None:
             parts.append(f"{self.selection_wall_time_seconds:.2f}s")
         if self.selection_cost is not None:
@@ -314,21 +504,209 @@ class SelectionResults(BaseModel):
         """Print the formatted summary table of all results."""
         print(self)
 
+    # ------------------------------------------------------------------
+    # Pareto frontier visualisation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pareto_mask(
+        xs: List[float], ys: List[float], x_minimize: bool, y_minimize: bool,
+    ) -> List[bool]:
+        """Return a boolean mask marking Pareto-optimal points.
+
+        A point is Pareto-optimal if no other point is strictly better on both
+        objectives.
+        """
+        n = len(xs)
+        mask = [True] * n
+        for i in range(n):
+            if not mask[i]:
+                continue
+            for j in range(n):
+                if i == j or not mask[j]:
+                    continue
+                xi, yi, xj, yj = xs[i], ys[i], xs[j], ys[j]
+                # Is j at least as good as i on both, and strictly better on one?
+                x_ok = (xj <= xi) if x_minimize else (xj >= xi)
+                y_ok = (yj <= yi) if y_minimize else (yj >= yi)
+                x_strict = (xj < xi) if x_minimize else (xj > xi)
+                y_strict = (yj < yi) if y_minimize else (yj > yi)
+                if x_ok and y_ok and (x_strict or y_strict):
+                    mask[i] = False
+                    break
+        return mask
+
+    def plot_pareto(self, path: Optional[str] = None) -> None:
+        """Generate two pairwise Pareto frontier plots.
+
+        Subplots: Accuracy vs Latency, Accuracy vs Price.
+
+        Requires ``matplotlib`` (install with ``pip install agentopt-py[plot]``).
+        If *path* is given the figure is saved to that file, otherwise
+        ``plt.show()`` is called.
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError(
+                "matplotlib is required for plot_pareto. "
+                "Install it with: pip install agentopt-py[plot]"
+            )
+
+        # Deduplicate (same logic as __str__).
+        seen: Dict[str, "ModelResult"] = {}
+        for r in self.results:
+            if r.model_name not in seen or (
+                r.is_best and not seen[r.model_name].is_best
+            ):
+                seen[r.model_name] = r
+        all_unique = [r for r in seen.values() if r.price is not None]
+
+        # For bandit algorithms, only plot the final layer (combos with the
+        # most datapoints) so all plotted combos are directly comparable.
+        if all_unique:
+            max_samples = max(r.num_samples for r in all_unique)
+            unique = [r for r in all_unique if r.num_samples == max_samples]
+        else:
+            unique = all_unique
+
+        # Sort so numbering matches the final results table rank order.
+        unique.sort(key=lambda r: (-r.accuracy, r.latency_seconds))
+
+        if len(unique) < 2:
+            print("Not enough results with pricing data to plot.")
+            return
+
+        names = [r.model_name for r in unique]
+        accs = [r.accuracy for r in unique]
+        lats = [r.latency_seconds for r in unique]
+        prices = [r.price for r in unique]  # type: ignore[misc]
+        is_best = [r.is_best for r in unique]
+
+        # Build numbered labels: (1), (2), ...
+        num_labels = [f"({i})" for i in range(1, len(unique) + 1)]
+
+        pairs = [
+            (lats, accs, "Latency (s)", "Accuracy", True, False),
+            (prices, accs, "Price ($)", "Accuracy", True, False),
+        ]
+
+        fig = plt.figure(figsize=(14, 5))
+        # Reserve right margin for the legend.
+        gs = fig.add_gridspec(1, 2, left=0.06, right=0.68, wspace=0.3)
+        axes = [fig.add_subplot(gs[0, i]) for i in range(2)]
+        fig.suptitle("Pareto Frontiers", fontsize=14, fontweight="bold")
+
+        for ax, (xs, ys, xlabel, ylabel, x_min, y_min) in zip(axes, pairs):
+            mask = self._pareto_mask(xs, ys, x_min, y_min)
+
+            # Non-Pareto points.
+            np_x = [x for x, m in zip(xs, mask) if not m]
+            np_y = [y for y, m in zip(ys, mask) if not m]
+            ax.scatter(
+                np_x,
+                np_y,
+                c="lightgray",
+                edgecolors="gray",
+                s=60,
+                zorder=2,
+                label="Dominated",
+            )
+
+            # Pareto-optimal points.
+            p_x = [x for x, m in zip(xs, mask) if m]
+            p_y = [y for y, m in zip(ys, mask) if m]
+            ax.scatter(
+                p_x,
+                p_y,
+                c="steelblue",
+                edgecolors="navy",
+                s=80,
+                zorder=3,
+                label="Pareto-optimal",
+            )
+
+            # Connect frontier with a line (sorted by x).
+            if p_x:
+                order = sorted(range(len(p_x)), key=lambda i: p_x[i])
+                ax.plot(
+                    [p_x[i] for i in order],
+                    [p_y[i] for i in order],
+                    c="steelblue",
+                    linewidth=1.5,
+                    alpha=0.6,
+                    zorder=2,
+                )
+
+            # Highlight best combo.
+            for x, y, b in zip(xs, ys, is_best):
+                if b:
+                    ax.scatter(
+                        [x],
+                        [y],
+                        c="gold",
+                        edgecolors="darkorange",
+                        s=140,
+                        zorder=4,
+                        marker="*",
+                        label="Best",
+                    )
+
+            # Number labels on points.
+            for x, y, lbl in zip(xs, ys, num_labels):
+                ax.annotate(
+                    lbl,
+                    (x, y),
+                    textcoords="offset points",
+                    xytext=(5, 5),
+                    fontsize=7,
+                    fontweight="bold",
+                )
+
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            ax.legend(fontsize=7, loc="best")
+            ax.grid(True, alpha=0.3)
+
+        # External legend mapping numbers to combo names.
+        legend_lines = [f"({i}) {name}" for i, name in enumerate(names, 1)]
+        fig.text(
+            0.72,
+            0.5,
+            "\n".join(legend_lines),
+            fontsize=8,
+            verticalalignment="center",
+            fontfamily="monospace",
+            bbox=dict(
+                boxstyle="round,pad=0.5",
+                facecolor="lightyellow",
+                edgecolor="gray",
+                alpha=0.9,
+            ),
+        )
+
+        if path:
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+            print(f"Pareto plot saved to {path}")
+        else:
+            plt.show()
+        plt.close(fig)
+
 
 class BaseModelSelector(ABC):
     """Abstract base class for model selectors.
 
-    Uses the factory pattern: ``agent_fn(combo_dict)`` returns a runnable
-    agent for each model combination. No ModelProxy or framework adapters.
+    Provide an agent class with ``__init__(self, models)`` and
+    ``run(self, input_data)`` methods.  For each model combination the
+    selector instantiates the class and calls ``run`` on every datapoint.
     """
 
     def __init__(
         self,
-        agent_fn: Callable[[Dict[str, ModelCandidate]], Any],
-        models: ModelsConfig,
-        eval_fn: EvalFn,
-        dataset: Dataset,
-        invoke_fn: Optional[Callable] = None,
+        agent: Any = None,
+        models: ModelsConfig = None,
+        eval_fn: EvalFn = None,
+        dataset: Dataset = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         node_descriptions: Optional[Dict[str, str]] = None,
         tracker: Optional[LLMTracker] = None,
@@ -337,19 +715,17 @@ class BaseModelSelector(ABC):
         Initialize the model selector.
 
         Args:
-            agent_fn: Factory function ``(combo_dict) -> agent``. Takes a dict
-                mapping node names to model candidates (string names or
-                framework-specific model instances) and returns a runnable
-                agent.
+            agent: Agent class implementing ``__init__(self, models)`` and
+                ``run(self, input_data)``.  The selector will call
+                ``agent(combo_dict)`` to create an instance, then call
+                ``instance.run(input_data)`` for each datapoint.
+                No base class is required — duck typing only.
             models: Dict mapping node names to candidate model specs, e.g.
                 ``{"planner": ["gpt-4o", "gpt-4o-mini"]}`` or prebuilt
                 LLM instances.
             eval_fn: Function ``(expected, actual) -> bool | float``
                 (higher is better).
             dataset: Sequence of ``(input_data, expected_answer)`` pairs.
-            invoke_fn: Optional callable ``(agent, input_data) -> result``.
-                If not provided, the agent is called directly as
-                ``agent(input_data)``.
             model_prices: Optional custom pricing overrides. Maps model names
                 to dicts with ``'input_price'`` and ``'output_price'`` keys
                 ($/MTok).
@@ -359,6 +735,11 @@ class BaseModelSelector(ABC):
             tracker: Optional :class:`LLMTracker` instance. If not provided,
                 one is created and started automatically.
         """
+        if agent is None:
+            raise TypeError("'agent' is required")
+        if models is None or eval_fn is None or dataset is None:
+            raise TypeError("'models', 'eval_fn', and 'dataset' are required")
+
         validate_dataset(dataset)
 
         self._custom_prices: Optional[Dict[str, Tuple[float, float]]] = (
@@ -370,14 +751,17 @@ class BaseModelSelector(ABC):
             else None
         )
 
-        self.agent_fn = agent_fn
+        self.agent = agent
         self.eval_fn = eval_fn
         self.dataset = dataset
         self._models = models
         self._node_names = list(models.keys())
-        self.invoke_fn = invoke_fn
         self.model_prices = model_prices
         self.node_descriptions = node_descriptions
+
+        # Detect whether agent.run() is async
+        run_method = getattr(agent, "run", None)
+        self._is_async_run = inspect.iscoroutinefunction(run_method)
 
         if tracker is not None:
             self._tracker = tracker
@@ -429,10 +813,8 @@ class BaseModelSelector(ABC):
     # ------------------------------------------------------------------
 
     def _invoke_agent(self, agent: Any, input_data: Any) -> Any:
-        """Call agent with input_data, using invoke_fn if provided."""
-        if self.invoke_fn is not None:
-            return self.invoke_fn(agent, input_data)
-        return agent(input_data)
+        """Call agent.run(input_data)."""
+        return agent.run(input_data)
 
     def _evaluate_combo(
         self,
@@ -445,7 +827,7 @@ class BaseModelSelector(ABC):
 
         Returns (scores, latencies, datapoint_ids).
         """
-        agent = self.agent_fn(combo)
+        agent = self.agent(combo)
         return self._evaluate_agent(agent, evaluation_tasks, label, dp_offset=dp_offset)
 
     def _evaluate_agent(
@@ -467,7 +849,7 @@ class BaseModelSelector(ABC):
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
             dp_id = f"{label}::dp_{dp_offset + i}"
             try:
-                with self._tracker.track(data_id=dp_id, combo_id=label):
+                with self._tracker.track(data_id=dp_id, combo_id=label) as session:
                     start_time = time.time()
                     actual_result = self._invoke_agent(agent, input_data)
                     wall_clock = time.time() - start_time
@@ -496,7 +878,7 @@ class BaseModelSelector(ABC):
 
         Returns (scores, latencies, datapoint_ids).
         """
-        agent = self.agent_fn(combo)
+        agent = self.agent(combo)
         return await self._evaluate_agent_async(
             agent, evaluation_tasks, label, max_concurrent, dp_offset=dp_offset
         )
@@ -519,15 +901,13 @@ class BaseModelSelector(ABC):
         total = len(evaluation_tasks)
         results: List[Optional[dict]] = [None] * total
 
-        is_async = inspect.iscoroutinefunction(
-            self.invoke_fn if self.invoke_fn else getattr(agent, "__call__", None)
-        )
+        is_async = self._is_async_run
 
         async def _eval_single(idx: int, input_data: Any, expected_answer: Any) -> None:
             dp_id = f"{label}::dp_{dp_offset + idx + 1}"
             async with semaphore:
                 try:
-                    with self._tracker.track(data_id=dp_id, combo_id=label):
+                    with self._tracker.track(data_id=dp_id, combo_id=label) as session:
                         start_time = time.time()
                         if is_async:
                             actual_result = await self._invoke_agent(agent, input_data)
@@ -566,7 +946,7 @@ class BaseModelSelector(ABC):
         return scores, latencies, datapoint_ids
 
     # ------------------------------------------------------------------
-    # Token tracking via agentproxy
+    # Token tracking via agentopt.proxy
     # ------------------------------------------------------------------
 
     def _fetch_tokens(self, combo_id: str) -> Tuple[Dict[str, int], Dict[str, int]]:

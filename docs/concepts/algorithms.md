@@ -1,6 +1,6 @@
 # Selection Algorithms
 
-AgentOpt provides 6 selection algorithms. Choose based on your search space size and evaluation budget.
+AgentOpt provides 8 selection algorithms. Choose based on your search space size and evaluation budget.
 
 ## At a Glance
 
@@ -10,6 +10,8 @@ AgentOpt provides 6 selection algorithms. Choose based on your search space size
 | [Random Search](#random-search) | Sampling | Configurable fraction | Quick baselines |
 | [Hill Climbing](#hill-climbing) | Greedy + restarts | Guided neighbors | Medium spaces |
 | [Arm Elimination](#arm-elimination) | Progressive pruning | Adaptive | Statistical early stopping |
+| [Epsilon LUCB](#epsilon-lucb) | ε-optimal LUCB | Adaptive | Cost savings when ε-optimal is enough |
+| [Threshold SE](#threshold-successive-elimination) | Threshold classification | Adaptive | Filtering above/below a performance target |
 | [LM Proposal](#lm-proposal) | LLM-guided | Shortlist | Leveraging model knowledge |
 | [Bayesian Optimization](#bayesian-optimization) | GP surrogate | Sequential | Expensive evaluations |
 
@@ -18,7 +20,7 @@ AgentOpt provides 6 selection algorithms. Choose based on your search space size
 
     ```python
     selector = AnySelector(
-        agent_fn=agent_maker,
+        agent=MyAgent,
         models=models,
         eval_fn=eval_fn,
         dataset=dataset,
@@ -36,7 +38,7 @@ Evaluates every combination in the Cartesian product.
 from agentopt import BruteForceModelSelector
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -59,7 +61,7 @@ Samples a random fraction of all combinations.
 from agentopt import RandomSearchModelSelector
 
 selector = RandomSearchModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -86,7 +88,7 @@ Greedy local search with random restarts. Defines "neighbors" using model qualit
 from agentopt import HillClimbingModelSelector
 
 selector = HillClimbingModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
@@ -115,11 +117,10 @@ Progressively eliminates statistically dominated combinations. Starts with a sma
 from agentopt import ArmEliminationModelSelector
 
 selector = ArmEliminationModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
-    n_initial=10,
     growth_factor=2.0,
     confidence=1.0,
 )
@@ -127,12 +128,67 @@ selector = ArmEliminationModelSelector(
 
 | Parameter | Default | Description |
 |:----------|:--------|:------------|
-| `n_initial` | `10` | Initial batch size (datapoints) |
+| `n_initial` | `None` | Initial batch size. Default: 10% of dataset (`max(1, len(dataset)//10)`) |
 | `growth_factor` | `2.0` | Batch size multiplier per round |
 | `confidence` | `1.0` | Elimination confidence threshold |
 
 !!! success "When to use"
     When bad combinations should be eliminated early to save budget. Particularly effective when there are clearly weak options.
+
+---
+
+## Epsilon LUCB
+
+Identifies an ε-optimal best arm using Lower and Upper Confidence Bounds. Each round, it compares the current leader's lower confidence bound against the best challenger's upper bound. When the gap closes below epsilon, the algorithm stops with statistical confidence that the selected arm is within epsilon of optimal.
+
+```python
+from agentopt import EpsilonLUCBModelSelector
+
+selector = EpsilonLUCBModelSelector(
+    agent=MyAgent,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    epsilon=0.01,
+    confidence=1.0,
+)
+```
+
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `epsilon` | `0.01` | Acceptable gap from the true best |
+| `n_initial` | `1` | Initial datapoints per combination |
+| `confidence` | `1.0` | Confidence level for bound computation |
+
+!!! success "When to use"
+    When finding the *exact* best combo isn't necessary and you can tolerate a small accuracy gap (epsilon) in exchange for significant search cost savings. Particularly effective when many combos are close in performance.
+
+---
+
+## Threshold Successive Elimination
+
+Instead of finding the single best combination, Threshold SE classifies each combination as above or below a user-defined performance threshold. Each round, it evaluates all surviving combos on one more datapoint and checks their confidence intervals. Once a combo's interval no longer straddles the threshold (entirely above or entirely below), it's classified and removed from the active set.
+
+```python
+from agentopt import ThresholdBanditSEModelSelector
+
+selector = ThresholdBanditSEModelSelector(
+    agent=MyAgent,
+    models=models,
+    eval_fn=eval_fn,
+    dataset=dataset,
+    threshold=0.75,
+    confidence=1.0,
+)
+```
+
+| Parameter | Default | Description |
+|:----------|:--------|:------------|
+| `threshold` | `0.75` | Performance threshold to classify against |
+| `confidence` | `1.0` | Confidence level for bound computation |
+
+!!! success "When to use"
+    When you have a minimum acceptable accuracy in mind (e.g., "I need at least 75%") and want to quickly identify which combinations meet it. Useful for filtering rather than ranking.
 
 ---
 
@@ -144,19 +200,22 @@ Uses a proposer LLM to shortlist promising combinations before evaluation. The p
 from agentopt import LMProposalModelSelector
 
 selector = LMProposalModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
-    proposer_model="gpt-4o-mini",
-    max_combinations=12,
+    proposer_model="gpt-4.1",
+    objective="maximize accuracy and then minimize latency and cost",
+    dataset_preview_size=10,
 )
 ```
 
 | Parameter | Default | Description |
 |:----------|:--------|:------------|
-| `proposer_model` | `"gpt-4o-mini"` | Model used for proposal generation |
-| `max_combinations` | `12` | Max combinations to shortlist |
+| `proposer_model` | `"gpt-4.1"` | Model used for proposal generation |
+| `proposer_client` | `None` | Custom OpenAI-compatible client; auto-creates `OpenAI()` if omitted |
+| `objective` | `"maximize accuracy and then minimize latency and cost"` | Natural-language objective passed to the proposer |
+| `dataset_preview_size` | `10` | Number of dataset examples shown to the proposer |
 
 !!! success "When to use"
     When you want to leverage an LLM's knowledge about model capabilities to skip obviously bad combinations.
@@ -171,24 +230,24 @@ Uses a Gaussian Process surrogate to predict accuracy for unevaluated combinatio
 from agentopt import BayesianOptimizationModelSelector
 
 selector = BayesianOptimizationModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models=models,
     eval_fn=eval_fn,
     dataset=dataset,
-    n_initial_random=5,
-    n_iterations=20,
+    batch_size=1,
+    sample_fraction=0.25,
 )
 ```
 
 | Parameter | Default | Description |
 |:----------|:--------|:------------|
-| `n_initial_random` | `5` | Random combinations to seed the GP |
-| `n_iterations` | `20` | GP-guided iterations after seeding |
+| `batch_size` | `1` | Combinations to evaluate per GP iteration |
+| `sample_fraction` | `0.25` | Fraction of dataset to use per evaluation |
 
 !!! note "Extra dependency"
     Requires PyTorch and BoTorch:
     ```bash
-    pip install "agentopt[bayesian]"
+    pip install "agentopt-py[bayesian]"
     ```
 
 !!! success "When to use"

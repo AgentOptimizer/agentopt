@@ -32,15 +32,20 @@ _DEFAULT_FLUSH_INTERVAL = 10.0
 _DB_FILENAME = "cache.db"
 
 
-def _make_cache_key(request_body: dict) -> str:
+def _make_cache_key(request_body: dict, request_path: Optional[str] = None) -> str:
     """Deterministic hash of the request payload.
 
     Includes every field that affects the response (model, messages,
     temperature, etc.) but excludes ephemeral metadata like ``stream``.
+
+    ``request_path`` is folded into the hash so providers that key the
+    model in the URL (e.g. Gemini's ``/v1beta/models/{model}:generateContent``)
+    don't collide across models that produce byte-identical request bodies.
     """
     body = {k: v for k, v in request_body.items() if k not in ("stream",)}
     canonical = json.dumps(body, sort_keys=True, ensure_ascii=True)
-    return hashlib.sha256(canonical.encode()).hexdigest()
+    path_part = request_path or ""
+    return hashlib.sha256(f"{path_part}\n{canonical}".encode()).hexdigest()
 
 
 @dataclass
@@ -161,7 +166,7 @@ class ResponseCache:
                     data = json.loads(data_json)
                     self._store[key] = CacheEntry.from_dict(data)
                     loaded += 1
-                except (json.JSONDecodeError, KeyError) as exc:
+                except (json.JSONDecodeError, KeyError, ValueError) as exc:
                     logger.warning("Skipping corrupt cache row %s: %s", key, exc)
             if loaded:
                 logger.debug("Loaded %d cache entries from %s", loaded, self._db_path)
@@ -175,7 +180,7 @@ class ResponseCache:
     def _start_flush_thread(self) -> None:
         self._flush_stop.clear()
         self._flush_thread = threading.Thread(
-            target=self._flush_loop, daemon=True, name="agentproxy-cache-flush",
+            target=self._flush_loop, daemon=True, name="agentopt-cache-flush",
         )
         self._flush_thread.start()
 

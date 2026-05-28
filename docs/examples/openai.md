@@ -11,13 +11,16 @@ from agentopt import BruteForceModelSelector
 
 client = OpenAI()
 
-def agent_maker(models):
-    def run(input_data):
+class MyAgent:
+    def __init__(self, models):
+        self.models = models
+
+    def run(self, input_data):
         question = input_data if isinstance(input_data, str) else input_data["question"]
 
         # Step 1: Planner generates a plan
         plan = client.chat.completions.create(
-            model=models["planner"],
+            model=self.models["planner"],
             messages=[
                 {"role": "system", "content": "Create a brief plan to answer the question."},
                 {"role": "user", "content": question},
@@ -26,14 +29,13 @@ def agent_maker(models):
 
         # Step 2: Solver executes the plan
         answer = client.chat.completions.create(
-            model=models["solver"],
+            model=self.models["solver"],
             messages=[
                 {"role": "system", "content": f"Follow this plan and answer concisely:\n{plan}"},
                 {"role": "user", "content": question},
             ],
         ).choices[0].message.content
         return answer
-    return run
 
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
@@ -47,7 +49,7 @@ dataset = [
 ]
 
 selector = BruteForceModelSelector(
-    agent_fn=agent_maker,
+    agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
         "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
@@ -60,4 +62,4 @@ results = selector.select_best(parallel=True)
 results.print_summary()
 ```
 
-[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/custom_agent_example.py)
+[:octicons-file-code-24: Full example on GitHub](https://github.com/AgentOptimizer/agentopt/blob/main/examples/selection/local/custom_agent.py)

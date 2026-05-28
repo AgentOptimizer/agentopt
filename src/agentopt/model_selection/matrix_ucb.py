@@ -18,6 +18,10 @@ datapoint slots).
 
 ``observation_budget_fraction`` (default ``1.0``) limits how much of the grid is
 observed; below ``1.0`` the run stops once that fraction (ceiling) of cells is filled.
+
+In ``objective_mode="pareto"``, cell rewards use **Chebyshev scalarization** over
+normalized error, latency, and cost (ideal corner 0); tradeoff directions rotate
+automatically.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ import numpy as np
 
 from ..base_models import Dataset, EvalFn, ModelCandidate
 from .base import BaseModelSelector, ModelResult, SelectionResults
+from .objectives import chebyshev_scalar, chebyshev_weight_at
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +109,90 @@ def _ucb_plain_next_batch(
     return np.stack([combos, dps.astype(np.int64)])
 
 
+def _ucb_chebyshev_next_batch(
+    selector: BaseModelSelector,
+    cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
+    n_combos: int,
+    n_datapoints: int,
+    observed_mask: np.ndarray,
+    a: float,
+    max_cells: int,
+    rng: np.random.Generator,
+) -> Optional[np.ndarray]:
+    """Pick cells via pessimistic Chebyshev bounds (lower is better)."""
+    weights = chebyshev_weight_at(selector._chebyshev_step)
+    bounds = np.full(n_combos, np.inf, dtype=np.float64)
+    counts = np.zeros(n_combos, dtype=np.int64)
+
+    for combo_i in range(n_combos):
+        scores: List[float] = []
+        lats: List[float] = []
+        costs: List[Optional[float]] = []
+        for dp_i in range(n_datapoints):
+            if not observed_mask[combo_i, dp_i]:
+                continue
+            t = cell_data.get((combo_i, dp_i))
+            if not t or t[3].startswith("missing::"):
+                continue
+            sc, lat, cost, _ = t
+            scores.append(sc)
+            lats.append(lat)
+            costs.append(cost)
+        n = len(scores)
+        counts[combo_i] = n
+        if n == 0:
+            continue
+        mean_sc = sum(scores) / n
+        mean_lat = sum(lats) / n
+        finite_costs = [c for c in costs if c is not None and math.isfinite(c)]
+        mean_cost = (
+            sum(finite_costs) / len(finite_costs) if finite_costs else None
+        )
+        bonus = math.sqrt(a / n)
+        # Pessimistic gaps: high error, high latency, high cost.
+        score_lcb = max(0.0, min(1.0, mean_sc - bonus))
+        lat_pess = mean_lat + bonus
+        cost_pess = (
+            (mean_cost + bonus) if mean_cost is not None else None
+        )
+        ne, nl, nc = selector._normalized_pareto_gaps(
+            score_lcb, lat_pess, cost_pess,
+        )
+        use_cost = cost_pess is not None and math.isfinite(cost_pess)
+        bounds[combo_i] = chebyshev_scalar(
+            ne, nl, nc, weights, use_cost=use_cost,
+        )
+
+    fully_observed_combo = counts == n_datapoints
+    unobserved_combo = counts == 0
+    bounds[fully_observed_combo] = np.inf
+    bounds[unobserved_combo] = -np.inf
+    if bool(np.all(fully_observed_combo)):
+        return None
+    best_combo = int(np.argmin(bounds))
+    unobserved_dp = np.where(~observed_mask[best_combo])[0]
+    n_unobserved = int(unobserved_dp.size)
+    if n_unobserved <= 0:
+        return None
+    k = min(max(max_cells, 1), n_unobserved)
+    pick = rng.permutation(n_unobserved)[:k]
+    dps = unobserved_dp[pick]
+    combos = np.full(k, best_combo, dtype=np.int64)
+    return np.stack([combos, dps.astype(np.int64)])
+
+
+def _cell_reward(
+    selector: BaseModelSelector,
+    score: float,
+    latency: float,
+    cost: Optional[float],
+) -> float:
+    """Scalar stored in the UCB matrix (higher is better for plain UCB)."""
+    if selector._pareto_exploration:
+        return -selector._chebyshev_cell_scalar(score, latency, cost)
+    return selector._combined_objective(score, latency, cost)
+
+
 def _build_selection_results(
     selector: BaseModelSelector,
     all_combos: List[Dict[str, ModelCandidate]],
@@ -143,18 +232,7 @@ def _build_selection_results(
                 )
             )
 
-    selector._finalize_combined_objectives(all_results)
-    best_info = selector._find_best(all_results)
-    if best_info is not None:
-        best_name, _ = best_info
-        for result in all_results:
-            if result.model_name == best_name:
-                result.is_best = True
-                break
-    else:
-        print("\n  No combinations succeeded.")
-
-    return SelectionResults(results=all_results)
+    return selector._finalize_selection_outcomes(all_results)
 
 
 def _record_cells(
@@ -185,18 +263,13 @@ def _refresh_observed_np(
     observed: np.ndarray,
     cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
 ) -> None:
-    """Rewrite ``observed`` from ``cell_data`` against the selector's current normalizer.
-
-    Called after absorbing new observations so plain-UCB row means use the
-    latest combined objective rather than stale values. No-op (preserves prior
-    contents) when no lambdas are configured.
-    """
-    if not selector._has_combined_objective:
+    """Rewrite ``observed`` from ``cell_data`` against the selector's current normalizer."""
+    if not selector._uses_matrix_scalar_refresh:
         return
     for (ci, di), (sc, lat, cost, dp_id) in cell_data.items():
         if dp_id.startswith("missing::"):
             continue
-        observed[ci, di] = selector._combined_objective(sc, lat, cost)
+        observed[ci, di] = _cell_reward(selector, sc, lat, cost)
 
 
 def _refresh_observed_t(
@@ -205,12 +278,12 @@ def _refresh_observed_t(
     cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
 ) -> None:
     """Torch counterpart of :func:`_refresh_observed_np` for the LRF variant."""
-    if not selector._has_combined_objective:
+    if not selector._uses_matrix_scalar_refresh:
         return
     for (ci, di), (sc, lat, cost, dp_id) in cell_data.items():
         if dp_id.startswith("missing::"):
             continue
-        observed_t[ci, di] = float(selector._combined_objective(sc, lat, cost))
+        observed_t[ci, di] = float(_cell_reward(selector, sc, lat, cost))
 
 
 class MatrixUCBModelSelector(BaseModelSelector):
@@ -224,6 +297,9 @@ class MatrixUCBModelSelector(BaseModelSelector):
     here, **fraction of matrix cells** to observe) caps evaluations. ``1.0`` fills the
     full grid; ``0.1`` stops after about 10% of cells. If both are passed, ``sample_fraction``
     wins.
+
+    Requires ``objective_mode``: ``"weighted"`` (linear scalar + ``lambda_*``) or
+    ``"pareto"`` (Chebyshev exploration, frontier output).
     """
 
     def __init__(
@@ -238,6 +314,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        objective_mode: Optional[str] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
     ) -> None:
@@ -248,6 +325,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            objective_mode=objective_mode,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
         )
@@ -286,10 +364,13 @@ class MatrixUCBModelSelector(BaseModelSelector):
         )
         total_cells = n_combos * n_datapoints
 
+        mode_label = (
+            "Chebyshev Pareto" if self._pareto_exploration else "weighted scalar"
+        )
         print(f"\n{'='*60}")
         print(
-            f"Matrix UCB (async): {n_combos} combinations × {n_datapoints} datapoints, "
-            f"a={self.a}, max {mc} concurrent"
+            f"Matrix UCB (async, {mode_label}): {n_combos} combinations × "
+            f"{n_datapoints} datapoints, a={self.a}, max {mc} concurrent"
             + (
                 f", observe up to {target_n}/{total_cells} cells "
                 f"({self.observation_budget_fraction:.0%} budget)"
@@ -327,7 +408,20 @@ class MatrixUCBModelSelector(BaseModelSelector):
             mc_step = min(mc, target_n - filled)
             if mc_step <= 0:
                 break
-            batch = _ucb_plain_next_batch(observed, self.a, mc_step, self._rng)
+            observed_mask = ~np.isnan(observed)
+            if self._pareto_exploration:
+                batch = _ucb_chebyshev_next_batch(
+                    self,
+                    cell_data,
+                    n_combos,
+                    n_datapoints,
+                    observed_mask,
+                    self.a,
+                    mc_step,
+                    self._rng,
+                )
+            else:
+                batch = _ucb_plain_next_batch(observed, self.a, mc_step, self._rng)
             if batch is None:
                 break
             combo_row, dp_row = batch[0], batch[1]
@@ -348,10 +442,12 @@ class MatrixUCBModelSelector(BaseModelSelector):
                 costs = self._observe_combo(sc, lat, ids) if sc else []
                 _record_cells(cell_data, combo_i, dp_i, sc, lat, costs, ids)
                 if sc:
-                    observed[combo_i, dp_i] = self._combined_objective(
-                        sc[0], lat[0], costs[0],
+                    observed[combo_i, dp_i] = _cell_reward(
+                        self, sc[0], lat[0], costs[0] if costs else None,
                     )
             _refresh_observed_np(self, observed, cell_data)
+            if self._pareto_exploration:
+                self._advance_chebyshev_direction()
 
         return _build_selection_results(self, all_combos, cell_data, n_datapoints)
 
@@ -364,6 +460,8 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
     :class:`MatrixUCBModelSelector`). Warmup threshold: ``warmup_percentage`` or
     ``warmup_fraction`` — random probes until this **fraction of the full grid** is
     observed, then LRF+UCB (banditeval-style).
+
+    Supports the same ``objective_mode`` values as :class:`MatrixUCBModelSelector`.
     """
 
     def __init__(
@@ -386,6 +484,7 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
         seed: Optional[int] = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
         tracker=None,
+        objective_mode: Optional[str] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
     ) -> None:
@@ -413,6 +512,7 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
             dataset=dataset,
             model_prices=model_prices,
             tracker=tracker,
+            objective_mode=objective_mode,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
         )
@@ -573,9 +673,13 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
                 )
                 if sc:
                     observed_t[int(combo_i), int(dp_i)] = float(
-                        self._combined_objective(sc[0], lat[0], costs[0])
+                        _cell_reward(
+                            self, sc[0], lat[0], costs[0] if costs else None,
+                        )
                     )
             _refresh_observed_t(self, observed_t, cell_data)
+            if self._pareto_exploration:
+                self._advance_chebyshev_direction()
 
         return _build_selection_results(self, all_combos, cell_data, n_datapoints)
 
@@ -671,8 +775,12 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
                 _record_cells(cell_data, combo_i, dp_i, sc, lat, costs, ids)
                 if sc:
                     observed_t[combo_i, dp_i] = float(
-                        self._combined_objective(sc[0], lat[0], costs[0])
+                        _cell_reward(
+                            self, sc[0], lat[0], costs[0] if costs else None,
+                        )
                     )
             _refresh_observed_t(self, observed_t, cell_data)
+            if self._pareto_exploration:
+                self._advance_chebyshev_direction()
 
         return _build_selection_results(self, all_combos, cell_data, n_datapoints)

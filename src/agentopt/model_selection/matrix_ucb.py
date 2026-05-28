@@ -31,7 +31,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from ..base_models import Dataset, EvalFn, ModelCandidate
-from ..model_price import compute_price
 from .base import BaseModelSelector, ModelResult, SelectionResults
 
 logger = logging.getLogger(__name__)

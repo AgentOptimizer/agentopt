@@ -15,7 +15,7 @@ Prerequisites:
     4. For matrix UCB-LRF: pip install "agentopt-py[ucb_lrf]"
 
 The matrix UCB demos use ``sample_fraction=0.1`` (~10% of the combination × datapoint
-grid), like ``random`` / ``bayesian``. Matrix UCB-LRF also accepts ``warmup_fraction``
+grid), like ``bayesian``. Matrix UCB-LRF also accepts ``warmup_fraction``
 (alias for ``warmup_percentage``). Use ``1.0`` for a full grid; tune ``max_concurrent`` for step size.
 """
 
@@ -103,32 +103,6 @@ def run_auto():
     return selector.select_best(parallel=True)
 
 
-def run_random():
-    """method="random" — evaluate a random subset of combinations."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="random",
-        sample_fraction=0.25,  # evaluate 25% of all combinations
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_hill_climbing():
-    """method="hill_climbing" — greedy search using model quality/speed rankings."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="hill_climbing",
-        batch_size=4,  # number of neighbors to evaluate per step
-    )
-    return selector.select_best(parallel=True)
-
-
 def run_arm_elimination():
     """method="arm_elimination" — eliminates statistically dominated combinations early."""
     selector = ModelSelector(
@@ -137,44 +111,6 @@ def run_arm_elimination():
         eval_fn=eval_fn,
         dataset=dataset,
         method="arm_elimination",
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_epsilon_lucb():
-    """method="epsilon_lucb" — stops when the best arm is identified within epsilon."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="epsilon_lucb",
-        epsilon=0.01,  # acceptable gap from the true best
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_threshold():
-    """method="threshold" — classify combinations as above/below a quality threshold."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="threshold",
-        threshold=0.75,  # minimum acceptable accuracy
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_lm_proposal():
-    """method="lm_proposal" — use a proposer LLM to shortlist promising combinations."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="lm_proposal",
     )
     return selector.select_best(parallel=True)
 
@@ -233,12 +169,7 @@ def run_matrix_ucb_lrf():
 
 METHODS = {
     "auto": run_auto,
-    "random": run_random,
-    "hill_climbing": run_hill_climbing,
     "arm_elimination": run_arm_elimination,
-    "epsilon_lucb": run_epsilon_lucb,
-    "threshold": run_threshold,
-    "lm_proposal": run_lm_proposal,
     "bayesian": run_bayesian,
     "matrix_ucb": run_matrix_ucb,
     "matrix_ucb_lrf": run_matrix_ucb_lrf,
@@ -253,12 +184,7 @@ if __name__ == "__main__":
         epilog="""
 Available methods:
   auto              Automatically finds the best combination (wired to arm_elimination; lower search cost than brute_force) (default)
-  random            Evaluate a random subset of combinations
-  hill_climbing     Greedy search using model quality/speed rankings
   arm_elimination   Eliminate statistically dominated combinations early
-  epsilon_lucb      Stop when best arm is identified within epsilon
-  threshold         Classify combinations above/below a quality threshold
-  lm_proposal       Use a proposer LLM to shortlist promising combinations
   bayesian          GP-based Bayesian optimization (requires agentopt[bayesian])
   matrix_ucb        UCB on the combination × datapoint matrix (demo: 10%% budget)
   matrix_ucb_lrf    Same with low-rank uncertainty (requires agentopt[ucb_lrf])

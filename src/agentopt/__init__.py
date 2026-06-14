@@ -80,16 +80,11 @@ from .model_selection import (
     ArmEliminationModelSelector,
     BaseModelSelector,
     BruteForceModelSelector,
-    EpsilonLUCBModelSelector,
-    HillClimbingModelSelector,
-    LMProposalModelSelector,
     DatapointResult,
     MatrixUCBLRFModelSelector,
     MatrixUCBModelSelector,
     ModelResult,
-    RandomSearchModelSelector,
     SelectionResults,
-    ThresholdBanditSEModelSelector,
 )
 
 # Bayesian is optional (requires torch/botorch)
@@ -101,14 +96,9 @@ except ImportError:
 _METHODS = {
     "auto": ArmEliminationModelSelector,
     "brute_force": BruteForceModelSelector,
-    "random": RandomSearchModelSelector,
-    "hill_climbing": HillClimbingModelSelector,
     "arm_elimination": ArmEliminationModelSelector,
-    "epsilon_lucb": EpsilonLUCBModelSelector,
     "matrix_ucb": MatrixUCBModelSelector,
     "matrix_ucb_lrf": MatrixUCBLRFModelSelector,
-    "threshold": ThresholdBanditSEModelSelector,
-    "lm_proposal": LMProposalModelSelector,
     "bayesian": BayesianOptimizationModelSelector,
 }
 
@@ -131,13 +121,11 @@ def ModelSelector(
             the best combination (same implementation as ``"arm_elimination"`` —
             strong best-arm identification with lower search cost than
             ``"brute_force"``). Other options: ``"brute_force"``,
-            ``"random"``, ``"hill_climbing"``, ``"arm_elimination"``,
-            ``"epsilon_lucb"``, ``"matrix_ucb"``, ``"matrix_ucb_lrf"``,
-            ``"threshold"``,
-            ``"lm_proposal"``, ``"bayesian"``.
+            ``"arm_elimination"``, ``"matrix_ucb"``, ``"matrix_ucb_lrf"``,
+            ``"bayesian"``.
         **kwargs: Additional arguments passed to the selector
-            (e.g. ``epsilon``, ``threshold``, ``sample_fraction``, ``warmup_fraction``
-            for matrix UCB-LRF; ``lambda_cost``, ``lambda_latency`` for the optional
+            (e.g. ``sample_fraction``, ``warmup_fraction`` for matrix UCB-LRF;
+            ``lambda_cost``, ``lambda_latency`` for the optional
             combined objective ``score - lambda_cost*norm_cost -
             lambda_latency*norm_latency`` — both default to ``0.0`` / accuracy-only).
 
@@ -167,14 +155,9 @@ __all__ = [
     "CallRecord",
     # Selectors
     "BruteForceModelSelector",
-    "RandomSearchModelSelector",
-    "HillClimbingModelSelector",
     "ArmEliminationModelSelector",
-    "EpsilonLUCBModelSelector",
     "MatrixUCBModelSelector",
     "MatrixUCBLRFModelSelector",
-    "ThresholdBanditSEModelSelector",
-    "LMProposalModelSelector",
     "BayesianOptimizationModelSelector",
     # Result types
     "DatapointResult",

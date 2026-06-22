@@ -10,7 +10,7 @@
 | File | What it shows |
 |---|---|
 | [`custom_agent.py`](local/custom_agent.py) | Plain Python + OpenAI SDK — the canonical starter. |
-| [`advanced_algorithms.py`](local/advanced_algorithms.py) | Every `method=` available on `ModelSelector` (auto, random, arm_elimination, bayesian, …). |
+| [`advanced_algorithms.py`](local/advanced_algorithms.py) | Every `method=` available on `ModelSelector` (auto, arm_elimination, matrix_ucb, bayesian, …). |
 | [`openai_sdk.py`](local/openai_sdk.py) | OpenAI Agents SDK. |
 | [`langchain.py`](local/langchain.py), [`langgraph.py`](local/langgraph.py) | LangChain / LangGraph. |
 | [`llamaindex.py`](local/llamaindex.py) | LlamaIndex. |

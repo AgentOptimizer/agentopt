@@ -218,16 +218,11 @@ Candidates may be model-name strings or framework-specific LLM instances, as lon
 | `auto` | **Default.** Aliases `arm_elimination`. Start here. | — |
 | `arm_elimination` | Best-arm identification with statistical elimination. | `n_initial`, `growth_factor`, `confidence` |
 | `brute_force` | Small combo space; exhaustive baseline. | — |
-| `random` | Cheap exploratory scan over a large space. | `sample_fraction`, `seed` |
-| `hill_climbing` | Local search; combos have smooth structure. | `max_iterations`, `num_restarts`, `patience`, `seed`, `batch_size` |
-| `epsilon_lucb` | Find any combo within ε of the best. | `epsilon`, `n_initial`, `confidence` |
-| `threshold` | Classify combos above/below a quality bar. | `threshold`, `n_initial`, `confidence` |
 | `matrix_ucb` | UCB over a node × model matrix; structured spaces. | see `docs/api/selectors.md` |
 | `matrix_ucb_lrf` | Low-rank-factorization variant of matrix UCB. | see `docs/api/selectors.md` |
-| `lm_proposal` | Ask a proposer LLM to pick a combo, then evaluate it. | `proposer_model`, `proposer_client`, `objective`, `dataset_preview_size`, `node_descriptions` |
 | `bayesian` | Surrogate-model-guided search over medium/large spaces. | `batch_size`, `sample_fraction` |
 
-Other `ModelSelector` kwargs: `model_prices` (custom token pricing), `tracker` (e.g. `LLMTracker(cache_dir=...)` for disk-cache reuse), `node_descriptions` (used by `lm_proposal`), `lambda_cost` / `lambda_latency` (optional; default `0.0` — scalar combined objective `score - λ_cost·norm(cost) - λ_latency·norm(latency)`; see `docs/api/selectors.md#combined-objective-optional-costlatency-weights`).
+Other `ModelSelector` kwargs: `model_prices` (custom token pricing), `tracker` (e.g. `LLMTracker(cache_dir=...)` for disk-cache reuse), `lambda_cost` / `lambda_latency` (optional; default `0.0` — scalar combined objective `score - λ_cost·norm(cost) - λ_latency·norm(latency)`; see `docs/api/selectors.md#combined-objective-optional-costlatency-weights`).
 
 ### 5. Concurrency
 

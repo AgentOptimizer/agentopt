@@ -47,7 +47,7 @@ n_combo       = max_concurrent // dp_concurrent
 | 10 | 10 | 1 | 10 | All slots to a single combo's datapoints |
 
 !!! info "Bandit algorithms"
-    Bandit-style selectors (Arm Elimination, Threshold SE, Epsilon-LUCB) often evaluate one datapoint at a time per round (`batch_size=1`). In this case, all `max_concurrent` slots go to running combos in parallel — which is exactly what you want for round-by-round elimination.
+    Bandit-style selectors (Arm Elimination) often evaluate one datapoint at a time per round (`batch_size=1`). In this case, all `max_concurrent` slots go to running combos in parallel — which is exactly what you want for round-by-round elimination.
 
 ## Per-Algorithm Behavior
 
@@ -56,11 +56,8 @@ Each selector recomputes concurrency limits at the appropriate granularity:
 | Selector | When recomputed | Notes |
 |:---------|:----------------|:------|
 | **Brute Force** | Once | Full dataset, fixed batch size |
-| **Random Search** | Once | Same as brute force on sampled combos |
-| **Hill Climbing** | Per iteration | Recomputed for each neighbor batch |
 | **Arm Elimination** | Per round | Batch size grows each round |
-| **Threshold SE** | Init + per round | Init batch, then batch_size=1 |
-| **Epsilon-LUCB** | Init + per round | Same pattern as Threshold SE |
+| **Matrix UCB** | Per UCB step | Caps cells per step via `max_concurrent` |
 | **Bayesian Optimization** | Per BO batch | Recomputed for each acquisition batch |
 
 ## Usage

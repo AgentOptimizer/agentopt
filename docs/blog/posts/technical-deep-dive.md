@@ -109,23 +109,9 @@ Arm Elimination works in rounds:
 
 Bad combos get eliminated early and cheaply. Good combos earn more search budget. The search cost is far less than brute force.
 
-### Epsilon-LUCB
-
-When you just need to find *the single best* combo, epsilon-LUCB (Lower/Upper Confidence Bound) is extremely sample-efficient. Each round, it compares the current leader's lower confidence bound against the best challenger's upper bound. When the gap closes below a threshold epsilon, you've found your winner with statistical confidence.
-
-### Threshold Successive Elimination
-
-When you have a minimum acceptable accuracy in mind (e.g., "I need at least 70%"), Threshold SE takes a different approach. Instead of finding the single best combo, it classifies each combo as above or below your threshold. Each round, it evaluates all surviving combos on one more datapoint and checks their confidence intervals. Once a combo's interval no longer straddles the threshold (entirely above or entirely below), it's classified and removed from the active set. This is useful when you care about filtering rather than ranking.
-
 ### Bayesian Optimization
 
 For expensive evaluations, Bayesian Optimization builds a Gaussian Process surrogate model that predicts accuracy as a function of the model combination. It uses Expected Improvement to pick the most informative next evaluation, spending budget where uncertainty is highest and potential is greatest.
-
-### Hill Climbing
-
-Hill Climbing takes a different approach: greedy local search. Start with a random model combination, then swap one model at a time, keeping each swap only if it improves accuracy. Use random restarts to avoid getting stuck in local optima.
-
-The catch: Hill Climbing requires **topology information**. It needs a notion of which models are "neighbors" of each other, typically an ordering by capability or cost. This lets it search intelligently (try the next-best model, not a random one), but it also means you're injecting assumptions about model quality that may not hold. As the HotpotQA results show, model capability rankings don't always predict combo performance. When the topology is misleading, Hill Climbing can get stuck exploring the wrong region of the search space.
 
 ### How Much Do These Save?
 
@@ -169,20 +155,13 @@ We validated AgentOpt across four diverse benchmarks using 9 models on Amazon Be
 <tbody>
 <tr><td><strong>Brute Force</strong></td><td>74.75% / 0%</td><td>70.00% / 0%</td><td>74.27% / 0%</td><td>98.84% / 0%</td></tr>
 <tr><td><strong>Arm Elimination</strong></td><td>74.10% / 24%</td><td>69.37% / 12%</td><td><span class="ao-efficient">73.19% / 67%</span></td><td><span class="ao-efficient">98.83% / 58%</span></td></tr>
-<tr><td><strong>Hill Climbing</strong></td><td>74.55% / 14%</td><td>70.00% / 15%</td><td><span class="ao-efficient">73.13% / 63%</span></td><td><span class="ao-efficient">98.76% / 56%</span></td></tr>
 <tr><td><strong>Bayesian Opt</strong></td><td>72.43% / 45%</td><td>69.27% / 40%</td><td><span class="ao-efficient">73.33% / 76%</span></td><td><span class="ao-efficient">95.41% / 71%</span></td></tr>
-<tr><td><strong>Random Search</strong></td><td><span class="ao-efficient">68.57% / 63%</span></td><td><span class="ao-efficient">67.13% / 63%</span></td><td><span class="ao-efficient">72.25% / 74%</span></td><td><span class="ao-efficient">98.17% / 74%</span></td></tr>
-<tr><td><strong>Epsilon-LUCB</strong></td><td>73.14% / 47%</td><td><span class="ao-efficient">69.90% / 53%</span></td><td>69.71% / 97%</td><td><span class="ao-efficient">96.99% / 95%</span></td></tr>
-<tr><td><strong>Threshold SE</strong></td><td>57.83% / 62%</td><td>58.19% / 78%</td><td>65.42% / 88%</td><td>74.52% / 94%</td></tr>
-<tr><td><strong>LM Proposal</strong></td><td>74.75% / 48%</td><td>44.03% / 96%</td><td>34.13% / 97%</td><td><span class="ao-efficient">95.82% / 96%</span></td></tr>
 </tbody>
 </table>
 
 *Format: obtained accuracy / search cost savings vs brute force. Averaged over 50 seeds. <span class="ao-efficient">Green</span> = within 5% of brute force accuracy AND >50% savings on that metric.*
 
-Arm Elimination and Hill Climbing achieve comparable mean accuracy (within 1 percentage point of brute force across all four benchmarks), with Arm Elimination offering modestly higher cost savings on average (40% vs 37%). No single selector dominates all benchmarks. Hill Climbing excels when top models are tightly clustered (BFCL), while Arm Elimination performs best when there is clear separation between the best combo and the rest (HotpotQA, MathQA). However, Hill Climbing requires a hand-crafted topology ranking of the models upfront — you need prior knowledge about model quality and speed ordering for it to search effectively. Arm Elimination is fully assumption-free: it uses only the observed evaluation data to eliminate dominated combos, making it more practical when you don't have reliable priors about model capabilities.
-
-LM Proposal (asking GPT-4.1 to predict the best combo) matches brute force on GPQA (where the answer is intuitive) but collapses to 34% on HotpotQA and 44% on BFCL. It cannot predict that Ministral outperforms Opus as a planner.
+Arm Elimination consistently achieves near-optimal accuracy while using significantly less budget than brute force across our four benchmarks. No single selector dominates all benchmarks — Arm Elimination performs best when there is clear separation between the best combo and the rest (HotpotQA, MathQA), while Bayesian Optimization can achieve high savings on large search spaces at the cost of lower find rates.
 
 ## Get Started
 

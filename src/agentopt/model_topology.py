@@ -1,8 +1,8 @@
 """
 Model topology: general-impression rankings of LLM models by quality and speed.
 
-These rankings encode a rough ordering (not benchmark-precise) so that search
-algorithms like hill climbing can define "neighbors" in model space.
+These rankings encode a rough ordering (not benchmark-precise) of models by
+quality and speed.
 """
 
 from typing import List, Optional

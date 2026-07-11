@@ -1,0 +1,21 @@
+\begin{table}[!htbp]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Selector} & \textbf{$\beta$} & \textbf{Mean Perf} & \textbf{$J(c)$} & \textbf{Budget Savings} & \textbf{Found Best} \\
+\midrule
+Brute Force & --- & 68.18\% & 0.6360 & 0.0\% & 100\% \\
+\midrule
+Hill Climbing & --- & 68.58\% & 0.6333 & 14.0\% & 94\% \\
+Matrix UCB-E & 0.5 & 68.58\% & 0.6333 & 50.0\% & 94\% \\
+Arm Elimination & --- & 68.36\% & 0.6286 & 53.4\% & 90\% \\
+Bayesian Opt & --- & 70.48\% & 0.6122 & 44.4\% & 52\% \\
+Matrix UCB-E & 0.2 & 70.28\% & 0.6082 & 80.0\% & 50\% \\
+Random Search & --- & 66.51\% & 0.5789 & 66.7\% & 30\% \\
+\bottomrule
+\end{tabular}
+\caption{Multi-objective selector comparison on GPQA ($\lambda_{cost}=\lambda_{latency}=0.1$, min-max normalized, 50 seeds). J-optimal configuration: gpt-oss-120b (Perf=68.18\%, $J$=0.6360).}
+\label{tab:multiobjective-gpqa}
+\end{table}

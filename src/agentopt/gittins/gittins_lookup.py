@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Scalar, UInt
 
-from q_estimation import tabular_q_estimate
+from .q_estimation import tabular_q_estimate
 
 
 def _compute_roots_for_random_walk(

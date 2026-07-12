@@ -14,12 +14,12 @@ import jax
 import jax.numpy as jnp
 import torch
 
-from gittins_shrinking_posterior import (
+from .gittins_shrinking_posterior import (
     compute_gittins_shrinking_posterior_walk_batch_mean,
     compute_gittins_shrinking_posterior_walk_per_observation,
     transition_stds_shrinking_gaussian_posterior,
 )
-from gittins_lookup import compute_roots_lookup_table
+from .gittins_lookup import compute_roots_lookup_table
 
 
 def _cost_vector_per_arm(

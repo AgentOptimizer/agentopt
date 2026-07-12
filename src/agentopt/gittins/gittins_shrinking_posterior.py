@@ -16,7 +16,7 @@ on the chosen arm in one step.
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Scalar, UInt
 
-from gittins_index_computation import compute_gittins_for_random_walk
+from .gittins_index_computation import compute_gittins_for_random_walk
 
 
 def transition_stds_batch_mean_sequence(

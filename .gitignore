@@ -219,3 +219,6 @@ examples/optimized_config.yaml
 
 # Terminal Bench run artifacts
 runs/
+
+# Local offline selector comparison outputs (do not commit)
+result/

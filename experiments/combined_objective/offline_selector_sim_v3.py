@@ -1659,13 +1659,222 @@ def simulate_matrix_ucb_lrf(
 
 
 # ---------------------------------------------------------------------------
+# Selector: Gittins index (matrix exploration; uses agentopt.gittins unchanged)
+# ---------------------------------------------------------------------------
+
+def _check_gittins():
+    try:
+        import torch  # noqa: F401
+        import jax  # noqa: F401
+        from agentopt.gittins import gittins_index_exploration  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def simulate_gittins(
+    models: List[str], datapoints: List[int], table: LookupTable,
+    lambda_cost: float = 0.0, lambda_latency: float = 0.0,
+    observation_budget_fraction: float = 1.0,
+    batch_size: int = 32,
+    prior_mean: float = 0.5,
+    prior_variance: float = 0.04,
+    obs_noise_variance: float = 0.01,
+    cost_per_transition: float = 1.0,
+    cost_scaling_factor: float = 1e-4,
+    seed: int = 42,
+) -> SimulationResult:
+    """Offline Gittins on a frozen lookup table (same grid as Matrix UCB).
+
+    Does not modify ``agentopt.gittins``; only calls ``gittins_index_exploration``
+    / ``gittins_post_pull_update`` and fills cells from ``table``.
+    """
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+    import torch
+    from agentopt.gittins import gittins_index_exploration, gittins_post_pull_update
+    from agentopt.gittins.gittins_lookup import compute_roots_lookup_table
+    from agentopt.gittins.gittins_shrinking_posterior import (
+        transition_stds_shrinking_gaussian_posterior,
+    )
+
+    # Rectangular subgrid: columns present for every arm (avoids selecting missing cells).
+    common = set(datapoints)
+    for model_name in models:
+        common &= set(table.get(model_name, {}))
+    use_dps = sorted(common) if common else list(datapoints)
+    n_combos = len(models)
+    n_dp = len(use_dps)
+
+    n_available = 0
+    for model_name in models:
+        model_data = table.get(model_name, {})
+        n_available += sum(1 for dp in use_dps if dp in model_data)
+    budget = (
+        max(1, int(math.ceil(observation_budget_fraction * n_available)))
+        if observation_budget_fraction < 1.0
+        else n_available
+    )
+
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    observed_t = torch.full((n_combos, n_dp), float("nan"), dtype=torch.float32)
+    cell_costs: Dict[Tuple[int, int], float] = {}
+    total_evals = 0
+    total_cost = 0.0
+
+    # Precompute roots once (public API; no change to Gittins DP code).
+    tau_sq_cell = float(obs_noise_variance)
+    transition_stds = transition_stds_shrinking_gaussian_posterior(
+        jnp.float32(prior_variance), jnp.float32(tau_sq_cell), n_dp,
+    )
+    roots_jnp = compute_roots_lookup_table(
+        transition_stds=transition_stds,
+        costs_per_arm=jnp.float32(float(cost_per_transition) * float(cost_scaling_factor)),
+        n_points=2**10 + 1,
+    )
+    roots_lookup_table = torch.from_numpy(
+        np.array(jax.device_get(roots_jnp), copy=True)
+    ).to(torch.float32)
+
+    scores: Optional[torch.Tensor] = None
+    natural_stop: List[Optional[int]] = [None]
+    rec_stop: List[Optional[int]] = [None]
+    bsz = max(1, min(int(batch_size), n_dp))
+
+    while total_evals < budget:
+        out = gittins_index_exploration(
+            observed_t,
+            prior_mean=prior_mean,
+            prior_variance=prior_variance,
+            obs_noise_variance=obs_noise_variance,
+            cost_per_transition=cost_per_transition,
+            cost_scaling_factor=cost_scaling_factor,
+            batch_size=bsz,
+            cached_scores=scores,
+            recompute_arms=[] if scores is not None else None,
+            roots_lookup_table=roots_lookup_table,
+            allow_early_stop=True,
+            return_mus=False,
+        )
+        if out is None:
+            break
+
+        batch = out
+        arm_idx = int(batch[0, 0].item())
+        dp_local_indices = [int(x) for x in batch[1].tolist()]
+        model_name = models[arm_idx]
+        model_data = table.get(model_name, {})
+
+        filled_this = 0
+        for dp_local in dp_local_indices:
+            if total_evals >= budget:
+                break
+            if not torch.isnan(observed_t[arm_idx, dp_local]):
+                continue
+            dp_id = use_dps[dp_local]
+            if dp_id not in model_data:
+                continue
+            sr = model_data[dp_id]
+            obj = compute_sample_objective(sr, lambda_cost, lambda_latency)
+            observed_t[arm_idx, dp_local] = float(obj)
+            cell_costs[(arm_idx, dp_local)] = sr.cost
+            total_evals += 1
+            total_cost += sr.cost
+            filled_this += 1
+
+        if filled_this == 0:
+            break
+
+        if scores is None:
+            scores = torch.full((n_combos,), float("inf"), dtype=torch.float32)
+
+        mus, scores = gittins_post_pull_update(
+            observed_t,
+            cached_scores=scores,
+            recompute_arms=[arm_idx],
+            prior_mean=prior_mean,
+            prior_variance=prior_variance,
+            obs_noise_variance=obs_noise_variance,
+            cost_per_transition=cost_per_transition,
+            cost_scaling_factor=cost_scaling_factor,
+            batch_size=bsz,
+            roots_lookup_table=roots_lookup_table,
+            sim_cum_eval=total_evals,
+            natural_stop_cum_eval_holder=natural_stop,
+            recommendation_aware_stop_cum_eval_holder=rec_stop,
+        )
+        del mus
+
+    observed = observed_t.numpy()
+    best_name = None
+    best_obj = float("-inf")
+    best_acc = 0.0
+    tol = 1e-9
+    model_results = []
+    for i, model_name in enumerate(models):
+        valid = ~np.isnan(observed[i])
+        if not np.any(valid):
+            continue
+        obj_mean = float(np.nanmean(observed[i]))
+        model_data_i = table.get(model_name, {})
+        lats = [
+            model_data_i[use_dps[j]].latency_seconds
+            for j in range(n_dp)
+            if not np.isnan(observed[i, j]) and use_dps[j] in model_data_i
+        ]
+        lat = sum(lats) / len(lats) if lats else 0.0
+        scores_i = [
+            model_data_i[use_dps[j]].score
+            for j in range(n_dp)
+            if not np.isnan(observed[i, j]) and use_dps[j] in model_data_i
+        ]
+        acc = sum(scores_i) / len(scores_i) if scores_i else 0.0
+        cost_i = sum(cell_costs.get((i, j), 0.0) for j in range(n_dp))
+        n_eval_i = int(np.sum(valid))
+        model_results.append(ModelSummary(model_name, acc, obj_mean, lat, cost_i, n_eval_i))
+        if obj_mean > best_obj + tol:
+            best_name, best_obj, best_acc = model_name, obj_mean, acc
+
+    for mr in model_results:
+        mr.is_best = (mr.model_name == best_name)
+
+    if best_name is not None:
+        true_best_obj = compute_model_objective(
+            best_name, datapoints, table, lambda_cost, lambda_latency)
+        model_data_best = table.get(best_name, {})
+        all_scores = [model_data_best[dp].score for dp in datapoints if dp in model_data_best]
+        true_best_acc = sum(all_scores) / len(all_scores) if all_scores else 0.0
+    else:
+        true_best_obj = float("-inf")
+        true_best_acc = 0.0
+
+    gt_name, _, _ = compute_ground_truth(models, datapoints, table, lambda_cost, lambda_latency)
+    return SimulationResult(
+        "gittins", seed,
+        {
+            "observation_budget_fraction": observation_budget_fraction,
+            "batch_size": bsz,
+            "lambda_cost": lambda_cost,
+            "lambda_latency": lambda_latency,
+            "natural_stop_eval": natural_stop[0],
+            "recommendation_aware_stop_eval": rec_stop[0],
+        },
+        best_name, true_best_acc, true_best_obj, total_evals, total_cost,
+        len(model_results), best_name == gt_name, 0.0, model_results,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Multi-seed runner
 # ---------------------------------------------------------------------------
 
 ALL_SELECTORS = [
     "brute_force", "random_search", "arm_elimination", "epsilon_lucb",
     "threshold_se", "hill_climbing", "bayesian_optimization",
-    "lm_proposal", "matrix_ucb", "matrix_ucb_lrf",
+    "lm_proposal", "matrix_ucb", "matrix_ucb_lrf", "gittins",
 ]
 
 
@@ -1801,11 +2010,13 @@ def main():
     parser.add_argument("--benchmark", type=str, default="auto",
                         choices=["auto", "gpqa", "bfcl", "hotpotqa", "mathqa"])
 
-    # Matrix UCB params
+    # Matrix UCB / Gittins params
     parser.add_argument("--ucb-budget", type=float, default=0.2,
-                        help="Matrix UCB observation budget fraction (default 0.2)")
+                        help="Matrix UCB / Gittins observation budget fraction (default 0.2)")
     parser.add_argument("--lrf-ensemble", type=int, default=8,
                         help="Matrix UCB-LRF ensemble size (default 8)")
+    parser.add_argument("--gittins-batch-size", type=int, default=32,
+                        help="Gittins examples per pull on the chosen arm (default 32)")
 
     args = parser.parse_args()
 
@@ -1843,6 +2054,9 @@ def main():
         if not _check_botorch():
             selectors.remove("bayesian_optimization")
             print("\n  (Skipping bayesian_optimization — torch/botorch not installed)")
+        if not _check_gittins():
+            selectors.remove("gittins")
+            print("\n  (Skipping gittins — need torch, jax, jaxtyping)")
         try:
             from openai import OpenAI
             import os as _os
@@ -1901,6 +2115,15 @@ def main():
             fn = simulate_matrix_ucb_lrf
             kwargs = {"observation_budget_fraction": args.ucb_budget,
                       "ensemble_size": args.lrf_ensemble,
+                      "lambda_cost": lc, "lambda_latency": ll}
+        elif sel == "gittins":
+            if not _check_gittins():
+                print(f"\n  Skipping {sel} — need torch, jax, jaxtyping "
+                      f"(and agentopt.gittins package)")
+                continue
+            fn = simulate_gittins
+            kwargs = {"observation_budget_fraction": args.ucb_budget,
+                      "batch_size": args.gittins_batch_size,
                       "lambda_cost": lc, "lambda_latency": ll}
         else:
             print(f"\n  Unknown selector: {sel}")

@@ -44,7 +44,7 @@ One per evaluated combination.
 | `latency_seconds` | `float` | Mean latency per datapoint. |
 | `input_tokens` | `Dict[str, int]` | Input tokens by model. |
 | `output_tokens` | `Dict[str, int]` | Output tokens by model. |
-| `attribute` | `str` | Metric track the result was scored under (algorithms like `threshold` produce multiple). |
+| `attribute` | `str` | Metric track the result was scored under. |
 | `is_best` | `bool` | Whether this is the top-ranked combination. |
 | `datapoint_results` | `List[DatapointResult]` | Per-datapoint breakdown. |
 

@@ -52,13 +52,8 @@ All models accessed via AWS Bedrock Application Inference Profiles (on-demand pr
 | Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
 |:---------|:----------|:--------------|:------------|:-----|:--------|
 | Brute Force | 100% | 74.75% | 1,782 | $4.71 | -- |
-| LM Proposal | 100% | 74.75% | 198 | $2.47 | 48% |
-| Hill Climbing | 90% | 74.55% | 1,501 | $4.03 | 14% |
 | Arm Elimination | 94% | 74.10% | 666 | $3.57 | **24%** |
-| Epsilon LUCB | 72% | 73.14% | 380 | $2.51 | 47% |
 | Bayesian Opt | 56% | 72.43% | 990 | $2.59 | 45% |
-| Random Search | 36% | 68.57% | 594 | $1.73 | 63% |
-| Threshold SE | 16% | 57.48% | 252 | $1.80 | 62% |
 
 ### Thinking Effort Ablation
 
@@ -103,13 +98,8 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 | Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
 |:---------|:----------|:--------------|:------------|:-----|:--------|
 | Brute Force | 100% | 70.00% | 1,800 | $84.80 | -- |
-| Hill Climbing | 100% | 70.00% | 1,664 | $72.12 | 15% |
-| Epsilon LUCB | 28% | 69.90% | 399 | $40.03 | 53% |
 | Arm Elimination | 88% | 69.37% | 912 | $74.39 | **12%** |
 | Bayesian Opt | 44% | 69.27% | 1,000 | $50.64 | 40% |
-| Random Search | 36% | 67.13% | 600 | $31.39 | 63% |
-| Threshold SE | 10% | 58.19% | 186 | $18.82 | 78% |
-| LM Proposal | 0% | 44.03% | 200 | $3.39 | 96% |
 
 ---
 
@@ -253,11 +243,6 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 | Brute Force | 100% | 74.27% | 16,168 | $51.90 | -- |
 | Bayesian Opt | 8% | 73.33% | 3,996 | $12.29 | 76% |
 | Arm Elimination | 86% | 73.19% | 4,283 | $16.92 | **67%** |
-| Hill Climbing | 52% | 73.13% | 4,635 | $19.39 | 63% |
-| Random Search | 30% | 72.25% | 4,192 | $13.37 | 74% |
-| Epsilon LUCB | 10% | 69.71% | 478 | $1.75 | 97% |
-| Threshold SE | 4% | 65.42% | 1,642 | $6.45 | 88% |
-| LM Proposal | 0% | 34.13% | 200 | $1.84 | 96% |
 
 ---
 
@@ -397,9 +382,4 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 |:---------|:----------|:--------------|:------------|:-----|:--------|
 | Brute Force | 100% | 98.84% | 14,961 | $123.87 | -- |
 | Arm Elimination | 86% | 98.83% | 3,356 | $51.86 | **58%** |
-| Hill Climbing | 80% | 98.76% | 3,926 | $54.22 | 56% |
-| Random Search | 28% | 98.17% | 3,880 | $31.77 | 74% |
-| Epsilon LUCB | 4% | 96.99% | 447 | $6.10 | 95% |
-| LM Proposal | 0% | 95.82% | 158 | $5.61 | 95% |
 | Bayesian Opt | 4% | 95.41% | 3,666 | $35.56 | 71% |
-| Threshold SE | 0% | 74.52% | 1,355 | $6.90 | 94% |

@@ -27,7 +27,6 @@ results.print_summary()
 | `model_prices` | `Dict`, optional | Custom pricing overrides: `{"model": {"input_price": x, "output_price": y}}` in $/MTok. Required for cost terms when `lambda_cost > 0`. |
 | `lambda_cost` | `float`, optional | Weight on **normalized** per-sample cost in the combined objective. Default `0.0` (disabled). See [Combined objective](#combined-objective-optional-costlatency-weights) below. |
 | `lambda_latency` | `float`, optional | Weight on **normalized** per-sample latency in the combined objective. Default `0.0` (disabled). |
-| `node_descriptions` | `Dict[str, str]`, optional | Human-readable descriptions per node — surfaced in `LMProposalModelSelector`. |
 | `tracker` | `LLMTracker`, optional | Bring your own. Defaults to a fresh `LLMTracker()` started in the constructor. Pass one in to share a cache across runs, route via a daemon (`AGENTOPT_GATEWAY_URL`), or post-process records after `select_best()` returns. |
 
 The selector calls `tracker.start()` in the constructor and `tracker.stop()` when `select_best()` returns or raises. Record queries on the tracker remain valid after `stop()`, so post-run analysis works:
@@ -93,15 +92,11 @@ results.print_summary()   # ranks by combined_objective when lambdas are set
 | Methods | During search | Final `is_best` |
 |:---|:---|:---|
 | `matrix_ucb`, `matrix_ucb_lrf` | UCB rewards use per-cell combined objective | `_find_best` on `combined_objective` |
-| `arm_elimination`, `epsilon_lucb`, `threshold` | Elimination / LUCB stats on combined per-sample objectives | same |
-| `hill_climbing`, `bayesian` | Move / surrogate target uses combined objective | same |
-| `brute_force`, `random` | Does not steer *which* combos to try | same |
-| `lm_proposal` | Proposer uses `objective=` **text**, not these lambdas | `combined_objective` on the one evaluated combo only |
+| `arm_elimination` | Elimination stats on combined per-sample objectives | same |
+| `bayesian` | Surrogate target uses combined objective | same |
+| `brute_force` | Does not steer *which* combos to try | same |
 
 After `select_best()`, a final pass recomputes every result’s `combined_objective` against the **full-run** normalizer so rankings are comparable.
-
-!!! note "`lm_proposal` vs lambdas"
-    `LMProposalModelSelector(objective="...")` is a natural-language hint to the **proposer LLM**. It is separate from `lambda_cost` / `lambda_latency`, which only affect the scalar reward used for ranking and bandit methods.
 
 ## `select_best()`
 
@@ -123,13 +118,8 @@ Returns a [`SelectionResults`](results.md). `parallel=True` requires `agent.run`
 |:---|:---|:---|
 | `"auto"` (default) | Arm elimination | Strong best-arm identification at lower search cost than brute force. Same impl as `"arm_elimination"`. |
 | `"brute_force"` | Evaluate every combo on the full dataset | Small search space; ground-truth comparison. |
-| `"random"` | Random search | Cheap baseline. |
-| `"hill_climbing"` | Greedy per-node | Large combinatorial spaces with weak coupling between nodes. |
 | `"arm_elimination"` | Successive elimination | Best-arm identification with PAC-style guarantees. |
-| `"epsilon_lucb"` | LUCB with tolerance | Stop once a combo is within ε of the best. |
 | `"matrix_ucb"` / `"matrix_ucb_lrf"` | UCB exploiting cross-combo structure | Large model x datapoint matrices; `lrf` adds low-rank factorization. |
-| `"threshold"` | Threshold bandit successive elimination | "Find all combos above accuracy θ" rather than the single best. |
-| `"lm_proposal"` | LM-guided | Uses `node_descriptions` to propose combinations. |
 | `"bayesian"` | Bayesian optimization | Optional extra: `pip install "agentopt-py[bayesian]"`. |
 
 ---
@@ -141,22 +131,7 @@ Returns a [`SelectionResults`](results.md). `parallel=True` requires `agent.run`
       members: false
       show_bases: false
 
-::: agentopt.model_selection.random_search.RandomSearchModelSelector
-    options:
-      members: false
-      show_bases: false
-
-::: agentopt.model_selection.hill_climbing.HillClimbingModelSelector
-    options:
-      members: false
-      show_bases: false
-
 ::: agentopt.model_selection.arm_elimination.ArmEliminationModelSelector
-    options:
-      members: false
-      show_bases: false
-
-::: agentopt.model_selection.epsilon_lucb.EpsilonLUCBModelSelector
     options:
       members: false
       show_bases: false
@@ -167,16 +142,6 @@ Returns a [`SelectionResults`](results.md). `parallel=True` requires `agent.run`
       show_bases: false
 
 ::: agentopt.model_selection.matrix_ucb.MatrixUCBLRFModelSelector
-    options:
-      members: false
-      show_bases: false
-
-::: agentopt.model_selection.threshold_successive_elimination.ThresholdBanditSEModelSelector
-    options:
-      members: false
-      show_bases: false
-
-::: agentopt.model_selection.lm_proposal.LMProposalModelSelector
     options:
       members: false
       show_bases: false

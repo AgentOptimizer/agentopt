@@ -716,7 +716,6 @@ class BaseModelSelector(ABC):
         eval_fn: EvalFn = None,
         dataset: Dataset = None,
         model_prices: Optional[Dict[str, Dict[str, float]]] = None,
-        node_descriptions: Optional[Dict[str, str]] = None,
         tracker: Optional[LLMTracker] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
@@ -739,9 +738,6 @@ class BaseModelSelector(ABC):
             model_prices: Optional custom pricing overrides. Maps model names
                 to dicts with ``'input_price'`` and ``'output_price'`` keys
                 ($/MTok).
-            node_descriptions: Optional dict mapping node names to human-readable
-                descriptions of what each node does, e.g.
-                ``{"planner": "Decomposes queries into sub-tasks"}``.
             tracker: Optional :class:`LLMTracker` instance. If not provided,
                 one is created and started automatically.
             lambda_cost: Weight on normalized per-sample cost in the combined
@@ -776,7 +772,6 @@ class BaseModelSelector(ABC):
         self._models = models
         self._node_names = list(models.keys())
         self.model_prices = model_prices
-        self.node_descriptions = node_descriptions
         self.lambda_cost = float(lambda_cost)
         self.lambda_latency = float(lambda_latency)
 

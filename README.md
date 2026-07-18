@@ -288,25 +288,18 @@ Working examples for the frameworks and CLI agents named above. Examples are org
 
 AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_algorithms.py](examples/selection/local/advanced_algorithms.py) for details.
 
-If you do not need the strict best model combination and want **lower search cost**, `epsilon_lucb` is often a good choice: it stops once an **ε-optimal** arm is found (tune `epsilon` to trade off how close to optimal you need to be versus how many runs you spend).
-
 | `method=` | Best for | How it works |
 |-----------|----------|-------------|
 | `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower search cost than `brute_force`) |
 | `"brute_force"` | Small search spaces | Evaluates all combinations |
-| `"random"` | Quick exploration | Samples a random fraction |
-| `"hill_climbing"` | Topology-aware search | Greedy search using model quality/speed rankings |
 | `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
-| `"epsilon_lucb"` | Extra search cost savings when ε-optimal is enough | Bandit; stops when an epsilon-optimal best arm is identified |
-| `"threshold"` | Thresholding objectives | Bandit; determines whether each combination is above/below a user-defined `threshold` on the performance metric (e.g., mean accuracy) |
-| `"lm_proposal"` | LLM-guided search | Uses a proposer LLM to shortlist promising combinations |
+| `"matrix_ucb"` / `"matrix_ucb_lrf"` | Large combo × datapoint grids | UCB exploration over the evaluation matrix |
 | `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt-py[bayesian]"`) |
 
 ```python
 selector = ModelSelector(
     agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
-    method="epsilon_lucb",
-    epsilon=0.01
+    method="auto",
 )
 results = selector.select_best(parallel=True)
 ```

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 def _resolve_observation_budget_fraction(
     observation_budget_fraction: float, sample_fraction: Optional[float],
 ) -> float:
-    """Match RandomSearch/Bayesian: ``sample_fraction`` overrides ``observation_budget_fraction``."""
+    """Match Bayesian: ``sample_fraction`` overrides ``observation_budget_fraction``."""
     if sample_fraction is not None:
         s = float(sample_fraction)
         if not 0 < s <= 1:
@@ -220,7 +220,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
     ``select_best(..., max_concurrent=...)`` matters (``parallel`` is ignored).
 
     ``observation_budget_fraction`` or, equivalently, ``sample_fraction`` (same meaning
-    as in :class:`RandomSearchModelSelector` / Bayesian: fraction of the search budget —
+    as in Bayesian optimization: fraction of the search budget —
     here, **fraction of matrix cells** to observe) caps evaluations. ``1.0`` fills the
     full grid; ``0.1`` stops after about 10% of cells. If both are passed, ``sample_fraction``
     wins.

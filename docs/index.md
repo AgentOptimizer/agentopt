@@ -114,7 +114,7 @@ results.print_summary()
 
     ---
 
-    8 algorithms from brute force to Bayesian optimization. Search spaces with thousands of combinations without evaluating them all.
+    5 algorithms from brute force to Bayesian optimization. Search spaces with thousands of combinations without evaluating them all.
 
 -   :material-radar:{ .lg .middle } **Automatic Tracking**
 
@@ -162,12 +162,8 @@ AgentOpt patches `httpx` at the transport level — the same HTTP library used b
 | Algorithm | Strategy | Best For |
 |:----------|:---------|:---------|
 | **Brute Force** | Evaluate all combinations | Small spaces (< 50 combos) |
-| **Random Search** | Random sampling | Quick baselines |
-| **Hill Climbing** | Greedy + restarts | Medium spaces with model topology |
 | **Arm Elimination** | Progressive pruning | Statistical early stopping |
-| **Epsilon LUCB** | ε-optimal best arm | Extra search cost savings when ε-optimal is enough |
-| **Threshold SE** | Threshold classification | Filtering combos above/below a performance target |
-| **LM Proposal** | LLM-guided shortlist | Leveraging model knowledge |
+| **Matrix UCB** | UCB over combo × datapoint grid | Large spaces with selective sampling |
 | **Bayesian Optimization** | Gaussian Process | Expensive evaluations |
 
 [:octicons-arrow-right-24: Compare algorithms in detail](concepts/algorithms.md)

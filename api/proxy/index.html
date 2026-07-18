@@ -1,0 +1,2123 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Find the right LLM models for your AI agents">
+      
+      
+      
+        <link rel="canonical" href="https://agentoptimizer.github.io/agentopt/api/proxy/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo-icon-transparent.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>AgentOpt interception architecture - AgentOpt</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=DM+Sans:300,300i,400,400i,700,700i%7CDM+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"DM Sans";--md-code-font:"DM Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agentopt-interception-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="AgentOpt" class="md-header__button md-logo" aria-label="AgentOpt" data-md-component="logo">
+      
+  <img src="../../assets/logo-full-text-transparent-dark-v2.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AgentOpt
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AgentOpt interception architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AgentOptimizer/agentopt" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AgentOptimizer/agentopt
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concepts/how-it-works/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../examples/openai/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Examples
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../benchmark-results/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Benchmark Results
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../selectors/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../blog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Blog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AgentOpt" class="md-nav__button md-logo" aria-label="AgentOpt" data-md-component="logo">
+      
+  <img src="../../assets/logo-full-text-transparent-dark-v2.png" alt="logo">
+
+    </a>
+    AgentOpt
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AgentOptimizer/agentopt" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AgentOptimizer/agentopt
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/algorithms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection Algorithms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/caching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Response Caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/openai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAI SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LangChain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrewAI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LlamaIndex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../benchmark-results/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmark Results
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Benchmark Results
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../selectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tracker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tracker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+    
+  
+  
+    <li class="md-nav__item">
+      <a href="../../blog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-are-we-trying-to-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What are we trying to do?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-can-you-observe-llm-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where can you observe LLM calls?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#in-process-agents-the-easy-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In-process agents: the easy case
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subprocess-agents-why-the-easy-approach-breaks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subprocess agents: why the easy approach breaks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-https_proxy-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How HTTPS_PROXY works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-connect-tunnel-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The CONNECT tunnel problem
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-mitm-solution-two-tls-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The MITM solution: two TLS sessions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#certificates-why-the-agent-accepts-the-fake-connection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Certificates: why the agent accepts the fake connection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attribution-knowing-which-call-belongs-to-which-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attribution: knowing which call belongs to which evaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Attribution: knowing which call belongs to which evaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#contextvar-propagation-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ContextVar propagation limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#subprocess-env-merge-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subprocess env merge policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-vs-daemon-mode-where-the-proxy-lives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local vs daemon mode: where the proxy lives
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Local vs daemon mode: where the proxy lives">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#whats-identical-between-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's identical between modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-differs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What differs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-agentopt-serve-daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The agentopt serve daemon
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-the-in-process-httpx-patch-routes-in-daemon-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the in-process httpx patch routes in daemon mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-daemon-mode-at-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why daemon mode at all
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-complete-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The complete flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Session lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#in-process-path-detail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In-process path detail
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#subprocess-path-detail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subprocess path detail
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallel-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parallel evaluation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-lives-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What lives where
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What lives where">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agentoptproxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        agentopt.proxy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agentoptproxyllmtracker-the-public-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        agentopt.proxy.LLMTracker (the public surface)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-httpx-wrapper-no-business-logic-delegates-to-recorder-responsecache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The httpx wrapper (no business logic — delegates to Recorder + ResponseCache)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-subprocess-redirect-env-vars-no-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The subprocess redirect (env vars, no logic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-llm-api-hostnames" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known LLM API hostnames
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-each-piece-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why each piece exists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scoping-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scoping constraints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="agentopt-interception-architecture">AgentOpt interception architecture<a class="headerlink" href="#agentopt-interception-architecture" title="Permanent link">&para;</a></h1>
+<h2 id="what-are-we-trying-to-do">What are we trying to do?<a class="headerlink" href="#what-are-we-trying-to-do" title="Permanent link">&para;</a></h2>
+<p>You have an agent that makes LLM API calls. You want to try different models (GPT-4o, Claude Sonnet, Haiku, etc.) and find which combination works best. To compare them, you need to measure three things for every LLM call: which model was used, how many tokens it consumed, and how long it took.</p>
+<p>The challenge: you want to do this without modifying the agent's code. The agent just calls the LLM API however it wants — through OpenAI SDK, Anthropic SDK, LangChain, whatever. You want to observe those calls invisibly, from the outside.</p>
+<h2 id="where-can-you-observe-llm-calls">Where can you observe LLM calls?<a class="headerlink" href="#where-can-you-observe-llm-calls" title="Permanent link">&para;</a></h2>
+<p>Every LLM API call, regardless of which SDK or framework makes it, eventually becomes an HTTP request. The agent's code calls some SDK function, that SDK uses an HTTP library (almost always <code>httpx</code> in Python), and <code>httpx</code> sends an HTTPS request over the network to the API server.</p>
+<p>So there are only two places you can intercept:</p>
+<p><strong>Inside the process</strong> — patch the HTTP library before it sends the request. You modify <code>httpx.Client.send()</code> in memory so your code runs every time the agent makes an HTTP call.</p>
+<p><strong>On the network</strong> — run a proxy server that sits between the agent and the API server. All traffic flows through you.</p>
+<h2 id="in-process-agents-the-easy-case">In-process agents: the easy case<a class="headerlink" href="#in-process-agents-the-easy-case" title="Permanent link">&para;</a></h2>
+<p>When the agent runs in the same Python process as your optimization code (LangChain, CrewAI, etc.), you can patch <code>httpx</code> directly. You replace <code>httpx.Client.send</code> with your own function that:</p>
+<ol>
+<li>Checks if this looks like an LLM API call (is it a POST to <code>/v1/chat/completions</code> or <code>/v1/messages</code>?)</li>
+<li>If yes, looks up the active session (a <code>ContextVar</code> set by <code>tracker.track()</code>)</li>
+<li>Checks the response cache; on hit, returns the cached response directly without a network round-trip</li>
+<li>Otherwise calls the real upstream, times it, extracts token usage from the response, builds a <code>CallRecord</code>, and returns the response</li>
+</ol>
+<p>This works because you're modifying the HTTP library's function pointer in the process's own memory. You're intercepting before encryption, so you never need to deal with TLS at all. There's no localhost listener — the wrapper records directly and the call goes straight to the real upstream.</p>
+<h2 id="subprocess-agents-why-the-easy-approach-breaks">Subprocess agents: why the easy approach breaks<a class="headerlink" href="#subprocess-agents-why-the-easy-approach-breaks" title="Permanent link">&para;</a></h2>
+<p>When the agent is a separate process — Claude Code, Gemini CLI, a <code>tb run</code> command that runs in Docker — you can't patch their <code>httpx</code>. When you do <code>subprocess.run(["tb", "run", ...])</code>, that child process loads its own Python runtime, imports its own <code>httpx</code>, and calls <code>httpx.Client.send()</code> with the original, unpatched code. Your patch only exists in your process's memory. The OS keeps processes isolated from each other — you cannot reach into another process's memory and modify its functions.</p>
+<p>So you can't intercept inside the client. The only option left is to intercept on the network. But on the network, the traffic is HTTPS — encrypted. You can see that the subprocess is connecting to <code>api.openai.com</code>, but you can't read the request body (which model? what messages?) or the response (how many tokens?).</p>
+<p>These are the agents worth optimizing — complex multi-step agents with many LLM calls where the combinatorial space explodes:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Examples</th>
+<th>Topology</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Coding agents</td>
+<td>Claude Code, Codex CLI, Aider, OpenHands, SWE-Agent</td>
+<td>subprocess, docker</td>
+</tr>
+<tr>
+<td>CUA agents</td>
+<td>Anthropic CUA, OpenAI Operator</td>
+<td>VM, docker</td>
+</tr>
+<tr>
+<td>Terminal agents</td>
+<td>TerminalBench agents</td>
+<td>docker</td>
+</tr>
+<tr>
+<td>CLI agents</td>
+<td>Gemini CLI</td>
+<td>subprocess</td>
+</tr>
+<tr>
+<td>Autonomous agents</td>
+<td>Devin, Manus</td>
+<td>docker, remote</td>
+</tr>
+<tr>
+<td>In-process frameworks</td>
+<td>LangChain, CrewAI, LlamaIndex</td>
+<td>in-process</td>
+</tr>
+</tbody>
+</table>
+<p>In-process frameworks are increasingly the tutorial-tier agents. The production agents that people actually deploy and want to optimize are almost all out-of-process.</p>
+<h2 id="how-https_proxy-works">How HTTPS_PROXY works<a class="headerlink" href="#how-https_proxy-works" title="Permanent link">&para;</a></h2>
+<p>Most HTTP libraries check an environment variable called <code>HTTPS_PROXY</code> before making connections. If it's set, instead of connecting directly to the API server, the client connects to the proxy address and asks the proxy to relay the connection.</p>
+<p>You set this in the subprocess's environment before spawning it:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">env</span><span class="p">[</span><span class="s2">&quot;HTTPS_PROXY&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;http://127.0.0.1:59198&quot;</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;tb&quot;</span><span class="p">,</span> <span class="s2">&quot;run&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span> <span class="n">env</span><span class="o">=</span><span class="n">env</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Now the subprocess's HTTP library sees <code>HTTPS_PROXY</code> and does something different. Instead of connecting to <code>api.openai.com:443</code>, it connects to <code>127.0.0.1:59198</code> (your proxy) and sends:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>CONNECT api.openai.com:443 HTTP/1.1
+</span></code></pre></div>
+<p>This is a plain-text message saying: "Please open a connection to <code>api.openai.com</code> port 443 for me." This message itself is not encrypted — it's just HTTP. Your proxy can read it and knows what the client wants to connect to.</p>
+<h2 id="the-connect-tunnel-problem">The CONNECT tunnel problem<a class="headerlink" href="#the-connect-tunnel-problem" title="Permanent link">&para;</a></h2>
+<p>A normal HTTPS proxy would respond <code>200 Connection Established</code> and then become a dumb pipe — just forwarding bytes between the client and the real server. The client would then do a TLS handshake with the real <code>api.openai.com</code> through this pipe, and all subsequent traffic would be encrypted end-to-end. The proxy would be in the middle but unable to read anything.</p>
+<p>This is useless for us. We need to read the traffic.</p>
+<h2 id="the-mitm-solution-two-tls-sessions">The MITM solution: two TLS sessions<a class="headerlink" href="#the-mitm-solution-two-tls-sessions" title="Permanent link">&para;</a></h2>
+<p>Instead of being a dumb pipe, our proxy impersonates the API server. When the client starts its TLS handshake after CONNECT, the proxy responds as if it is <code>api.openai.com</code>. This creates two separate encrypted connections:</p>
+<p><strong>Left side</strong>: the agent subprocess ↔ your proxy. The agent thinks it's talking to OpenAI. It sends its API key, prompts, and model name through this encrypted channel. But the proxy holds the encryption key, so it can decrypt and read everything.</p>
+<p><strong>Right side</strong>: your proxy ↔ real OpenAI. The proxy opens its own normal HTTPS connection to the actual API server. It forwards the request (possibly after recording it), gets the response, records the token counts and latency, and sends the response back through the left side to the agent.</p>
+<p>The agent has no idea this happened. From its perspective, it made a normal API call and got a normal response.</p>
+<h2 id="certificates-why-the-agent-accepts-the-fake-connection">Certificates: why the agent accepts the fake connection<a class="headerlink" href="#certificates-why-the-agent-accepts-the-fake-connection" title="Permanent link">&para;</a></h2>
+<p>For the left-side TLS handshake to work, the proxy needs to present a certificate that says "I am api.openai.com." But the agent's HTTP library will check this certificate — specifically, it checks who signed it. Legitimate certificates are signed by well-known Certificate Authorities (CAs) like DigiCert or Let's Encrypt. The HTTP library has a built-in list of these trusted CAs.</p>
+<p>Our proxy can't get DigiCert to sign a fake certificate for <code>api.openai.com</code>. So instead, we use <a href="https://mitmproxy.org">mitmproxy</a>'s CA. mitmproxy ships a battle-tested implementation: on first run it generates a root CA at <code>~/.mitmproxy/</code>, and on demand it mints per-hostname leaf certificates signed by that root.</p>
+<p>By default, the agent's HTTP library doesn't trust the mitmproxy CA, so it would reject the connection with an SSL error (<code>SSLV3_ALERT_CERTIFICATE_UNKNOWN</code>). We fix this by setting <code>SSL_CERT_FILE</code> in the subprocess's environment, pointing at a bundle that contains both the normal system CAs (from <code>certifi</code>) and the mitmproxy CA. AgentOpt builds and maintains that bundle at <code>~/.mitmproxy/agentopt-bundle.pem</code>.</p>
+<p>The bundle is important: if we only included the mitmproxy CA, the subprocess couldn't make any other HTTPS connections (like downloading packages or talking to GitHub). By bundling it with the system CAs, everything else works normally. Only connections to LLM API hostnames get intercepted; all other HTTPS traffic passes through the proxy as a raw tunnel (the addon's <code>tls_clienthello</code> hook sets <code>ignore_connection=True</code> for non-LLM SNIs, so mitmproxy doesn't even attempt TLS termination on them).</p>
+<h2 id="attribution-knowing-which-call-belongs-to-which-evaluation">Attribution: knowing which call belongs to which evaluation<a class="headerlink" href="#attribution-knowing-which-call-belongs-to-which-evaluation" title="Permanent link">&para;</a></h2>
+<p>When you're evaluating multiple model combinations, you need to know which LLM calls belong to which combo. If you run combo A (GPT-4o) and then combo B (Claude Sonnet), you need to assign the recorded calls to the right combo.</p>
+<p>The design uses two attribution mechanisms, one per interception path:</p>
+<ul>
+<li><strong>In-process</strong> — a <code>ContextVar[ActiveSession]</code> holds the current session. Python's <code>ContextVar</code> propagates per-task / per-thread automatically, so concurrent <code>tracker.track()</code> blocks each see their own active session without mutating any shared state.</li>
+<li><strong>Subprocess</strong> — <strong>one TCP port per session</strong>. Each <code>tracker.track()</code> eagerly spins up a dedicated mitmproxy <code>DumpMaster</code> on its own ephemeral port. The subprocess gets <code>HTTPS_PROXY=http://127.0.0.1:{port}</code> via a <code>subprocess.Popen.__init__</code> monkey-patch that reads the active session from the same <code>ContextVar</code>, so the kernel routes the child's traffic to that master, which holds an addon bound to that session.</li>
+</ul>
+<h3 id="contextvar-propagation-limits">ContextVar propagation limits<a class="headerlink" href="#contextvar-propagation-limits" title="Permanent link">&para;</a></h3>
+<p>Both interception paths consult <code>_active_session_var</code>. ContextVar propagation matches the standard Python semantics, which means there are three corners where the patches don't see an active session even though the user is "inside" a <code>track()</code> block:</p>
+<ul>
+<li><strong><code>threading.Thread</code></strong> — a new thread starts with a fresh context, so calls inside the thread don't see the active session. Workaround: wrap the target with <code>contextvars.copy_context().run(...)</code> (or use <code>concurrent.futures.ThreadPoolExecutor</code> configured to copy the parent's context).</li>
+<li><strong><code>multiprocessing.Process</code> (spawn mode)</strong> — the child is a fresh Python interpreter; it never called <code>tracker.start()</code>, so neither patch is installed there. Tracked subprocesses must be spawned via <code>subprocess.Popen</code> from the tracker's own process, not from a fresh interpreter.</li>
+<li><strong><code>multiprocessing.Process</code> (fork mode)</strong> — the child inherits everything, including the patches and the ContextVar value at fork time. Works, but both parent and child will route to the <em>same</em> session ID, which can cause double-counting if both make LLM calls.</li>
+</ul>
+<p>These are accepted limitations of the ContextVar design and apply identically to the httpx patch and the subprocess patch.</p>
+<h3 id="subprocess-env-merge-policy">Subprocess env merge policy<a class="headerlink" href="#subprocess-env-merge-policy" title="Permanent link">&para;</a></h3>
+<p>The subprocess patch injects <code>HTTPS_PROXY</code> + the merged CA bundle paths (<code>SSL_CERT_FILE</code>, <code>REQUESTS_CA_BUNDLE</code>, <code>NODE_EXTRA_CA_CERTS</code>) into the child's environment. <em>Explicit beats implicit</em>:</p>
+<ul>
+<li><code>Popen(cmd)</code> / <code>Popen(cmd, env=None)</code> (inherit <code>os.environ</code>): <code>{**os.environ, **session_env}</code> — the session wins over any <code>HTTPS_PROXY</code> the parent shell happened to set.</li>
+<li><code>Popen(cmd, env={...})</code> (caller wrote an explicit env): <code>{**session_env, **user_env}</code> — caller's keys win on conflicts. Setting <code>env={"HTTPS_PROXY": "http://custom:8080"}</code> inside <code>track()</code> is respected; setting <code>env={"PATH": ...}</code> still gets tracking because the user didn't write the session keys.</li>
+</ul>
+<p>This is a design choice, not a forced constraint. Alternatives we rejected:</p>
+<ul>
+<li><strong>Single shared mitmproxy with dynamic multi-port mode list</strong>: lower per-session overhead but depends on mitmproxy's runtime mode-update behavior, which isn't part of the documented public API.</li>
+<li><strong>Header-based attribution</strong>: the in-process path could add an <code>X-AgentOpt-Session</code> header, but subprocesses don't know to do that — they're opaque clients we can only configure via env vars. Port-as-identity is the natural answer for the subprocess case.</li>
+<li><strong>Source-port tracking on a single shared proxy</strong>: requires a fragile PID/port mapping that breaks under fork/exec.</li>
+</ul>
+<p>Per-session masters cost ~100-300ms startup and ~30MB RSS each. Acceptable for research workloads where session count is low and parallel safety matters more than absolute throughput.</p>
+<h2 id="local-vs-daemon-mode-where-the-proxy-lives">Local vs daemon mode: where the proxy lives<a class="headerlink" href="#local-vs-daemon-mode-where-the-proxy-lives" title="Permanent link">&para;</a></h2>
+<p>Everything above describes the <em>mechanism</em> of interception. Orthogonal to that mechanism is the question of <em>where</em> the proxy runs — in the same Python process as your selector code, or in a long-lived daemon.</p>
+<p><code>LLMTracker</code> picks the mode automatically from a single environment variable:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Default — in-process: spins per-session mitmproxy masters in this process.</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>python<span class="w"> </span>my_script.py
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Daemon mode — talk to a long-lived gateway.</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nv">AGENTOPT_GATEWAY_URL</span><span class="o">=</span>http://127.0.0.1:9000<span class="w"> </span>python<span class="w"> </span>my_script.py
+</span></code></pre></div>
+<p>The user-facing API is byte-identical between modes. <code>ModelSelector(...).select_best()</code>, <code>tracker.track()</code>, <code>tracker.get_records()</code> — none of it changes. Switching modes is a deployment decision, not an API decision.</p>
+<h3 id="whats-identical-between-modes">What's identical between modes<a class="headerlink" href="#whats-identical-between-modes" title="Permanent link">&para;</a></h3>
+<p>Same proxy mechanism end-to-end. Per-session mitmproxy masters, the same <code>AgentoptAddon</code>, same CA, same path-pattern detection, same <code>CallRecord</code> schema. The only thing that varies is <em>which process</em> owns the master.</p>
+<h3 id="what-differs">What differs<a class="headerlink" href="#what-differs" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Local mode</th>
+<th>Daemon mode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Where the master runs</td>
+<td>The user's Python process</td>
+<td>The <code>agentopt serve</code> daemon</td>
+</tr>
+<tr>
+<td>Where the cache + records live</td>
+<td>In-process</td>
+<td>On the daemon</td>
+</tr>
+<tr>
+<td>Where the in-process httpx patch sends traffic</td>
+<td>Directly to the upstream LLM API</td>
+<td>Through the daemon's per-session proxy port</td>
+</tr>
+<tr>
+<td>Multi-process / multi-language clients</td>
+<td>Subprocess agents only</td>
+<td>First-class: any client that respects <code>HTTPS_PROXY</code></td>
+</tr>
+<tr>
+<td>State outlives a single experiment</td>
+<td>No (process-bound)</td>
+<td>Yes (daemon-bound)</td>
+</tr>
+<tr>
+<td>Setup</td>
+<td>None</td>
+<td>Run <code>agentopt serve</code> separately</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-agentopt-serve-daemon">The <code>agentopt serve</code> daemon<a class="headerlink" href="#the-agentopt-serve-daemon" title="Permanent link">&para;</a></h3>
+<p>A small <code>aiohttp.web</code> app that owns one <code>LocalBackend</code> and exposes its surface over HTTP. Localhost-only in v1 (no auth).</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>agentopt<span class="w"> </span>serve<span class="w"> </span>--port<span class="w"> </span><span class="m">9000</span><span class="w"> </span>--cache-dir<span class="w"> </span>.agentopt_cache
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># With a daemon-wide default router (per-session overrides still allowed):</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>agentopt<span class="w"> </span>serve<span class="w"> </span>--routing-policy<span class="w"> </span>random<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span>--candidate-models<span class="w"> </span>gpt-4o,gpt-4o-mini<span class="w"> </span>--seed<span class="w"> </span><span class="m">42</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># With user-defined Router subclasses preloaded:</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>agentopt<span class="w"> </span>serve<span class="w"> </span>--policy-module<span class="w"> </span>./my_policies.py
+</span></code></pre></div>
+<p>Control plane:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/health</code></td>
+<td>liveness probe</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/sessions</code></td>
+<td>open a session — body may include <code>data_id</code>, <code>combo_id</code>, <code>agent_id</code>, and an optional <code>router={"policy": "...", "kwargs": {...}}</code> override; returns <code>{session_id, proxy_port, ca_pem_b64}</code></td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/sessions/{session_id}</code></td>
+<td>close a session</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/records?data_id=&amp;combo_id=…</code></td>
+<td>filtered <code>CallRecord</code> list</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/usage?…</code></td>
+<td>aggregated token usage</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/cached_latency?…</code></td>
+<td>total cached-response latency</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/cache/flush</code></td>
+<td>force-flush dirty cache rows</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/cache/clear</code></td>
+<td>drop all cached responses</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/providers</code></td>
+<td>register a custom LLM provider</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/ca</code></td>
+<td>mitmproxy CA cert (also returned in <code>POST /sessions</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>The daemon refuses to bind a non-loopback host without <code>--allow-remote</code>, which is reserved for a future revision that ships authentication. Until then, refusing fast is safer than accidentally exposing an unauthenticated proxy on the network.</p>
+<h3 id="how-the-in-process-httpx-patch-routes-in-daemon-mode">How the in-process httpx patch routes in daemon mode<a class="headerlink" href="#how-the-in-process-httpx-patch-routes-in-daemon-mode" title="Permanent link">&para;</a></h3>
+<p>In local mode the patched <code>httpx.Client.send</code> does the work itself (cache lookup, forward to upstream, record). In daemon mode it would be duplicate machinery — the daemon's <code>AgentoptAddon</code> already does all of that. So the patched <code>send</code> instead forwards the original request through an <code>httpx.Client(proxy=daemon_session_url, verify=daemon_ca_bundle)</code>, and the daemon records + caches.</p>
+<p>The seam is a small <code>CallHandler</code> ABC inside <code>interceptor.py</code>. Two implementations:</p>
+<ul>
+<li><strong><code>LocalHandler</code></strong> — today's behaviour (cache, forward to real upstream, record).</li>
+<li><strong><code>RemoteHandler</code></strong> — forwards through the daemon's per-session proxy port; the daemon does cache + record.</li>
+</ul>
+<p>Both are bound to the <code>ActiveSession</code> ContextVar at <code>track()</code> entry. The patched <code>send</code> is a one-line dispatcher: <code>return active.handler.handle_sync(...)</code>. Nothing about the activation, path-pattern filter, or <code>_active_session_var</code> plumbing changes between modes.</p>
+<h3 id="why-daemon-mode-at-all">Why daemon mode at all<a class="headerlink" href="#why-daemon-mode-at-all" title="Permanent link">&para;</a></h3>
+<p>Two motivations:</p>
+<ol>
+<li><strong>Multi-language / multi-process clients.</strong> Subprocess agents work today via <code>HTTPS_PROXY</code>, but each Python process spins its own proxy. With a daemon, one gateway serves any number of clients in any language — they all just point <code>HTTPS_PROXY</code> at the same per-session port returned by <code>POST /sessions</code>.</li>
+<li><strong>State that outlives a process.</strong> Cache survives across runs. Records can be queried later. A foundation for future features (concurrency caps, request coalescing, cross-call observability) that need a global view a single-process library can't supply.</li>
+</ol>
+<p>Routing also works over the wire: the daemon accepts a per-session <code>router</code> field on <code>POST /sessions</code> (built-in policies like <code>random</code>, plus custom <code>Router</code> subclasses preloaded via <code>--policy-module</code>), and supports a daemon-wide default via <code>--routing-policy</code>. See <a href="../router/#daemon-mode">router.md</a> for details.</p>
+<h2 id="the-complete-flow">The complete flow<a class="headerlink" href="#the-complete-flow" title="Permanent link">&para;</a></h2>
+<p>Here's everything that happens end-to-end when you run an evaluation:</p>
+<p><strong>Startup</strong>: <code>tracker.start()</code> installs the httpx monkey-patch. No mitmproxy masters are running yet — they're per-session.</p>
+<p><strong>Session creation</strong>: <code>tracker.track(data_id="dp_1", combo_id="gpt4o")</code> creates a session, eagerly spins up a <code>SessionMaster</code> (mitmproxy <code>DumpMaster</code> in a dedicated thread on its own asyncio loop, listening on an ephemeral port), sets the <code>ContextVar</code>, and returns session env vars for subprocess use.</p>
+<p><strong>In-process path</strong>: The agent calls the OpenAI SDK → SDK calls <code>httpx.Client.send()</code> → the monkey-patch intercepts, reads the active session from <code>ContextVar</code>, looks up the cache, calls the real upstream directly, extracts token usage from the response, records a <code>CallRecord</code>, returns the response to the agent.</p>
+<p><strong>Subprocess path</strong>: The agent runs as a child process with <code>HTTPS_PROXY</code> and <code>SSL_CERT_FILE</code> set → the agent's HTTP library connects to the session's mitmproxy port and sends CONNECT → mitmproxy's <code>tls_clienthello</code> hook checks the SNI; if it's not in our intercept set, the connection is tunnelled raw and we never see the bytes → otherwise mitmproxy TLS-terminates with a per-hostname cert from its CA → the addon's <code>request</code> hook checks the cache and short-circuits on hit → on miss, mitmproxy forwards to the real upstream, the addon's <code>response</code> hook records token counts and latency → the response goes back through the encrypted tunnel to the agent.</p>
+<p><strong>Session teardown</strong>: <code>track()</code> scope exits → ContextVar is reset, the SessionMaster is shut down (drains in-flight requests, joins the thread), and the session is archived.</p>
+<p><strong>Shutdown</strong>: <code>tracker.stop()</code> restores the original <code>httpx.Client.send</code>, stops any remaining masters, and flushes the cache. Record queries remain valid after <code>stop()</code>; <code>tracker.close()</code> does the final teardown (releases the remote backend's long-lived HTTP client). <code>LLMTracker</code> is a context manager — <code>with LLMTracker() as t:</code> calls <code>stop()</code> (not <code>close()</code>) on exit so <code>tracker.print_summary()</code> immediately after the block still works.</p>
+<p>In daemon mode the same calls dispatch over HTTP: <code>start()</code> health-checks the daemon, <code>track()</code> POSTs <code>/sessions</code>, <code>stop()</code> closes any lingering sessions, <code>close()</code> releases the control-plane client.</p>
+<h2 id="session-lifecycle">Session lifecycle<a class="headerlink" href="#session-lifecycle" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>tracker.start()
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  └── httpx monkey-patch installed; no mitmproxy masters running
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>tracker.track(data_id=&quot;dp_1&quot;, combo_id=&quot;gpt4o+haiku&quot;)
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  └── Creates a SessionInfo
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  └── Spins up a SessionMaster (mitmproxy DumpMaster) on a fresh ephemeral port
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  └── Sets ContextVar: _active_session_var = ActiveSession(session, recorder, cache, port)
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  └── Returns session env vars for subprocess use
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  └── In-process LLM calls: httpx wrapper records into this session
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  └── Subprocess traffic on this port: addon records into this session
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>track() exit:
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>  └── Reset ContextVar
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  └── Shut down SessionMaster (signals mitmproxy.Master.shutdown — thread-safe)
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>  └── In-flight upstream calls finish and write to the archived session
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>  └── End session (move from active → ended in SessionManager)
+</span></code></pre></div>
+<h3 id="in-process-path-detail">In-process path detail<a class="headerlink" href="#in-process-path-detail" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>agent.run(input)
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  └── OpenAI SDK → httpx.Client.send()
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>      └── wrapper reads _active_session_var (ContextVar) → ActiveSession
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>      └── cache.get(hash(request_body)):
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>          ├── HIT → build httpx.Response from cached bytes; record cached=True; return
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>          └── MISS → call original_send to the real upstream
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>              └── extract usage; record CallRecord; cache 200 responses; return
+</span></code></pre></div>
+<h3 id="subprocess-path-detail">Subprocess path detail<a class="headerlink" href="#subprocess-path-detail" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>subprocess.run([&quot;tb&quot;, &quot;run&quot;, ...], env=session_env)
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  └── inherits HTTPS_PROXY=http://127.0.0.1:{master.port} from env
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  └── HTTP library sees HTTPS_PROXY → sends CONNECT api.openai.com:443
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>      └── mitmproxy&#39;s tls_clienthello hook fires:
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>          ├── SNI not intercepted → ignore_connection=True; tunnel raw bytes
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>          └── SNI is an LLM host → terminate TLS with per-host cert from mitmproxy CA
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>              └── addon.request: cache lookup; short-circuit on hit
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>              └── otherwise: mitmproxy forwards to real upstream
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>              └── addon.response: extract usage; record CallRecord; cache 200s
+</span></code></pre></div>
+<h3 id="parallel-evaluation">Parallel evaluation<a class="headerlink" href="#parallel-evaluation" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a># Each concurrent evaluation gets its own session, master, and port:
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>track(combo_id=&quot;gpt4o+gpt4o&quot;)     → SessionMaster on port 59198
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>track(combo_id=&quot;gpt4o+gpt4o-mini&quot;) → SessionMaster on port 59205
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a># In-process: ContextVar is async/thread-safe; each task sees its own ActiveSession.
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a># Subprocess: each gets its own env dict passed explicitly, not os.environ.
+</span></code></pre></div>
+<h2 id="what-lives-where">What lives where<a class="headerlink" href="#what-lives-where" title="Permanent link">&para;</a></h2>
+<h3 id="agentoptproxy"><code>agentopt.proxy</code><a class="headerlink" href="#agentoptproxy" title="Permanent link">&para;</a></h3>
+<p>The interception machinery, split between the in-process httpx wrapper, the per-session mitmproxy addon, and (optionally) a long-lived <code>agentopt serve</code> daemon.  All paths call into the same recording / cache / token-extraction code, so a record is a record regardless of how the call arrived.</p>
+<ul>
+<li><strong><code>tracker.py</code></strong> — <code>LLMTracker</code>.  Public surface.  Thin delegator that picks a backend in <code>__init__</code> based on <code>AGENTOPT_GATEWAY_URL</code>.  Context-manager-friendly: <code>with LLMTracker() as t:</code>.</li>
+<li><strong><code>_backend.py</code></strong> — <code>_Backend</code> ABC and the shared CA-bundle helpers (<code>_MITMPROXY_CA_CERT</code>, <code>_ensure_ca_bundle</code>).  Both backends import from here.</li>
+<li><strong><code>_local_backend.py</code></strong> — <code>LocalBackend</code>.  Per-session mitmproxy in this process; holds the shared <code>SessionManager</code>, <code>ResponseCache</code>, <code>ProviderRegistry</code>, <code>Recorder</code>; manages <code>SessionMaster</code> lifecycles per <code>track()</code>.</li>
+<li><strong><code>_remote_backend.py</code></strong> — <code>RemoteBackend</code> and <code>RemoteHandler</code>.  Talks to the daemon's HTTP control plane; the in-process httpx patch's slow path forwards through the daemon's per-session port instead of recording locally.</li>
+<li><strong><code>daemon.py</code></strong> — <code>aiohttp.web</code> app wrapping a singleton <code>LocalBackend</code>; CLI entrypoint registers the <code>agentopt serve</code> subparser.  Warms up mitmproxy's CA on startup so the first <code>/sessions</code> POST doesn't have to.</li>
+<li><strong><code>cli.py</code></strong> — top-level <code>agentopt</code> argparse dispatcher; subcommands register themselves via <code>set_defaults(func=...)</code>.</li>
+<li><strong><code>interceptor.py</code></strong> — the httpx monkey-patch.  On an LLM request inside an active session, the patched <code>send</code> is a one-line dispatcher to <code>active.handler.handle_{sync,async}</code>.  Two handlers: <code>LocalHandler</code> (today's cache+forward+record body) and <code>RemoteHandler</code> (forwards through the daemon).  Path-pattern set is a frozenset rebuilt-on-write so <code>register_provider</code> can extend it without racing the wrapper hot path.</li>
+<li><strong><code>mitm_addon.py</code></strong> — <code>AgentoptAddon</code> for mitmproxy.  Hooks: <code>tls_clienthello</code> decides intercept-vs-passthrough at the SNI level; <code>request</code> does cache lookup and short-circuit; <code>response</code> records and caches; <code>error</code> records transport failures.</li>
+<li><strong><code>mitm_runner.py</code></strong> — <code>SessionMaster</code>: hosts one <code>DumpMaster</code> per session in a background thread with its own asyncio loop.  Captures the bound port via the <code>running</code> addon hook.  Documents the embedded mitmproxy API surface we depend on so a major-version bump is traceable.</li>
+<li><strong><code>recording.py</code></strong> — <code>Recorder</code>.  The single function that turns (session, request body, response body, latency, status) into a <code>CallRecord</code> and dispatches to <code>SessionManager</code>.  Owns the warn-once-per-host set for token-extraction failures.  Both the httpx wrapper and the addon use the same instance.</li>
+<li><strong><code>providers.py</code></strong> — <code>Provider</code> dataclass and <code>ProviderRegistry</code>.  Per-<code>LocalBackend</code> catalog of LLM hostnames and path patterns.</li>
+<li><strong><code>usage.py</code></strong> — pure token-extraction for OpenAI / Anthropic / Gemini response shapes (JSON object, JSON array, SSE).  Raises <code>UsageExtractionError</code> with a structured diagnostic on miss; never reports zero tokens silently.</li>
+<li><strong><code>cache.py</code></strong> — <code>ResponseCache</code>.  In-memory dict, optionally persisted to SQLite via a daemon flush thread.  Keyed by a hash of the request body (excluding <code>stream</code>).</li>
+<li><strong><code>session.py</code></strong> — <code>SessionManager</code>.  Active and archived sessions; <code>add_record</code> checks both so a slow upstream that finishes after <code>end_session</code> doesn't drop its record.</li>
+</ul>
+<h3 id="agentoptproxyllmtracker-the-public-surface"><code>agentopt.proxy.LLMTracker</code> (the public surface)<a class="headerlink" href="#agentoptproxyllmtracker-the-public-surface" title="Permanent link">&para;</a></h3>
+<p>Identical between local and daemon modes. Reads <code>AGENTOPT_GATEWAY_URL</code> in <code>__init__</code> to pick the backend. See <a href="../tracker/">tracker.md</a> for the full surface; the highlights:</p>
+<ul>
+<li><strong>Lifecycle.</strong> <code>tracker.start()</code> / <code>tracker.stop()</code> / <code>tracker.close()</code>. Record queries remain valid after <code>stop()</code>; <code>close()</code> is the final-teardown hook that releases the remote backend's long-lived HTTP client.</li>
+<li><strong>Context-manager sugar.</strong> <code>with LLMTracker() as tracker:</code> calls <code>stop()</code> on exit (not <code>close()</code>, so <code>tracker.print_summary()</code> after the block still works). Passing any of <code>data_id</code> / <code>combo_id</code> / <code>agent_id</code> to the constructor also auto-opens a single tracking session for the lifetime of the <code>with</code>.</li>
+<li><strong>Sessions.</strong> <code>tracker.track(data_id, combo_id, agent_id, router)</code> context manager — creates a session, eagerly spins up a <code>SessionMaster</code> (local) or POSTs <code>/sessions</code> (remote), sets the <code>ContextVar</code>. All four args are optional; <code>router=</code> falls back to the one passed to <code>LLMTracker(...)</code>.</li>
+<li><strong>Subprocess env.</strong> <code>tracker.get_session_env(session)</code> returns <code>HTTPS_PROXY</code> + the merged CA bundle path. The URL points at the local <code>SessionMaster</code> or the daemon's per-session port, transparently. <code>agentopt.get_current_session_proxy()</code> is the module-level convenience reading the active session out of the <code>ContextVar</code>.</li>
+<li><strong>Providers.</strong> <code>tracker.register_provider(name, base_url, path_patterns)</code> extends both the shared <code>ProviderRegistry</code> (subprocess intercept hosts) and the httpx wrapper's path-pattern set; in remote mode also POSTs <code>/providers</code>.</li>
+<li><strong>Queries.</strong> <code>tracker.records</code>, <code>tracker.get_records(...)</code>, <code>tracker.get_usage(...)</code>, <code>tracker.get_cached_latency(...)</code>, <code>tracker.print_summary(...)</code>.</li>
+<li><strong>Cache.</strong> <code>tracker.flush_cache()</code>, <code>tracker.clear_cache()</code>, <code>tracker.clear()</code>.</li>
+</ul>
+<h3 id="the-httpx-wrapper-no-business-logic-delegates-to-recorder-responsecache">The httpx wrapper (no business logic — delegates to <code>Recorder</code> + <code>ResponseCache</code>)<a class="headerlink" href="#the-httpx-wrapper-no-business-logic-delegates-to-recorder-responsecache" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>_is_llm_request(request)</code>: POST + path matches a known LLM endpoint</li>
+<li>Read active session from <code>ContextVar</code></li>
+<li>Cache lookup; short-circuit on hit</li>
+<li>Call original <code>httpx.Client.send</code>; time + record + cache on miss</li>
+</ul>
+<h3 id="the-subprocess-redirect-env-vars-no-logic">The subprocess redirect (env vars, no logic)<a class="headerlink" href="#the-subprocess-redirect-env-vars-no-logic" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>HTTPS_PROXY=http://127.0.0.1:{master.port}</code></li>
+<li><code>SSL_CERT_FILE=~/.mitmproxy/agentopt-bundle.pem</code> (mitmproxy CA + certifi system CAs)</li>
+<li><code>REQUESTS_CA_BUNDLE=...</code>, <code>NODE_EXTRA_CA_CERTS=...</code> for non-stdlib clients</li>
+</ul>
+<h2 id="known-llm-api-hostnames">Known LLM API hostnames<a class="headerlink" href="#known-llm-api-hostnames" title="Permanent link">&para;</a></h2>
+<p>The proxy only intercepts CONNECT requests to these hostnames (everything else is tunnelled raw, no MITM):</p>
+<ul>
+<li><code>api.openai.com</code></li>
+<li><code>api.anthropic.com</code></li>
+<li><code>generativelanguage.googleapis.com</code></li>
+<li><code>cloudcode-pa.googleapis.com</code> (Gemini CLI OAuth)</li>
+<li><code>bedrock-runtime.*.amazonaws.com</code></li>
+<li><code>*.openai.azure.com</code></li>
+<li><code>api.mistral.ai</code></li>
+<li><code>api.groq.com</code></li>
+<li><code>api.together.xyz</code></li>
+<li><code>api.deepseek.com</code></li>
+</ul>
+<p>Extend at runtime with:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">tracker</span><span class="o">.</span><span class="n">register_provider</span><span class="p">(</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;openrouter&quot;</span><span class="p">,</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://openrouter.ai&quot;</span><span class="p">,</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">path_patterns</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;/api/v1/chat/completions&quot;</span><span class="p">,),</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>This updates two places at once: the shared <code>ProviderRegistry</code> (subprocess intercept hosts — addons see new hosts via shared reference), and the in-process httpx-patch path set (so <code>_is_llm_request</code> returns true for the new path).</p>
+<h2 id="why-each-piece-exists">Why each piece exists<a class="headerlink" href="#why-each-piece-exists" title="Permanent link">&para;</a></h2>
+<p>Every layer of complexity is forced by a real constraint, not a design choice:</p>
+<ol>
+<li>We want to observe LLM calls → patch httpx in-process</li>
+<li>But subprocess agents have their own httpx → need a network proxy</li>
+<li>But network traffic is encrypted → need MITM with fake certificates</li>
+<li>But the agent rejects fake certificates → need a custom CA in the trust store</li>
+<li>But we need to know which calls belong to which combo → use a separate port per session</li>
+<li>But <code>os.environ</code> isn't safe for parallel subprocesses → pass env explicitly to each subprocess instead of mutating globals</li>
+<li>But state dies with the Python process and other languages can't share it → run the same proxy code as a long-lived <code>agentopt serve</code> daemon; clients pick local vs daemon via the <code>AGENTOPT_GATEWAY_URL</code> env var, with no API change</li>
+</ol>
+<h2 id="scoping-constraints">Scoping constraints<a class="headerlink" href="#scoping-constraints" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Python only</strong> — the proxy is Python.  CA trust config targets Python and Node HTTP clients (<code>SSL_CERT_FILE</code>, <code>REQUESTS_CA_BUNDLE</code>, <code>NODE_EXTRA_CA_CERTS</code>).</li>
+<li><strong>HTTP only</strong> — no gRPC, no WebSocket.  HTTP/HTTPS covers 99%+ of current LLM API traffic.</li>
+<li><strong>mitmproxy for CONNECT/TLS</strong> — pinned <code>mitmproxy&gt;=12,&lt;13</code>.  The from-scratch HTTP CONNECT handler we used to maintain (~1100 lines of socket / ssl / http.client) is gone; mitmproxy handles framing, TLS termination, HTTP/2, and certificate generation correctly by construction.</li>
+<li><strong>One DumpMaster per session</strong> — keeps the lifecycle simple and avoids depending on mitmproxy's undocumented runtime mode-update behavior.  Tradeoff: ~100-300ms startup and ~30MB RSS per concurrent session.</li>
+<li><strong>Docker uses sidecar proxy</strong> — the proxy runs inside the container.  Self-contained, no host networking dependency.</li>
+</ol>
+<h2 id="implementation-notes">Implementation notes<a class="headerlink" href="#implementation-notes" title="Permanent link">&para;</a></h2>
+<p>The one non-obvious correctness invariant we still own:</p>
+<ul>
+<li><strong>Token-usage extraction must not silently report zero.</strong>  A successful (HTTP 200) call whose usage we can't parse is a real proxy gap, not a 0-token call.  <code>usage.py</code> raises <code>UsageExtractionError</code> with a diagnostic naming exactly which keys it searched and which were present; <code>Recorder</code> attaches that to <code>CallRecord.error</code> and uses a <code>&lt;parse-failed&gt;</code> sentinel for the model name so the failure surfaces in result summaries.</li>
+<li><strong>Late records must not be dropped.</strong>  A blocking upstream request can finish <em>after</em> the session's <code>track()</code> scope exits.  <code>SessionManager.add_record</code> looks up both active and ended sessions so the late record lands in the archive instead of being lost.</li>
+</ul>
+<p>(The previous CONNECT-prelude-buffering and strict-Content-Length invariants are now mitmproxy's problem, not ours.)</p>
+<h2 id="open-questions">Open questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>CA certificate compatibility</strong>: do any Python LLM SDKs override <code>SSL_CERT_FILE</code> or pin certificates?  Need to test against <code>openai</code>, <code>anthropic</code>, <code>google-generativeai</code>, <code>boto3</code>.</p>
+</li>
+<li>
+<p><strong>Agents that bypass <code>HTTPS_PROXY</code></strong>: some SDK versions may hardcode direct connections.  Mitigation: maintain a compatibility matrix per SDK version.</p>
+</li>
+<li>
+<p><strong>Real-time streaming forwarding</strong>: SSE / <code>Transfer-Encoding: chunked</code> responses are <em>parsed</em> correctly today (the SSE token-extractor handles Anthropic's split <code>message_start</code> / <code>message_delta</code> usage events and Gemini's <code>usageMetadata</code>), but the proxy currently buffers the full upstream response before sending it back to the client — so the client doesn't see chunks land in real time.  For evaluation workflows this is fine (you read the final result anyway).  For interactive use you'd want chunk-by-chunk forwarding while still accumulating SSE frames for token extraction.</p>
+</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/AgentOptimizer/agentopt" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.instant", "navigation.instant.progress", "navigation.top", "navigation.footer", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/hero.js"></script>
+      
+    
+  </body>
+</html>

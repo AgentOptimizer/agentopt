@@ -6,7 +6,9 @@ application inference profile models.
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from typing import Any
 
 import botocore.config
@@ -49,11 +51,49 @@ _PROFILE_DISPLAY_NAMES = {
     "a6jppcyeu4ms": "Qwen3 Next 80B A3B",
 }
 
-# Reverse mapping: display name -> full ARN
+# Reverse mapping: display name -> full ARN.  A supplemental run can override
+# selected profiles with a JSON file named by AGENTOPT_BEDROCK_PROFILE_MAP.
+# This keeps account/user-specific resource IDs out of the benchmark logic and
+# makes it impossible to accidentally charge an earlier runner's profile when
+# the override is supplied.
 _DISPLAY_NAME_TO_ARN = {
     v: f"arn:aws:bedrock:us-east-1:920736616554:application-inference-profile/{k}"
     for k, v in _PROFILE_DISPLAY_NAMES.items()
 }
+
+
+def _load_profile_overrides() -> dict[str, str]:
+    path_value = os.environ.get("AGENTOPT_BEDROCK_PROFILE_MAP")
+    if not path_value:
+        return {}
+
+    path = Path(path_value).expanduser()
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Profile map must be a JSON object: {path}")
+
+    expected_prefix = (
+        "arn:aws:bedrock:us-east-1:920736616554:"
+        "application-inference-profile/"
+    )
+    unknown = sorted(set(payload) - set(_DISPLAY_NAME_TO_ARN))
+    if unknown:
+        raise ValueError(f"Profile map contains unknown display names: {unknown}")
+
+    overrides: dict[str, str] = {}
+    for display, arn in payload.items():
+        if not isinstance(arn, str) or not arn.startswith(expected_prefix):
+            raise ValueError(
+                f"Invalid us-east-1 application inference profile ARN for "
+                f"{display!r}: {arn!r}"
+            )
+        overrides[display] = arn
+    return overrides
+
+
+_DISPLAY_NAME_TO_ARN.update(_load_profile_overrides())
+_ARN_TO_DISPLAY_NAME = {arn: display for display, arn in _DISPLAY_NAME_TO_ARN.items()}
 
 DEFAULT_MODELS = [
     "Claude 3 Haiku",
@@ -80,22 +120,21 @@ NO_TOOL_CALLING_MODELS = {
 
 _BASE_PRICES = {
     "Claude 3 Haiku": {"input_price": 0.25, "output_price": 1.25},
-    "Claude Haiku 4.5": {"input_price": 0.80, "output_price": 4.00},
+    "Claude Haiku 4.5": {"input_price": 1.00, "output_price": 5.00},
     "Claude Opus 4.6": {"input_price": 5.00, "output_price": 25.00},
     "DeepSeek R1": {"input_price": 1.35, "output_price": 5.40},
-    "gpt-oss-20b": {"input_price": 0.22, "output_price": 0.88},
-    "gpt-oss-120b": {"input_price": 1.20, "output_price": 4.80},
-    "Kimi K2.5": {"input_price": 0.35, "output_price": 1.40},
-    "Ministral 3 8B": {"input_price": 0.04, "output_price": 0.04},
-    "Qwen3 32B": {"input_price": 0.17, "output_price": 0.85},
-    "Qwen3 Next 80B A3B": {"input_price": 0.25, "output_price": 1.25},
+    "gpt-oss-20b": {"input_price": 0.07, "output_price": 0.30},
+    "gpt-oss-120b": {"input_price": 0.15, "output_price": 0.60},
+    "Kimi K2.5": {"input_price": 0.60, "output_price": 3.00},
+    "Ministral 3 8B": {"input_price": 0.15, "output_price": 0.15},
+    "Qwen3 32B": {"input_price": 0.15, "output_price": 0.60},
+    "Qwen3 Next 80B A3B": {"input_price": 0.15, "output_price": 1.20},
 }
 
-# Build BEDROCK_PRICES with both display names and ARN keys
+# Build BEDROCK_PRICES with both display names and the resolved ARN keys.
 BEDROCK_PRICES: dict[str, dict[str, float]] = dict(_BASE_PRICES)
-for _pid, _display in _PROFILE_DISPLAY_NAMES.items():
+for _display, _arn in _DISPLAY_NAME_TO_ARN.items():
     if _display in _BASE_PRICES:
-        _arn = f"arn:aws:bedrock:us-east-1:920736616554:application-inference-profile/{_pid}"
         BEDROCK_PRICES[_arn] = _BASE_PRICES[_display]
 
 
@@ -139,6 +178,8 @@ def extract_text_content(content: Any) -> str:
 def display_name(model: str) -> str:
     """Convert a model string to a human-readable display name."""
     if "application-inference-profile/" in model:
+        if model in _ARN_TO_DISPLAY_NAME:
+            return _ARN_TO_DISPLAY_NAME[model]
         profile_id = model.rsplit("/", 1)[-1]
         return _PROFILE_DISPLAY_NAMES.get(profile_id, model)
     if model.startswith("bedrock/"):
@@ -159,7 +200,7 @@ def supports_tool_calling(model: str) -> bool:
 _PROVIDER_KEYWORDS = {
     "anthropic": ["anthropic", "claude"],
     "meta": ["meta", "llama"],
-    "mistral": ["mistral"],
+    "mistral": ["mistral", "ministral"],
     "amazon": ["amazon", "nova", "titan"],
     "deepseek": ["deepseek"],
     "openai": ["gpt", "openai"],
@@ -191,7 +232,7 @@ def make_llm(model: str, temperature: float = 0.0) -> Any:
     if model in _DISPLAY_NAME_TO_ARN:
         arn = _DISPLAY_NAME_TO_ARN[model]
         profile_id = arn.rsplit("/", 1)[-1]
-        provider = _PROFILE_PROVIDERS.get(profile_id)
+        provider = _PROFILE_PROVIDERS.get(profile_id) or _infer_provider(model)
         from langchain_aws import ChatBedrockConverse
         region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
         kwargs: dict[str, Any] = {

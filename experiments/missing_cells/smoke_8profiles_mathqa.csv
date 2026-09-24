@@ -1,0 +1,5 @@
+benchmark,configuration_id,role1_model,role2_model,first_question_id,last_question_id,missing_count
+mathqa,answer=Claude Opus 4.6 + critic=Claude Haiku 4.5,Claude Opus 4.6,Claude Haiku 4.5,172,172,1
+mathqa,answer=gpt-oss-120b + critic=gpt-oss-20b,gpt-oss-120b,gpt-oss-20b,194,194,1
+mathqa,answer=Kimi K2.5 + critic=Qwen3 32B,Kimi K2.5,Qwen3 32B,194,194,1
+mathqa,answer=Ministral 3 8B + critic=Qwen3 Next 80B A3B,Ministral 3 8B,Qwen3 Next 80B A3B,156,156,1

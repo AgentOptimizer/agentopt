@@ -1,0 +1,11 @@
+{
+  "Ministral 3 8B": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "Claude Haiku 4.5": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "Claude Opus 4.6": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "Kimi K2.5": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "Qwen3 32B": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "Qwen3 Next 80B A3B": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "gpt-oss-120b": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "gpt-oss-20b": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "DeepSeek R1": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID"
+}

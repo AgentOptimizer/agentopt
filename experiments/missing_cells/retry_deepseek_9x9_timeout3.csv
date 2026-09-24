@@ -1,0 +1,4 @@
+benchmark,configuration_id,role1_model,role2_model,first_question_id,last_question_id,missing_count
+mathqa,answer=Ministral 3 8B + critic=DeepSeek R1,Ministral 3 8B,DeepSeek R1,31,31,1
+mathqa,answer=Ministral 3 8B + critic=DeepSeek R1,Ministral 3 8B,DeepSeek R1,69,69,1
+mathqa,answer=Ministral 3 8B + critic=DeepSeek R1,Ministral 3 8B,DeepSeek R1,87,87,1

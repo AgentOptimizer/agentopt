@@ -1,0 +1,2 @@
+benchmark,configuration_id,role1_model,role2_model,first_question_id,last_question_id,missing_count
+mathqa,"answer=Ministral 3 8B + critic=Ministral 3 8B",Ministral 3 8B,Ministral 3 8B,141,141,1

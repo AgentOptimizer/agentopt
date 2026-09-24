@@ -1,0 +1,35 @@
+benchmark,configuration_id,role1_model,role2_model,first_question_id,last_question_id,missing_count
+hotpotqa,planner=DeepSeek R1 + solver=Claude Haiku 4.5,DeepSeek R1,Claude Haiku 4.5,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=Claude Opus 4.6,DeepSeek R1,Claude Opus 4.6,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=DeepSeek R1,DeepSeek R1,DeepSeek R1,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=Kimi K2.5,DeepSeek R1,Kimi K2.5,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=Ministral 3 8B,DeepSeek R1,Ministral 3 8B,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=Qwen3 32B,DeepSeek R1,Qwen3 32B,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=Qwen3 Next 80B A3B,DeepSeek R1,Qwen3 Next 80B A3B,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=gpt-oss-120b,DeepSeek R1,gpt-oss-120b,0,199,200
+hotpotqa,planner=DeepSeek R1 + solver=gpt-oss-20b,DeepSeek R1,gpt-oss-20b,0,199,200
+hotpotqa,planner=Claude Haiku 4.5 + solver=DeepSeek R1,Claude Haiku 4.5,DeepSeek R1,0,199,200
+hotpotqa,planner=Claude Opus 4.6 + solver=DeepSeek R1,Claude Opus 4.6,DeepSeek R1,0,199,200
+hotpotqa,planner=Kimi K2.5 + solver=DeepSeek R1,Kimi K2.5,DeepSeek R1,0,199,200
+hotpotqa,planner=Ministral 3 8B + solver=DeepSeek R1,Ministral 3 8B,DeepSeek R1,0,199,200
+hotpotqa,planner=Qwen3 32B + solver=DeepSeek R1,Qwen3 32B,DeepSeek R1,0,199,200
+hotpotqa,planner=Qwen3 Next 80B A3B + solver=DeepSeek R1,Qwen3 Next 80B A3B,DeepSeek R1,0,199,200
+hotpotqa,planner=gpt-oss-120b + solver=DeepSeek R1,gpt-oss-120b,DeepSeek R1,0,199,200
+hotpotqa,planner=gpt-oss-20b + solver=DeepSeek R1,gpt-oss-20b,DeepSeek R1,0,199,200
+mathqa,answer=DeepSeek R1 + critic=Claude Haiku 4.5,DeepSeek R1,Claude Haiku 4.5,0,199,200
+mathqa,answer=DeepSeek R1 + critic=Claude Opus 4.6,DeepSeek R1,Claude Opus 4.6,0,199,200
+mathqa,answer=DeepSeek R1 + critic=DeepSeek R1,DeepSeek R1,DeepSeek R1,0,199,200
+mathqa,answer=DeepSeek R1 + critic=Kimi K2.5,DeepSeek R1,Kimi K2.5,0,199,200
+mathqa,answer=DeepSeek R1 + critic=Ministral 3 8B,DeepSeek R1,Ministral 3 8B,0,199,200
+mathqa,answer=DeepSeek R1 + critic=Qwen3 32B,DeepSeek R1,Qwen3 32B,0,199,200
+mathqa,answer=DeepSeek R1 + critic=Qwen3 Next 80B A3B,DeepSeek R1,Qwen3 Next 80B A3B,0,199,200
+mathqa,answer=DeepSeek R1 + critic=gpt-oss-120b,DeepSeek R1,gpt-oss-120b,0,199,200
+mathqa,answer=DeepSeek R1 + critic=gpt-oss-20b,DeepSeek R1,gpt-oss-20b,0,199,200
+mathqa,answer=Claude Haiku 4.5 + critic=DeepSeek R1,Claude Haiku 4.5,DeepSeek R1,0,199,200
+mathqa,answer=Claude Opus 4.6 + critic=DeepSeek R1,Claude Opus 4.6,DeepSeek R1,0,199,200
+mathqa,answer=Kimi K2.5 + critic=DeepSeek R1,Kimi K2.5,DeepSeek R1,0,199,200
+mathqa,answer=Ministral 3 8B + critic=DeepSeek R1,Ministral 3 8B,DeepSeek R1,0,199,200
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,0,199,200
+mathqa,answer=Qwen3 Next 80B A3B + critic=DeepSeek R1,Qwen3 Next 80B A3B,DeepSeek R1,0,199,200
+mathqa,answer=gpt-oss-120b + critic=DeepSeek R1,gpt-oss-120b,DeepSeek R1,0,199,200
+mathqa,answer=gpt-oss-20b + critic=DeepSeek R1,gpt-oss-20b,DeepSeek R1,0,199,200

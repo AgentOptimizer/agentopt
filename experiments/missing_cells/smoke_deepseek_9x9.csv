@@ -1,0 +1,5 @@
+benchmark,configuration_id,role1_model,role2_model,first_question_id,last_question_id,missing_count
+hotpotqa,planner=DeepSeek R1 + solver=gpt-oss-20b,DeepSeek R1,gpt-oss-20b,0,0,1
+hotpotqa,planner=gpt-oss-20b + solver=DeepSeek R1,gpt-oss-20b,DeepSeek R1,0,0,1
+mathqa,answer=DeepSeek R1 + critic=gpt-oss-20b,DeepSeek R1,gpt-oss-20b,0,0,1
+mathqa,answer=gpt-oss-20b + critic=DeepSeek R1,gpt-oss-20b,DeepSeek R1,0,0,1

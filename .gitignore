@@ -207,6 +207,15 @@ cython_debug/
 # agentopt cache
 .agentopt_cache/
 llm_cache/
+.hf_cache/
+.matplotlib/
+
+# Missing-cell supplemental run artifacts (plan and docs stay tracked)
+experiments/missing_cells/output/
+experiments/missing_cells/completed/
+experiments/missing_cells/profile_arns.*.json
+!experiments/missing_cells/profile_arns.example.json
+experiments/results/cache_db_results/*.pkl
 
 # Marimo
 marimo/_static/

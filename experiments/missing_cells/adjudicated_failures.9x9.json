@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "description": "Audited MathQA context-overflow failures scored as incorrect. Token, cost, and latency values include only successful model responses recorded before Bedrock rejected the next Qwen request; the rejected request returned no usage metadata.",
+  "records": [
+    {
+      "benchmark": "mathqa",
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 65,
+      "status": "adjudicated_incorrect",
+      "score": 0.0,
+      "latency_seconds": 131.50817379998625,
+      "server_latency_ms": 129017.0,
+      "input_tokens": {
+        "Qwen3 32B": 776,
+        "DeepSeek R1": 25817
+      },
+      "output_tokens": {
+        "Qwen3 32B": 31992,
+        "DeepSeek R1": 1729
+      },
+      "cost": 0.06350115,
+      "record_source": "context_overflow_adjudicated_incorrect",
+      "model_call_count": 2,
+      "cached_call_count": 2,
+      "max_concurrent": 20,
+      "max_tool_rounds": null,
+      "mathqa_max_iterations": 3
+    },
+    {
+      "benchmark": "mathqa",
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 93,
+      "status": "adjudicated_incorrect",
+      "score": 0.0,
+      "latency_seconds": 183.79494679998606,
+      "server_latency_ms": 182070.0,
+      "input_tokens": {
+        "Qwen3 32B": 709,
+        "DeepSeek R1": 30293
+      },
+      "output_tokens": {
+        "Qwen3 32B": 32059,
+        "DeepSeek R1": 4458
+      },
+      "cost": 0.0843105,
+      "record_source": "context_overflow_adjudicated_incorrect",
+      "model_call_count": 2,
+      "cached_call_count": 2,
+      "max_concurrent": 20,
+      "max_tool_rounds": null,
+      "mathqa_max_iterations": 3
+    },
+    {
+      "benchmark": "mathqa",
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 108,
+      "status": "adjudicated_incorrect",
+      "score": 0.0,
+      "latency_seconds": 235.97258189998684,
+      "server_latency_ms": 234076.0,
+      "input_tokens": {
+        "Qwen3 32B": 729,
+        "DeepSeek R1": 25584
+      },
+      "output_tokens": {
+        "Qwen3 32B": 32039,
+        "DeepSeek R1": 4465
+      },
+      "cost": 0.07798215,
+      "record_source": "context_overflow_adjudicated_incorrect",
+      "model_call_count": 2,
+      "cached_call_count": 2,
+      "max_concurrent": 20,
+      "max_tool_rounds": null,
+      "mathqa_max_iterations": 3
+    },
+    {
+      "benchmark": "mathqa",
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 121,
+      "status": "adjudicated_incorrect",
+      "score": 0.0,
+      "latency_seconds": 184.31220100002247,
+      "server_latency_ms": 183157.0,
+      "input_tokens": {
+        "Qwen3 32B": 726,
+        "DeepSeek R1": 28037
+      },
+      "output_tokens": {
+        "Qwen3 32B": 32042,
+        "DeepSeek R1": 1079
+      },
+      "cost": 0.06301065,
+      "record_source": "context_overflow_adjudicated_incorrect",
+      "model_call_count": 2,
+      "cached_call_count": 2,
+      "max_concurrent": 20,
+      "max_tool_rounds": null,
+      "mathqa_max_iterations": 3
+    }
+  ]
+}

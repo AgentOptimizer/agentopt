@@ -1,0 +1,11 @@
+benchmark,configuration_id,role1_model,role2_model,first_question_id,last_question_id,missing_count
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,21,21,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,49,49,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,65,65,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,93,93,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,99,99,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,108,108,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,121,121,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,128,128,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,146,146,1
+mathqa,answer=Qwen3 32B + critic=DeepSeek R1,Qwen3 32B,DeepSeek R1,187,187,1

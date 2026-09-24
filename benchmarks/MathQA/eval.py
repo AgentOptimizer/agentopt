@@ -183,7 +183,12 @@ def eval_fn(expected: str, actual: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _run_answer_with_tools(llm, messages, use_tools=True):
+def _run_answer_with_tools(
+    llm,
+    messages,
+    use_tools=True,
+    max_tool_rounds: int | None = None,
+):
     """Run answer agent with optional tool calling loop."""
     if use_tools:
         model_with_tools = llm.bind_tools(CALC_TOOLS)
@@ -191,6 +196,7 @@ def _run_answer_with_tools(llm, messages, use_tools=True):
         messages = messages + [response]
 
         tools_by_name = {t.name: t for t in CALC_TOOLS}
+        tool_rounds = 0
         while getattr(response, "tool_calls", None):
             for tc in response.tool_calls:
                 tool_fn = tools_by_name.get(tc["name"], calculator)
@@ -198,6 +204,20 @@ def _run_answer_with_tools(llm, messages, use_tools=True):
                 messages.append(
                     ToolMessage(content=str(tool_result), tool_call_id=tc["id"])
                 )
+            tool_rounds += 1
+            if max_tool_rounds is not None and tool_rounds >= max_tool_rounds:
+                messages.append(
+                    HumanMessage(
+                        content=(
+                            "Stop calling tools. Using the tool results already "
+                            "available, finish the solution and return the final "
+                            "multiple-choice answer now."
+                        )
+                    )
+                )
+                response = llm.invoke(messages)
+                messages.append(response)
+                break
             response = model_with_tools.invoke(messages)
             messages.append(response)
     else:
@@ -212,7 +232,11 @@ def _run_answer_with_tools(llm, messages, use_tools=True):
 # ---------------------------------------------------------------------------
 
 
-def _mathqa_agent_fn_raw(models: Dict[str, Any], max_iterations: int = 3):
+def _mathqa_agent_fn_raw(
+    models: Dict[str, Any],
+    max_iterations: int = 3,
+    max_tool_rounds: int | None = None,
+):
     """Factory: raw mode agent_fn for MathQA.
 
     models: {"answer": "<model>", "critic": "<model>"}
@@ -234,7 +258,12 @@ def _mathqa_agent_fn_raw(models: Dict[str, Any], max_iterations: int = 3):
         final = ""
         for iteration in range(max_iterations):
             # Answer agent
-            messages = _run_answer_with_tools(answer_llm, messages, use_tools)
+            messages = _run_answer_with_tools(
+                answer_llm,
+                messages,
+                use_tools,
+                max_tool_rounds=max_tool_rounds,
+            )
 
             # Critic agent
             review_prompt = HumanMessage(
@@ -255,6 +284,20 @@ def _mathqa_agent_fn_raw(models: Dict[str, Any], max_iterations: int = 3):
             content = extract_text_content(getattr(critic_response, "content", str(critic_response)))
             if "CORRECT" in content.upper() and "INCORRECT" not in content.upper():
                 break
+            if iteration + 1 < max_iterations:
+                # Converse-compatible chat templates require a user turn before
+                # asking the answer model to generate again.  Previously the
+                # next iteration ended with the critic's assistant message,
+                # which some Bedrock models reject with add_generation_prompt
+                # validation errors.
+                messages.append(
+                    HumanMessage(
+                        content=(
+                            "Revise your answer using the critic feedback above. "
+                            "Return a complete corrected answer."
+                        )
+                    )
+                )
 
         # Extract final answer
         for msg in reversed(messages):
@@ -283,7 +326,11 @@ class ReflectionState(TypedDict):
     iteration: int
 
 
-def _mathqa_agent_fn_langgraph(models: Dict[str, Any], max_iterations: int = 3):
+def _mathqa_agent_fn_langgraph(
+    models: Dict[str, Any],
+    max_iterations: int = 3,
+    max_tool_rounds: int | None = None,
+):
     """Factory: LangGraph mode agent_fn for MathQA.
 
     models: {"answer": "<model>", "critic": "<model>"}
@@ -311,7 +358,25 @@ def _mathqa_agent_fn_langgraph(models: Dict[str, Any], max_iterations: int = 3):
 
         def call_answer_agent(state: ReflectionState) -> ReflectionState:
             messages = _normalize_messages(list(state.get("messages", [])))
-            messages = _run_answer_with_tools(answer_llm, messages, use_tools)
+            if messages and getattr(messages[-1], "type", None) == "ai":
+                # The previous graph node was the critic.  Start a new user
+                # turn before asking the answer model to revise; several
+                # Bedrock chat templates reject generation when the history
+                # ends with an assistant message.
+                messages.append(
+                    HumanMessage(
+                        content=(
+                            "Revise your answer using the critic feedback above. "
+                            "Return a complete corrected answer."
+                        )
+                    )
+                )
+            messages = _run_answer_with_tools(
+                answer_llm,
+                messages,
+                use_tools,
+                max_tool_rounds=max_tool_rounds,
+            )
             return {"messages": messages, "final": "", "iteration": state.get("iteration", 0)}
 
         def call_critic_agent(state: ReflectionState) -> ReflectionState:

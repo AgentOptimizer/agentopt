@@ -705,9 +705,21 @@ def main():
     # Holdout evaluation
     print(f"\n[4] Holdout evaluation ({len(test_set)} samples)...")
     if best:
-        holdout_scores, holdout_latencies, _ = selector._evaluate_sequential(
-            test_set, label="holdout"
-        )
+        best_combo = selection_results.get_best_combo()
+        holdout_agent = agent_fn(best_combo)
+
+        # select_best() stops its tracker, so use a fresh tracker for the
+        # holdout pass.  Evaluate the selected agent through the selector's
+        # current per-datapoint evaluation API.
+        holdout_tracker = LLMTracker(cache=not args.no_cache)
+        selector._tracker = holdout_tracker
+        holdout_tracker.start()
+        try:
+            holdout_scores, holdout_latencies, _ = selector._evaluate_agent(
+                holdout_agent, test_set, label="holdout"
+            )
+        finally:
+            holdout_tracker.stop()
         holdout_score, _ = selector._compute_stats(holdout_scores)
         holdout_latency = (
             sum(holdout_latencies) / len(holdout_latencies)

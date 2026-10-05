@@ -1,0 +1,3 @@
+# Preserve audited dataset bytes so manifest SHA-256 hashes remain valid.
+experiments/missing_cells/completed/*.10x10.csv -text whitespace=cr-at-eol
+experiments/missing_cells/completed/*.10x10.pkl -text

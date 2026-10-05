@@ -1,4 +1,4 @@
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import benchmarks.MathQA.eval as mathqa_eval
 
@@ -66,3 +66,25 @@ def test_langgraph_reflection_adds_user_turn_before_retry(monkeypatch):
     assert answer.calls == 2
     assert critic.calls == 2
     assert result["final"] == "Answer: b"
+
+
+def test_portable_history_strips_private_reasoning_but_keeps_text_and_tools():
+    message = AIMessage(
+        content=[
+            {"type": "reasoning_content", "reasoningContent": {"text": "secret"}},
+            {"type": "redacted_thinking", "data": "opaque-provider-payload"},
+            {"type": "text", "text": "Answer: c"},
+        ],
+        additional_kwargs={"reasoningContent": {"redactedContent": "opaque"}},
+        tool_calls=[{"name": "calculator", "args": {"expression": "1+1"}, "id": "call-1"}],
+    )
+    tool_result = ToolMessage(content="2", tool_call_id="call-1")
+
+    cleaned, preserved_tool_result = mathqa_eval._portable_message_history(
+        [message, tool_result]
+    )
+
+    assert cleaned.content == [{"type": "text", "text": "Answer: c"}]
+    assert cleaned.additional_kwargs == {}
+    assert cleaned.tool_calls == message.tool_calls
+    assert preserved_tool_result == tool_result

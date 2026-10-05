@@ -7,5 +7,6 @@
   "Qwen3 Next 80B A3B": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
   "gpt-oss-120b": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
   "gpt-oss-20b": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
-  "DeepSeek R1": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID"
+  "DeepSeek R1": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID",
+  "GPT-5.6 Luna": "arn:aws:bedrock:us-east-1:ACCOUNT_ID:application-inference-profile/PROFILE_ID"
 }

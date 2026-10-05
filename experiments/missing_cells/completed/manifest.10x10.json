@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "description": "Audited complete 10x10 model-combination datasets",
+  "complete": true,
+  "models": [
+    "Claude Haiku 4.5",
+    "Claude Opus 4.6",
+    "Kimi K2.5",
+    "Ministral 3 8B",
+    "Qwen3 32B",
+    "Qwen3 Next 80B A3B",
+    "gpt-oss-120b",
+    "gpt-oss-20b",
+    "DeepSeek R1",
+    "GPT-5.6 Luna"
+  ],
+  "sample_result_fields": [
+    "score",
+    "latency_seconds",
+    "input_tokens",
+    "output_tokens",
+    "cost"
+  ],
+  "server_latency_unit": "milliseconds",
+  "matrix_cost_usd": 296.9232531000009,
+  "luna_supplement_cost_usd": 33.79652699000008,
+  "benchmarks": [
+    {
+      "benchmark": "hotpotqa",
+      "models": [
+        "Claude Haiku 4.5",
+        "Claude Opus 4.6",
+        "Kimi K2.5",
+        "Ministral 3 8B",
+        "Qwen3 32B",
+        "Qwen3 Next 80B A3B",
+        "gpt-oss-120b",
+        "gpt-oss-20b",
+        "DeepSeek R1",
+        "GPT-5.6 Luna"
+      ],
+      "configurations": 100,
+      "datapoints_per_configuration": 200,
+      "records": 20000,
+      "expected_records": 20000,
+      "complete": true,
+      "base_9x9_records": 16200,
+      "luna_supplemental_records": 3800,
+      "matrix_cost_usd": 62.58174793000035,
+      "luna_supplement_cost_usd": 4.187324419999962,
+      "raw_jsonl_status_rows": {
+        "ok": 7229,
+        "error": 1072
+      },
+      "missing_results": 0,
+      "missing_server_latency": 0,
+      "base_pickle": "experiments\\missing_cells\\completed\\hotpotqa_lookup.9x9.pkl",
+      "base_pickle_sha256": "12ee20e4ddc77bbe9b07b127d5d177f35c4191fa9b1093ff317acc74fe0b9a9d",
+      "base_csv": "experiments\\missing_cells\\completed\\hotpotqa_lookup.9x9.csv",
+      "base_csv_sha256": "0ef84d952ea132154a07f7e129e75f4ab84b97e0645d891a97770920ee0a5e3d",
+      "patch_jsonl": "experiments\\missing_cells\\output\\hotpotqa.jsonl",
+      "patch_sha256": "c9a76e45b671c23d868d3375d406cdec38295e3275ed09486d500ec586e51e31",
+      "output_pickle": "experiments\\missing_cells\\completed\\hotpotqa_lookup.10x10.pkl",
+      "output_pickle_sha256": "910ed475f3c4c3063dfb64dd0b0595958ebcfb585e0e69443057011f9a2f0439",
+      "output_csv": "experiments\\missing_cells\\completed\\hotpotqa_lookup.10x10.csv",
+      "output_csv_sha256": "1d40fea32dedd6b44e3b948f73fe8b869137823dd42059f085ba35c9a0da340d"
+    },
+    {
+      "benchmark": "mathqa",
+      "models": [
+        "Claude Haiku 4.5",
+        "Claude Opus 4.6",
+        "Kimi K2.5",
+        "Ministral 3 8B",
+        "Qwen3 32B",
+        "Qwen3 Next 80B A3B",
+        "gpt-oss-120b",
+        "gpt-oss-20b",
+        "DeepSeek R1",
+        "GPT-5.6 Luna"
+      ],
+      "configurations": 100,
+      "datapoints_per_configuration": 200,
+      "records": 20000,
+      "expected_records": 20000,
+      "complete": true,
+      "base_9x9_records": 16200,
+      "luna_supplemental_records": 3800,
+      "matrix_cost_usd": 234.34150517000057,
+      "luna_supplement_cost_usd": 29.609202570000118,
+      "raw_jsonl_status_rows": {
+        "error": 4296,
+        "ok": 7993
+      },
+      "missing_results": 0,
+      "missing_server_latency": 0,
+      "base_pickle": "experiments\\missing_cells\\completed\\mathqa_lookup.9x9.pkl",
+      "base_pickle_sha256": "8963fe0f383aef4ac5337e13b4b75d6acbf945a51a49d8f92ad55c68f025a48d",
+      "base_csv": "experiments\\missing_cells\\completed\\mathqa_lookup.9x9.csv",
+      "base_csv_sha256": "4045fe4b00e4607c53dbf38191f0079a0e4be2e055e09d11fd17678f12abd440",
+      "patch_jsonl": "experiments\\missing_cells\\output\\mathqa.jsonl",
+      "patch_sha256": "1e962f1f347e267ea2bde3dae81ac0bd243a1892f422727efe5745f724119320",
+      "output_pickle": "experiments\\missing_cells\\completed\\mathqa_lookup.10x10.pkl",
+      "output_pickle_sha256": "be91572b0c04191a574b9421a3b22c023aa863c0251ceda2e3c3752745c5390c",
+      "output_csv": "experiments\\missing_cells\\completed\\mathqa_lookup.10x10.csv",
+      "output_csv_sha256": "75586a5f7444f2b6d64ac0e3b0daea8dc3c64ade79ad3252345d51b92026735b"
+    }
+  ]
+}

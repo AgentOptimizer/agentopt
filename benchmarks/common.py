@@ -1,6 +1,6 @@
 """Shared Bedrock utilities for all benchmarks.
 
-Provides make_llm(), model mappings, and pricing for the 10 Bedrock
+Provides make_llm(), model mappings, and pricing for the 11 Bedrock
 application inference profile models.
 """
 
@@ -36,6 +36,7 @@ _PROFILE_PROVIDERS = {
     "uj2ujdo7k1qe": "mistral",      # Ministral 3 8B
     "d6kuf8xcphsl": "qwen",         # Qwen3 32B
     "a6jppcyeu4ms": "qwen",         # Qwen3 Next 80B A3B
+    "lce1xg9dynrh": "openai",       # GPT-5.6 Luna (US)
 }
 
 _PROFILE_DISPLAY_NAMES = {
@@ -49,6 +50,7 @@ _PROFILE_DISPLAY_NAMES = {
     "uj2ujdo7k1qe": "Ministral 3 8B",
     "d6kuf8xcphsl": "Qwen3 32B",
     "a6jppcyeu4ms": "Qwen3 Next 80B A3B",
+    "lce1xg9dynrh": "GPT-5.6 Luna",
 }
 
 # Reverse mapping: display name -> full ARN.  A supplemental run can override
@@ -129,6 +131,7 @@ _BASE_PRICES = {
     "Ministral 3 8B": {"input_price": 0.15, "output_price": 0.15},
     "Qwen3 32B": {"input_price": 0.15, "output_price": 0.60},
     "Qwen3 Next 80B A3B": {"input_price": 0.15, "output_price": 1.20},
+    "GPT-5.6 Luna": {"input_price": 0.22, "output_price": 1.32},
 }
 
 # Build BEDROCK_PRICES with both display names and the resolved ARN keys.

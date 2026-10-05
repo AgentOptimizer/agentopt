@@ -140,6 +140,61 @@ def _normalize_messages(messages: List[Any]) -> List[Any]:
     return list(convert_to_messages(messages))
 
 
+def _portable_message_history(messages: List[Any]) -> List[Any]:
+    """Remove provider-private reasoning blocks before a cross-model handoff.
+
+    Bedrock reasoning blocks (including ``redacted_thinking`` and
+    ``reasoning_content``) are only valid when replayed to the model/provider
+    that created them.  MathQA alternates answer and critic models, so passing
+    those opaque blocks through unchanged can make the next Converse request
+    fail validation.  Visible text, tool calls, and tool results remain intact.
+    """
+
+    def portable_content(content: Any) -> Any:
+        if not isinstance(content, list):
+            return content
+        kept: list[Any] = []
+        for block in content:
+            if not isinstance(block, dict):
+                kept.append(block)
+                continue
+            block_type = str(block.get("type", "")).lower()
+            block_keys = {str(key).lower() for key in block}
+            if (
+                "reasoning" in block_type
+                or "thinking" in block_type
+                or "reasoningcontent" in block_keys
+                or "redactedcontent" in block_keys
+            ):
+                continue
+            kept.append(block)
+        return kept
+
+    portable: list[Any] = []
+    for message in messages:
+        content = (
+            message.get("content", "")
+            if isinstance(message, dict)
+            else getattr(message, "content", "")
+        )
+        cleaned = portable_content(content)
+        if isinstance(message, dict):
+            copied = dict(message)
+            copied["content"] = cleaned
+            portable.append(copied)
+            continue
+        if hasattr(message, "model_copy"):
+            updates: dict[str, Any] = {"content": cleaned}
+            if getattr(message, "type", None) == "ai":
+                # Parsed tool calls live in ``tool_calls``; provider-specific
+                # raw reasoning metadata is not safe to replay cross-model.
+                updates["additional_kwargs"] = {}
+            portable.append(message.model_copy(update=updates))
+            continue
+        portable.append(message)
+    return portable
+
+
 def _is_system_message(message: Any) -> bool:
     if isinstance(message, dict):
         return message.get("role") == "system"
@@ -192,7 +247,7 @@ def _run_answer_with_tools(
     """Run answer agent with optional tool calling loop."""
     if use_tools:
         model_with_tools = llm.bind_tools(CALC_TOOLS)
-        response = model_with_tools.invoke(messages)
+        response = model_with_tools.invoke(_portable_message_history(messages))
         messages = messages + [response]
 
         tools_by_name = {t.name: t for t in CALC_TOOLS}
@@ -215,13 +270,13 @@ def _run_answer_with_tools(
                         )
                     )
                 )
-                response = llm.invoke(messages)
+                response = llm.invoke(_portable_message_history(messages))
                 messages.append(response)
                 break
-            response = model_with_tools.invoke(messages)
+            response = model_with_tools.invoke(_portable_message_history(messages))
             messages.append(response)
     else:
-        response = llm.invoke(messages)
+        response = llm.invoke(_portable_message_history(messages))
         messages = messages + [response]
 
     return messages
@@ -278,7 +333,9 @@ def _mathqa_agent_fn_raw(
                 + messages[1:]
                 + [review_prompt]
             )
-            critic_response = critic_llm.invoke(critic_messages)
+            critic_response = critic_llm.invoke(
+                _portable_message_history(critic_messages)
+            )
             messages.append(critic_response)
 
             content = extract_text_content(getattr(critic_response, "content", str(critic_response)))
@@ -389,7 +446,7 @@ def _mathqa_agent_fn_langgraph(
                 + messages[1:]
                 + [review_prompt]
             )
-            response = critic_llm.invoke(critic_messages)
+            response = critic_llm.invoke(_portable_message_history(critic_messages))
             return {"messages": messages + [response], "final": "", "iteration": state.get("iteration", 0)}
 
         def check_critic(state: ReflectionState) -> ReflectionState:

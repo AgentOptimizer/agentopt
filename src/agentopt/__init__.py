@@ -81,6 +81,9 @@ from .model_selection import (
     BaseModelSelector,
     BruteForceModelSelector,
     DatapointResult,
+    GittinsModelSelector,
+    GittinsRecommendation,
+    GittinsSelectionResults,
     MatrixUCBLRFModelSelector,
     MatrixUCBModelSelector,
     ModelResult,
@@ -100,6 +103,7 @@ _METHODS = {
     "matrix_ucb": MatrixUCBModelSelector,
     "matrix_ucb_lrf": MatrixUCBLRFModelSelector,
     "bayesian": BayesianOptimizationModelSelector,
+    "gittins": GittinsModelSelector,
 }
 
 
@@ -122,7 +126,7 @@ def ModelSelector(
             strong best-arm identification with lower search cost than
             ``"brute_force"``). Other options: ``"brute_force"``,
             ``"arm_elimination"``, ``"matrix_ucb"``, ``"matrix_ucb_lrf"``,
-            ``"bayesian"``.
+            ``"bayesian"``, ``"gittins"`` (scalar or two-axis selection).
         **kwargs: Additional arguments passed to the selector
             (e.g. ``sample_fraction``, ``warmup_fraction`` for matrix UCB-LRF;
             ``lambda_cost``, ``lambda_latency`` for the optional
@@ -155,6 +159,9 @@ __all__ = [
     "CallRecord",
     # Selectors
     "BruteForceModelSelector",
+    "GittinsModelSelector",
+    "GittinsRecommendation",
+    "GittinsSelectionResults",
     "ArmEliminationModelSelector",
     "MatrixUCBModelSelector",
     "MatrixUCBLRFModelSelector",

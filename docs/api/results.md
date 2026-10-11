@@ -17,6 +17,29 @@ Iterable: `for result in results: ...` yields `ModelResult`s.
 
 Top-level fields: `results`, `selection_wall_time_seconds`, `selection_cost` (USD; `None` when pricing is unavailable).
 
+### GittinsSelectionResults
+
+Gittins returns a `SelectionResults` subclass with these additional fields:
+
+| Field or method | Meaning |
+|:---|:---|
+| `objective_mode` | `"single"` or `"multi"`. |
+| `recommendations` / `get_recommendations()` | Terminal recommended configurations, with predicted accuracy/cost, standard deviations, conservative coordinates, node-to-model `combo`, and observed sample count. |
+| `stop_reason` | `question_budget`, `search_cost_budget`, `warm_start_budget`, `all_arms_completed`, or `direction_eta_numerical_floor`. |
+| `total_evaluations` | Number of evaluated configuration-question cells, including warm start. |
+| `search_cost_overshoot_usd` | Actual non-cached spend above the optional soft dollar cap. |
+| `direction_eta` | Final multiplier of each search direction. |
+| `choose(max_cost_usd=..., min_score=..., cost_weight=...)` | Select a candidate using conservative deployment criteria; returns a recommendation or `None` if infeasible. |
+
+`ModelResult.accuracy`, `price`, and `combined_objective` describe observed
+data. Recommendation `accuracy` and `cost_usd` predict the supplied dataset's
+full mean; `objective` and `conservative_objective` describe the scalar
+prediction in single mode. The two kinds of values must not be conflated.
+Single mode marks one `is_best` when a candidate is eligible. Multi mode
+marks none: use the recommendation set and a deployment preference instead.
+See [Gittins](selectors.md#gittins-single-and-multi-objective) for assumptions,
+budget guards, and Gaussian uncertainty semantics.
+
 ### Example
 
 ```python

@@ -295,6 +295,7 @@ AgentOpt includes a rich set of selection algorithms. Advanced users may get sig
 | `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
 | `"matrix_ucb"` / `"matrix_ucb_lrf"` | Large combo × datapoint grids | UCB exploration over the evaluation matrix |
 | `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt-py[bayesian]"`) |
+| `"gittins"` | Cost-aware adaptive evaluation | Single-objective winner or two-axis accuracy/cost recommendation set; requires `pip install "agentopt-py[gittins]"` |
 
 ```python
 selector = ModelSelector(
@@ -303,6 +304,30 @@ selector = ModelSelector(
 )
 results = selector.select_best(parallel=True)
 ```
+
+Gittins accepts a cell-count limit and an optional dollar search budget. Select
+`objective_mode="single"` (default) for one winner, or `"multi"` for an
+accuracy/cost recommendation set:
+
+```python
+selector = ModelSelector(
+    agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+    method="gittins", objective_mode="multi", max_search_cost_usd=10.0,
+)
+results = selector.select_best(parallel=True)
+for candidate in results.get_recommendations():
+    print(candidate.combo, candidate.conservative_accuracy, candidate.conservative_cost_usd)
+chosen = results.choose(max_cost_usd=0.01)  # deployment cost per question
+if chosen is not None:
+    print(chosen.combo)
+```
+
+The dollar cap counts new non-cached token charges, including warm start.
+Next-batch charges are predicted from warm observations, so actual spending
+can overshoot; `search_cost_overshoot_usd` reports the excess. Recommendations
+use Gaussian finite-dataset predictions and do not guarantee the complete
+true Pareto frontier. See the [Gittins guide](https://agentoptimizer.github.io/agentopt/api/selectors/#gittins-single-and-multi-objective)
+for budget, stopping, and recommendation semantics.
 
 ## How It Works
 

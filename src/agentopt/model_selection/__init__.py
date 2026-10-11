@@ -4,6 +4,7 @@ from .arm_elimination import ArmEliminationModelSelector
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 from .brute_force import BruteForceModelSelector
 from .matrix_ucb import MatrixUCBLRFModelSelector, MatrixUCBModelSelector
+from .gittins import GittinsModelSelector, GittinsRecommendation, GittinsSelectionResults
 
 # Bayesian is optional (requires torch/botorch)
 try:
@@ -17,6 +18,9 @@ __all__ = [
     "ArmEliminationModelSelector",
     "MatrixUCBModelSelector",
     "MatrixUCBLRFModelSelector",
+    "GittinsModelSelector",
+    "GittinsRecommendation",
+    "GittinsSelectionResults",
     "BayesianOptimizationModelSelector",
     "DatapointResult",
     "ModelResult",

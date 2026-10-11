@@ -13,6 +13,7 @@ Prerequisites:
        it or use ``pip install \"agentopt-py[examples]\"``)
     3. For Bayesian optimization: pip install "agentopt-py[bayesian]"
     4. For matrix UCB-LRF: pip install "agentopt-py[ucb_lrf]"
+    5. For Gittins: pip install "agentopt-py[gittins]"
 
 The matrix UCB demos use ``sample_fraction=0.1`` (~10% of the combination × datapoint
 grid), like ``bayesian``. Matrix UCB-LRF also accepts ``warmup_fraction``
@@ -163,6 +164,17 @@ def run_matrix_ucb_lrf():
     return selector.select_best(parallel=True, max_concurrent=4)
 
 
+def run_gittins(objective_mode="single", max_search_cost_usd=None):
+    """Scalar winner or accuracy/cost recommendation set with a soft USD cap."""
+    selector = ModelSelector(
+        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        method="gittins", objective_mode=objective_mode,
+        max_search_cost_usd=max_search_cost_usd,
+        warm_start_batch_size=2, batch_size=2,
+    )
+    return selector.select_best(parallel=True, max_concurrent=4)
+
+
 # ---------------------------------------------------------------------------
 # Main — pick which algorithm to demo
 # ---------------------------------------------------------------------------
@@ -173,6 +185,7 @@ METHODS = {
     "bayesian": run_bayesian,
     "matrix_ucb": run_matrix_ucb,
     "matrix_ucb_lrf": run_matrix_ucb_lrf,
+    "gittins": run_gittins,
 }
 
 if __name__ == "__main__":
@@ -188,17 +201,35 @@ Available methods:
   bayesian          GP-based Bayesian optimization (requires agentopt[bayesian])
   matrix_ucb        UCB on the combination × datapoint matrix (demo: 10%% budget)
   matrix_ucb_lrf    Same with low-rank uncertainty (requires agentopt[ucb_lrf])
+  gittins           Single or multi-objective Gittins (requires agentopt-py[gittins])
 """,
     )
     parser.add_argument("--method", choices=METHODS, default="auto")
+    parser.add_argument("--objective-mode", choices=("single", "multi"), default="single",
+                        help="Gittins: one scalar winner or an accuracy/cost recommendation set")
+    parser.add_argument("--max-search-cost-usd", type=float,
+                        help="Gittins: soft cap on new token charges, including warm start")
     args = parser.parse_args()
+    if args.method != "gittins" and (args.objective_mode != "single" or args.max_search_cost_usd is not None):
+        parser.error("--objective-mode and --max-search-cost-usd apply to Gittins")
 
     print(f"Running method: {args.method}")
     print("-" * 60)
 
-    results = METHODS[args.method]()
+    if args.method == "gittins":
+        results = run_gittins(args.objective_mode, args.max_search_cost_usd)
+    else:
+        results = METHODS[args.method]()
     results.print_summary()
 
     best = results.get_best_combo()
     if best:
         print(f"\nBest combination: {best}")
+    if args.method == "gittins":
+        print(f"\nStopped: {results.stop_reason}; search cost: ${results.selection_cost:.6f}")
+        for candidate in results.get_recommendations():
+            print(f"  {candidate.combo}: conservative score={candidate.conservative_accuracy:.3f}, "
+                  f"conservative cost=${candidate.conservative_cost_usd:.6f}/question")
+        if args.objective_mode == "multi":
+            chosen = results.choose(max_cost_usd=0.01)
+            print(f"Deployment choice at $0.01/question: {chosen.combo if chosen else 'none feasible'}")

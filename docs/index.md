@@ -19,7 +19,7 @@ Client-side agent optimization
 # Choosing the right model for your agents can save <span class="ao-accent">100x money and time</span>
 
 <p class="ao-sub">
-AgentOpt evaluates model combinations across your full agent pipeline and converges on the Pareto frontier of accuracy, cost, and latency.
+AgentOpt evaluates model combinations across your full agent pipeline, measures accuracy, cost, and latency, and recommends a configuration or a set of accuracy–cost tradeoffs.
 </p>
 
 <div class="ao-ctas" markdown>
@@ -60,12 +60,12 @@ Your agent has multiple steps — planning, reasoning, tool use, synthesis. Each
 
 ## The Solution
 
-Give AgentOpt your agent and a small evaluation dataset (~100 samples). It efficiently searches the model combination space and reports the **Pareto-optimal tradeoffs** — so you can choose the right balance of accuracy, cost, and latency for your use case.
+Give AgentOpt your agent and a small evaluation dataset (~100 samples). Gittins selection searches the model combination space and returns one recommended configuration by default. Set `objective_mode="multi"` to inspect accuracy/cost alternatives and choose a deployment preference.
 
 ```python
-from agentopt import BruteForceModelSelector
+from agentopt import ModelSelector
 
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
@@ -114,7 +114,7 @@ results.print_summary()
 
     ---
 
-    5 algorithms from brute force to Bayesian optimization. Search spaces with thousands of combinations without evaluating them all.
+    Gittins selection by default, with random, UCB, and Bayesian baselines. Allocate an evaluation budget across model configurations and questions.
 
 -   :material-radar:{ .lg .middle } **Automatic Tracking**
 
@@ -148,7 +148,7 @@ graph LR
     D --> E["Track tokens, latency, cost"]
     D --> F["Cache responses"]
     E --> G["Evaluate & Rank"]
-    G --> H["Pareto-optimal results"]
+    G --> H["Winner or accuracy/cost recommendations"]
 ```
 
 AgentOpt patches `httpx` at the transport level — the same HTTP library used by every major LLM SDK. Your agent code stays untouched. AgentOpt silently records every LLM call, caches responses, and aggregates metrics per model combination.
@@ -159,12 +159,14 @@ AgentOpt patches `httpx` at the transport level — the same HTTP library used b
 
 ## Selection Algorithms
 
-| Algorithm | Strategy | Best For |
-|:----------|:---------|:---------|
-| **Brute Force** | Evaluate all combinations | Small spaces (< 50 combos) |
-| **Arm Elimination** | Progressive pruning | Statistical early stopping |
-| **Matrix UCB** | UCB over combo × datapoint grid | Large spaces with selective sampling |
-| **Bayesian Optimization** | Gaussian Process | Expensive evaluations |
+| Method | Objective | Strategy |
+|:---|:---|:---|
+| **Auto / Gittins** | Single or multi | Cost-aware allocation with posterior recommendations |
+| **Random** | Single | Random configuration order |
+| **UCB** | Single | Configuration mean plus an exploration bonus |
+| **Bayesian** | Single | Gaussian-process surrogate with expected improvement |
+| **Random configurations** | Multi | Complete configurations in random order |
+| **Random questions** | Multi | Shared random question order across all configurations |
 
 [:octicons-arrow-right-24: Compare algorithms in detail](concepts/algorithms.md)
 

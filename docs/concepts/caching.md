@@ -42,7 +42,7 @@ By default, caching is in-memory only (lost when the process exits). To persist:
 from agentopt.proxy import LLMTracker
 
 tracker = LLMTracker(cache_dir="./llm_cache")
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     ...,
     tracker=tracker,
 )

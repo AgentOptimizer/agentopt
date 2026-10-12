@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from agentopt.model_selection import BruteForceModelSelector
+from agentopt.model_selection.brute_force import BruteForceModelSelector
 from agentopt.model_selection.base import (
     DatapointResult,
     ModelResult,

@@ -103,9 +103,9 @@ The `eval_fn` is called on the output of `agent.run(input_data)` for each datapo
 ## Step 4: Run Model Selection
 
 ```python
-from agentopt import BruteForceModelSelector
+from agentopt import ModelSelector
 
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
@@ -121,7 +121,7 @@ results.print_summary()
 
 The `models` dict maps each step name (matching the keys your `__init__` expects) to a **list of candidates**. AgentOpt picks one from each list, constructs `MyAgent({"planner": pick1, "solver": pick2})`, and evaluates it across your dataset.
 
-With 3 candidates per step and 2 steps, that's 9 combinations. Smart algorithms like `ArmEliminationModelSelector` or `BayesianOptimizationModelSelector` can find the best combination without evaluating all of them — and they also select which datapoints to run on, stopping early when the winner is clear.
+With 3 candidates per step and 2 steps, that's 9 combinations. The default `ModelSelector` uses Gittins to allocate further evaluations after a warm start on each combination. Set a search budget to limit spending, or use `objective_mode="multi"` to inspect accuracy/cost alternatives.
 
 !!! tip "Optional: trade accuracy for cost or latency"
     Add `lambda_cost=0.3` and/or `lambda_latency=0.2` to the selector constructor to rank combinations by a scalar combined objective instead of accuracy alone. Omit them (default `0.0`) for accuracy-first selection. Details: [Combined objective](../api/selectors.md#combined-objective-optional-costlatency-weights).
@@ -146,7 +146,7 @@ Persist cached responses across runs so re-running is instant and free:
 from agentopt.proxy import LLMTracker
 
 tracker = LLMTracker(cache_dir="./llm_cache")
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     ...,
     tracker=tracker,
 )

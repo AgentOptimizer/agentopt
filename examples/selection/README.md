@@ -21,15 +21,19 @@
 | [`terminal_bench.py`](local/terminal_bench.py) | Terminal Bench subprocess. |
 | [`openclaw.py`](local/openclaw.py) | OpenClaw (uses the shared `OpenClawAgent` adapter at [`../shared/openclaw_agent.py`](../shared/openclaw_agent.py)). |
 
-## Gittins
+## Selection modes
 
-Install the `gittins` extra and the example's OpenAI/python-dotenv dependencies,
+Install `agentopt-py` and the example's OpenAI/python-dotenv dependencies,
 then provide `OPENAI_API_KEY`. These examples make real model calls:
 
 ```bash
 python examples/selection/local/advanced_algorithms.py --method gittins --objective-mode single --max-search-cost-usd 1.0
 python examples/selection/local/advanced_algorithms.py --method gittins --objective-mode multi --max-search-cost-usd 1.0
 ```
+
+Single mode defaults to Gittins (`auto`) and also supports `random`, `ucb`, and `bayesian`.
+Multi mode supports `auto`/`gittins`, `random_configurations`, and `random_questions`.
+The random-question baseline evaluates shared random questions on every configuration.
 
 Single mode prints one best combination. Multi mode prints the terminal
 recommendation set and a deployment choice under a $0.01/question cost limit.

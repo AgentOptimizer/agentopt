@@ -1,10 +1,9 @@
 """Model selection algorithms."""
 
-from .arm_elimination import ArmEliminationModelSelector
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
-from .brute_force import BruteForceModelSelector
-from .matrix_ucb import MatrixUCBLRFModelSelector, MatrixUCBModelSelector
+from .matrix_ucb import MatrixUCBModelSelector
 from .gittins import GittinsModelSelector, GittinsRecommendation, GittinsSelectionResults
+from .random_search import RandomSearchModelSelector, RandomSelectionResults
 
 # Bayesian is optional (requires torch/botorch)
 try:
@@ -14,10 +13,9 @@ except ImportError:
 
 __all__ = [
     "BaseModelSelector",
-    "BruteForceModelSelector",
-    "ArmEliminationModelSelector",
     "MatrixUCBModelSelector",
-    "MatrixUCBLRFModelSelector",
+    "RandomSearchModelSelector",
+    "RandomSelectionResults",
     "GittinsModelSelector",
     "GittinsRecommendation",
     "GittinsSelectionResults",

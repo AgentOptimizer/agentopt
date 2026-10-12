@@ -1,23 +1,7 @@
-"""
-Example: Advanced model selection algorithms.
+"""Compare Gittins and selection baselines with live OpenAI calls.
 
-The framework-specific examples (custom_agent_example.py, langchain_example.py, etc.)
-all use method="brute_force" for simplicity. This example demonstrates the other
-selection algorithms available via ModelSelector(method=...). The default
-method="auto" automatically finds the best combination (wired to arm_elimination —
-strong best-arm identification with lower search cost than brute_force).
-
-Prerequisites:
-    1. pip install openai agentopt-py
-    2. Set OPENAI_API_KEY environment variable (this script uses python-dotenv; install
-       it or use ``pip install \"agentopt-py[examples]\"``)
-    3. For Bayesian optimization: pip install "agentopt-py[bayesian]"
-    4. For matrix UCB-LRF: pip install "agentopt-py[ucb_lrf]"
-    5. For Gittins: pip install "agentopt-py[gittins]"
-
-The matrix UCB demos use ``sample_fraction=0.1`` (~10% of the combination × datapoint
-grid), like ``bayesian``. Matrix UCB-LRF also accepts ``warmup_fraction``
-(alias for ``warmup_percentage``). Use ``1.0`` for a full grid; tune ``max_concurrent`` for step size.
+Install openai, python-dotenv and agentopt-py, and set OPENAI_API_KEY.
+Bayesian optimization additionally needs agentopt-py[bayesian].
 """
 
 from dotenv import load_dotenv
@@ -91,145 +75,55 @@ models = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Selection algorithms
-# ---------------------------------------------------------------------------
-
-
-def run_auto():
-    """method="auto" — automatically finds the best combination (default; wired to arm_elimination — strong best-arm identification, cheaper than brute_force)."""
-    selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset, method="auto",
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_arm_elimination():
-    """method="arm_elimination" — eliminates statistically dominated combinations early."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="arm_elimination",
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_bayesian():
-    """method="bayesian" — GP-based Bayesian optimization (requires agentopt[bayesian])."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="bayesian",
-        batch_size=4,
-        sample_fraction=0.25,  # evaluate 25% of all combinations
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_matrix_ucb():
-    """method="matrix_ucb" — UCB exploration over the combination × datapoint matrix."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="matrix_ucb",
-        a=1.0,
-        sample_fraction=0.1,
-    )
-    return selector.select_best(max_concurrent=4)
-
-
-def run_matrix_ucb_lrf():
-    """method="matrix_ucb_lrf" — matrix UCB with low-rank ensemble (requires agentopt[ucb_lrf])."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="matrix_ucb_lrf",
-        rank=1,
-        ensemble_size=16,
-        iterations=5,
-        eta=5.0,
-        warmup_fraction=0.05,
-        sample_fraction=0.1,
-    )
-    # Unlike matrix_ucb (which always uses async eval), LRF still uses parallel=True
-    # for concurrent cell evaluation; sequential path is sync-only.
-    return selector.select_best(parallel=True, max_concurrent=4)
-
-
-def run_gittins(objective_mode="single", max_search_cost_usd=None):
-    """Scalar winner or accuracy/cost recommendation set with a soft USD cap."""
+def run_selection(method="auto", objective_mode="single", max_search_cost_usd=None,
+                  cost_scaling_factor=1e-4):
+    options = {}
+    if method in ("auto", "gittins"):
+        options.update(warm_start_batch_size=2, batch_size=2,
+                       max_search_cost_usd=max_search_cost_usd)
+        if objective_mode == "single":
+            options["cost_scaling_factor"] = cost_scaling_factor
+    elif method in ("random", "random_configurations", "random_questions"):
+        options.update(observation_budget_fraction=0.5,
+                       max_search_cost_usd=max_search_cost_usd, seed=42)
+    elif method == "ucb":
+        options.update(a=1.0, observation_budget_fraction=0.5, seed=42)
+    elif method == "bayesian":
+        options.update(batch_size=1, sample_fraction=0.5)
     selector = ModelSelector(
         agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
-        method="gittins", objective_mode=objective_mode,
-        max_search_cost_usd=max_search_cost_usd,
-        warm_start_batch_size=2, batch_size=2,
+        method=method, objective_mode=objective_mode, **options,
     )
     return selector.select_best(parallel=True, max_concurrent=4)
 
-
-# ---------------------------------------------------------------------------
-# Main — pick which algorithm to demo
-# ---------------------------------------------------------------------------
-
-METHODS = {
-    "auto": run_auto,
-    "arm_elimination": run_arm_elimination,
-    "bayesian": run_bayesian,
-    "matrix_ucb": run_matrix_ucb,
-    "matrix_ucb_lrf": run_matrix_ucb_lrf,
-    "gittins": run_gittins,
-}
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Demo advanced model selection algorithms",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Available methods:
-  auto              Automatically finds the best combination (wired to arm_elimination; lower search cost than brute_force) (default)
-  arm_elimination   Eliminate statistically dominated combinations early
-  bayesian          GP-based Bayesian optimization (requires agentopt[bayesian])
-  matrix_ucb        UCB on the combination × datapoint matrix (demo: 10%% budget)
-  matrix_ucb_lrf    Same with low-rank uncertainty (requires agentopt[ucb_lrf])
-  gittins           Single or multi-objective Gittins (requires agentopt-py[gittins])
-""",
-    )
-    parser.add_argument("--method", choices=METHODS, default="auto")
-    parser.add_argument("--objective-mode", choices=("single", "multi"), default="single",
-                        help="Gittins: one scalar winner or an accuracy/cost recommendation set")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--method", choices=("auto", "gittins", "random", "ucb", "bayesian",
+                                             "random_configurations", "random_questions"), default="auto")
+    parser.add_argument("--objective-mode", choices=("single", "multi"), default="single")
     parser.add_argument("--max-search-cost-usd", type=float,
-                        help="Gittins: soft cap on new token charges, including warm start")
+                        help="Soft cap on new evaluation charges, for Gittins and random baselines")
+    parser.add_argument("--cost-scaling-factor", type=float, default=1e-4,
+                        help="Single Gittins search-cost coefficient in score units per USD")
     args = parser.parse_args()
-    if args.method != "gittins" and (args.objective_mode != "single" or args.max_search_cost_usd is not None):
-        parser.error("--objective-mode and --max-search-cost-usd apply to Gittins")
-
-    print(f"Running method: {args.method}")
-    print("-" * 60)
-
-    if args.method == "gittins":
-        results = run_gittins(args.objective_mode, args.max_search_cost_usd)
-    else:
-        results = METHODS[args.method]()
+    supported = {"single": {"auto", "gittins", "random", "random_configurations", "random_questions", "ucb", "bayesian"},
+                 "multi": {"auto", "gittins", "random_configurations", "random_questions"}}
+    if args.method not in supported[args.objective_mode]:
+        parser.error(f"{args.method} does not support {args.objective_mode} mode")
+    if args.method in ("ucb", "bayesian") and args.max_search_cost_usd is not None:
+        parser.error("UCB and Bayesian demos use observation budgets, not dollar caps")
+    results = run_selection(args.method, args.objective_mode, args.max_search_cost_usd,
+                            args.cost_scaling_factor)
     results.print_summary()
-
-    best = results.get_best_combo()
-    if best:
-        print(f"\nBest combination: {best}")
-    if args.method == "gittins":
-        print(f"\nStopped: {results.stop_reason}; search cost: ${results.selection_cost:.6f}")
+    if args.objective_mode == "single":
+        print("Best combination:", results.get_best_combo())
+    else:
         for candidate in results.get_recommendations():
-            print(f"  {candidate.combo}: conservative score={candidate.conservative_accuracy:.3f}, "
-                  f"conservative cost=${candidate.conservative_cost_usd:.6f}/question")
-        if args.objective_mode == "multi":
-            chosen = results.choose(max_cost_usd=0.01)
-            print(f"Deployment choice at $0.01/question: {chosen.combo if chosen else 'none feasible'}")
+            print(candidate.combo, candidate.conservative_accuracy, candidate.conservative_cost_usd)
+        chosen = results.choose(max_cost_usd=0.01)
+        print("Deployment choice at $0.01/question:", chosen.combo if chosen else None)
+    if hasattr(results, "stop_reason"):
+        print(f"Stopped: {results.stop_reason}; search cost: ${results.selection_cost:.6f}")

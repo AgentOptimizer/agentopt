@@ -163,7 +163,7 @@ if __name__ == "__main__":
         models={"agent": ["openai/gpt-4o-mini", "openai/gpt-5.1", "openai/gpt-4.1",],},
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",
+        method="auto",
     )
 
     results = selector.select_best(parallel=False)

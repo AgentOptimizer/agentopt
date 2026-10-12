@@ -83,11 +83,10 @@ def _ucb_plain_next_batch(
     """Next batch of matrix cells: shape ``(2, k)`` rows [combo_idx, datapoint_idx], or ``None``."""
     n_combos, n_datapoints = observed.shape
     bounds = np.full(n_combos, np.inf, dtype=np.float64)
-    with np.errstate(invalid="ignore"):
-        mus = np.nanmean(observed, axis=1)
     counts = np.sum(~np.isnan(observed), axis=1)
     mask = counts > 0
-    bounds[mask] = mus[mask] + np.sqrt(a / counts[mask])
+    means = np.nansum(observed[mask], axis=1) / counts[mask]
+    bounds[mask] = means + np.sqrt(a / counts[mask])
     fully_observed_combo = counts == n_datapoints
     bounds[fully_observed_combo] = -np.inf
     if bool(np.all(fully_observed_combo)):
@@ -130,18 +129,6 @@ def _build_selection_results(
                     combo_name, scores, latencies, dp_ids, costs=costs,
                 )
             )
-        else:
-            all_results.append(
-                selector._make_result(
-                    model_name=combo_name,
-                    accuracy=0.0,
-                    latency_seconds=0.0,
-                    input_tokens={},
-                    output_tokens={},
-                    attribute="combination",
-                    is_best=False,
-                )
-            )
 
     selector._finalize_combined_objectives(all_results)
     best_info = selector._find_best(all_results)
@@ -167,12 +154,6 @@ def _record_cells(
     dp_ids: List[str],
 ) -> None:
     if not scores:
-        cell_data[(combo_idx, datapoint_idx)] = (
-            0.0,
-            0.0,
-            None,
-            f"missing::{combo_idx}:{datapoint_idx}",
-        )
         return
     cost = costs[0] if costs else None
     cell_data[(combo_idx, datapoint_idx)] = (
@@ -258,7 +239,8 @@ class MatrixUCBModelSelector(BaseModelSelector):
         self._rng = np.random.default_rng(seed)
 
     def select_best(
-        self, parallel: bool = False, max_concurrent: int = 20,
+        self, parallel: bool = False, max_concurrent: int = 20, *,
+        on_update=None, stop_event=None,
     ) -> SelectionResults:
         """Run matrix UCB.
 
@@ -266,7 +248,8 @@ class MatrixUCBModelSelector(BaseModelSelector):
         step's (combination, datapoint) batch size and how many evaluations run
         at once.
         """
-        return super().select_best(parallel=False, max_concurrent=max_concurrent)
+        return super().select_best(parallel=False, max_concurrent=max_concurrent,
+                                   on_update=on_update, stop_event=stop_event)
 
     def _run_selection(
         self, parallel: bool = False, max_concurrent: int = 20,
@@ -321,6 +304,8 @@ class MatrixUCBModelSelector(BaseModelSelector):
 
         step = 0
         while True:
+            if self._should_stop():
+                break
             filled = _np_filled_count(observed)
             if filled >= target_n:
                 break
@@ -352,8 +337,16 @@ class MatrixUCBModelSelector(BaseModelSelector):
                         sc[0], lat[0], costs[0],
                     )
             _refresh_observed_np(self, observed, cell_data)
+            self._publish_update(_build_selection_results(self, all_combos, cell_data, n_datapoints))
+            if not any(not isinstance(res, Exception) and res[2] for res in outs):
+                # No progress in this batch: avoid retrying failed cells forever.
+                result = _build_selection_results(self, all_combos, cell_data, n_datapoints)
+                result.stop_reason = "evaluation_failed"
+                return result
 
-        return _build_selection_results(self, all_combos, cell_data, n_datapoints)
+        result = _build_selection_results(self, all_combos, cell_data, n_datapoints)
+        result.stop_reason = "all_arms_completed" if len(cell_data) == total_cells else "question_budget"
+        return result
 
 
 class MatrixUCBLRFModelSelector(BaseModelSelector):

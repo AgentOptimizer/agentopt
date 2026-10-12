@@ -1,9 +1,9 @@
 """Cost-coupled Gittins selection over live configuration-question evaluations.
 
-Single-objective selection returns one conservative finite-dataset winner.
+Single-objective selection uses fixed-cost finite-dataset Gittins indices.
 Multi-objective selection uses the exact deployment and quality axes and
 returns a finite-LCB Pareto set. Both modes share observations across visits,
-freeze warm-start calibration, and decay eta independently on direction stops.
+freeze warm-start costs. Multi mode decays eta independently on direction stops.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def _positive(value, name):
 class GittinsModelSelector(BaseModelSelector):
     """Gittins with scalar or two-axis accuracy/cost objectives.
 
-    Requires the optional ``gittins`` extra (SciPy). No complete score matrix
+    Included in the standard installation (NumPy and SciPy). No complete score matrix
     is needed. Each combination receives a seeded independent question
     order and a uniform warm start; no cell is evaluated twice in one run.
 
@@ -128,8 +128,15 @@ class GittinsModelSelector(BaseModelSelector):
     a soft spend cap; any overshoot is reported. A cap interrupting warm
     start returns observed records and an empty recommendation set.
 
-    A direction stops when a completed arm's value reaches the maximum
-    unfinished Gittins index. Its eta then decays; all directions must stop
+    Single mode prices each question with ``cost_scaling_factor=1e-4`` times
+    its estimated USD cost. It uses a fixed prior (``prior_mean=0.5`` in
+    normalized units), finite-dataset means and per-cell DP transitions.
+    Its default recommendation_beta is zero; multi mode defaults to one.
+    Single mode stops when a completed empirical value reaches every
+    unfinished index, keeping the cost coefficient fixed.
+
+    In multi mode, a direction stops when a completed arm's value reaches the
+    maximum unfinished Gittins index. Its eta then decays; all directions must stop
     at numerical floors without an intervening observation to halt globally.
     Budget exhaustion and full completion can halt earlier. Evaluation or
     pricing failures abort the run, with the base selector stopping tracking.
@@ -138,9 +145,10 @@ class GittinsModelSelector(BaseModelSelector):
     def __init__(self, agent=None, models=None, eval_fn=None, dataset=None, *,
                  objective_mode="single", batch_size=4, warm_start_batch_size=4,
                  observation_budget_fraction=1.0, max_total_question_evaluations=None,
-                 max_search_cost_usd=None, recommendation_beta=1.0,
+                 max_search_cost_usd=None, recommendation_beta=None,
                  recommendation_min_samples=0, score_bounds=(0.0, 1.0),
-                 prior_variance=0.04, score_noise_variance=0.25,
+                 prior_mean=0.5, prior_variance=0.04, score_noise_variance=0.25,
+                 cost_scaling_factor=1e-4,
                  cost_reference_usd=None, search_cost_scale_eta=1.0,
                  eta_initial=1.0, eta_decay=0.5, effective_cost_bin_ratio=2.0,
                  effective_cost_bin_anchor=1e-4, grid_size=129, stop_tolerance=1e-9,
@@ -149,10 +157,16 @@ class GittinsModelSelector(BaseModelSelector):
         try:
             import scipy  # noqa: F401
         except ImportError as error:
-            raise ImportError('Gittins requires `pip install "agentopt-py[gittins]"`') from error
+            raise ImportError('SciPy is required by AgentOpt; install with `pip install agentopt-py`') from error
         if objective_mode not in ("single", "multi"):
             raise ValueError("objective_mode must be 'single' or 'multi'")
         self.objective_mode = objective_mode
+        if recommendation_beta is None:
+            recommendation_beta = 0.0 if objective_mode == "single" else 1.0
+        self.prior_mean = float(prior_mean)
+        if not math.isfinite(self.prior_mean):
+            raise ValueError("prior_mean must be finite")
+        self.cost_scaling_factor = _positive(cost_scaling_factor, "cost_scaling_factor")
         for name, value in (("lambda_cost", lambda_cost), ("lambda_latency", lambda_latency),
                             ("recommendation_beta", recommendation_beta), ("stop_tolerance", stop_tolerance)):
             if not math.isfinite(value) or value < 0:
@@ -205,12 +219,9 @@ class GittinsModelSelector(BaseModelSelector):
     def _run_selection(self, parallel=False, max_concurrent=20):
         return asyncio.run(self._select(parallel, _integer(max_concurrent, "max_concurrent")))
 
-    def select_best(self, parallel=False, max_concurrent=20) -> GittinsSelectionResults:
-        result = super().select_best(parallel=parallel, max_concurrent=max_concurrent)
-        # The ledger is accumulated while sessions are closed and before
-        # tracker.stop() can copy records into an additional archive.
-        result.selection_cost = self._spent
-        return result
+    def _selection_cost_so_far(self):
+        # Charged calls only, accumulated before tracker archival.
+        return self._spent
 
     def _update_spend(self):
         records = self._tracker.get_records()
@@ -271,6 +282,8 @@ class GittinsModelSelector(BaseModelSelector):
         return self._spent - before
 
     def _budget_stop(self, count, predicted_charge=0.0):
+        if self._should_stop():
+            return "user_stopped"
         if self._evaluations + count > self.cell_cap:
             return "question_budget"
         if self.max_spend is not None and (self._spent >= self.max_spend
@@ -312,7 +325,16 @@ class GittinsModelSelector(BaseModelSelector):
 
     def _active_state(self, arm, direction):
         if self.objective_mode == "single":
-            return self._scalar_posteriors[arm].mean[0], self._initial_scalar_var, self._scalar_noise
+            values = self._scalar_observations(arm)
+            mean, _ = finite_dataset_moments(
+                self._scalar_posteriors[arm], np.array([values.sum()]),
+                len(values), len(self.dataset), np.array([self._scalar_noise]),
+            )
+            # The full-dataset posterior-mean process is an affine transform
+            # of the latent mean process. Transform transition variances,
+            # retaining the original monetary scale of evaluation costs.
+            scale = 1.0 + self._scalar_noise / (len(self.dataset) * self.prior_variance)
+            return float(mean[0]), self._initial_scalar_var * scale ** 2, self._scalar_noise * scale ** 2
         if direction == 0:
             scale = self._calibration.cost_reference_usd
             return (1.0 - self._posteriors[arm].mean[1] / scale,
@@ -338,7 +360,7 @@ class GittinsModelSelector(BaseModelSelector):
         dimensions = 1 if self.objective_mode == "single" else 2
         # Completed posteriors and observed tie-break statistics never change.
         self._completed_states = [{} for _ in range(dimensions)]
-        eta = [self.eta_initial] * dimensions
+        eta = [1.0] if self.objective_mode == "single" else [self.eta_initial] * dimensions
         warm_charges = np.zeros(n_arms)
         # Warm cells are sequential so actual dollar usage is checked after
         # each request even when their costs cannot yet be predicted.
@@ -346,18 +368,28 @@ class GittinsModelSelector(BaseModelSelector):
             for question in self._orders[arm][:self.warm_size]:
                 reason = self._budget_stop(1)
                 if reason:
-                    return self._results("warm_start_budget", eta, calibrated=False)
+                    return self._results("user_stopped" if reason == "user_stopped" else "warm_start_budget", eta, calibrated=False)
                 warm_charges[arm] += await self._pull(arm, [question], False, max_concurrent)
+                self._publish_update(self._results("warming_up", eta, calibrated=False))
         self._calibration = fit_warm_start(self._scores, self._costs, score_bounds=self.score_bounds,
                                           prior_variance=self.prior_variance,
                                           score_noise_variance=self.score_noise_variance,
                                           cost_reference_usd=self.cost_reference)
         self._posteriors = [self._calibration.posterior(s, c) for s, c in zip(self._scores, self._costs)]
+        if self.objective_mode == "single":
+            # A fixed accuracy prior also underlies reported finite-dataset
+            # accuracy predictions; deployment weights affect only the scalar.
+            for arm, posterior in enumerate(self._posteriors):
+                low, high = self.score_bounds
+                normalized = (np.mean(self._scores[arm]) - low) / (high - low)
+                variance = 1.0 / (1.0 / self.prior_variance + self.warm_size / self.score_noise_variance)
+                posterior.mean[0] = variance * (self.prior_mean / self.prior_variance + self.warm_size * normalized / self.score_noise_variance)
+                posterior.variance[0] = variance
         self._initial_var = self._posteriors[0].variance.copy()
         self._fixed_cost_bounds = (float(np.min(self._costs)), float(np.max(self._costs)))
         self._fixed_latency_bounds = (float(np.min(self._latencies)), float(np.max(self._latencies)))
         warm_objectives = [self._scalar_observations(arm) for arm in range(n_arms)]
-        scalar_prior_mean = float(np.mean(warm_objectives))
+        scalar_prior_mean = self.prior_mean if self.objective_mode == "single" else float(np.mean(warm_objectives))
         score_span = self.score_bounds[1] - self.score_bounds[0]
         self._scalar_noise = self.score_noise_variance * (1 + (self.lambda_cost + self.lambda_latency) / score_span) ** 2
         self._scalar_posteriors = []
@@ -368,19 +400,24 @@ class GittinsModelSelector(BaseModelSelector):
         self._initial_scalar_var = self._scalar_posteriors[0].variance[0]
         # Continuation penalties use observed workflow cost, as in research;
         # dollar reservations instead estimate new non-cached charges.
-        expected_costs = np.mean(self._costs, axis=1) * self.batch_size
-        base_penalties = np.maximum(self.cost_scale * expected_costs, 1e-12)
-        if self.cost_bin_ratio is not None:
+        single = self.objective_mode == "single"
+        expected_costs = np.mean(self._costs, axis=1) * (1 if single else self.batch_size)
+        multiplier = self.cost_scaling_factor if single else self.cost_scale
+        base_penalties = np.maximum(multiplier * expected_costs, 1e-12)
+        if not single and self.cost_bin_ratio is not None:
             exponents = np.rint(np.log(base_penalties / self.cost_bin_anchor) / math.log(self.cost_bin_ratio))
             base_penalties = self.cost_bin_anchor * np.power(self.cost_bin_ratio, exponents)
         charge_per_question = warm_charges / self.warm_size
-        horizon = math.ceil((n_questions - self.warm_size) / self.batch_size)
+        horizon = n_questions - self.warm_size if single else math.ceil((n_questions - self.warm_size) / self.batch_size)
+        if single:
+            eta = [1.0]
         stages = np.zeros(n_arms, dtype=int)
         cache = AxisGittinsBoundaryCache()
         # An arm's index changes only after observing that arm or changing
         # the current direction's eta. G0 uses the same invalidation rule.
         direction_indices = [{} for _ in range(dimensions)]
         direction, floor_stops = 0, set()
+        self._publish_update(self._results("running", eta))
         while True:
             completed = [i for i in range(n_arms) if self._positions[i] == n_questions]
             unfinished = [i for i in range(n_arms) if self._positions[i] < n_questions]
@@ -395,12 +432,15 @@ class GittinsModelSelector(BaseModelSelector):
                 if arm not in direction_indices[direction]:
                     mean, initial, noise = self._active_state(arm, direction)
                     table = cache.get(effective_pull_cost=eta[direction] * base_penalties[arm],
-                                      initial_var=float(initial), obs_noise_var=float(noise / self.batch_size),
+                                      initial_var=float(initial), obs_noise_var=float(noise if single else noise / self.batch_size),
                                       horizon=horizon, grid_size=self.grid_size)
                     direction_indices[direction][arm] = table.index(int(stages[arm]), float(mean))
                 indices[arm] = direction_indices[direction][arm]
             arm, best_index, completed_arm, best_completed = self._direction_status(indices, completed, direction)
             if completed and best_completed >= best_index - self.stop_tolerance:
+                if single:
+                    reason = "gittins_stop"
+                    break
                 remaining_penalty = max((horizon - stages[i]) * eta[direction] * base_penalties[i] for i in unfinished)
                 threshold = max(self.stop_tolerance, np.finfo(float).eps * max(1.0, abs(best_completed), abs(best_index)))
                 next_eta = eta[direction] * self.eta_decay
@@ -427,9 +467,10 @@ class GittinsModelSelector(BaseModelSelector):
             self._scalar_posteriors[arm].update(np.array([np.mean(values)]), np.array([self._scalar_noise]), len(questions))
             for local_indices in direction_indices:
                 local_indices.pop(arm, None)
-            stages[arm] += 1
+            stages[arm] += len(questions) if single else 1
             floor_stops.clear()
             direction = (direction + 1) % dimensions
+            self._publish_update(self._results("running", eta))
         return self._results(reason, eta)
 
     def _results(self, reason, eta, calibrated=True):

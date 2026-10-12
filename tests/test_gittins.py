@@ -228,14 +228,14 @@ def test_cached_workflow_cost_is_separate_from_new_search_charges():
     assert result.choose(max_cost_usd=0.004).cost_usd == pytest.approx(0.003)
 
 
-def test_eta_stop_is_reached_without_evaluating_all_arms():
+def test_single_natural_stop_is_reached_without_evaluating_all_arms():
     selector, _ = make_selector(mode="single", count=6,
                                outcomes={"cheap": 1.0, "middle": 0.0},
                                score_noise_variance=1e-8, prior_variance=1e-8)
     result = selector.select_best()
-    assert result.stop_reason == "direction_eta_numerical_floor"
+    assert result.stop_reason == "gittins_stop"
     assert result.total_evaluations < 12
-    assert result.direction_eta[0] < 1
+    assert result.direction_eta == [1.0]
     assert result.get_best_combo() == {"solver": "cheap"}
 
 
@@ -257,18 +257,16 @@ def test_invalid_configuration_does_not_start_tracker():
         assert not tracker.started
 
 
-def test_missing_scipy_only_blocks_gittins(monkeypatch):
+def test_missing_required_scipy_fails_before_tracking(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "scipy", None)
-    tracker = RecordingTracker()
-    with pytest.raises(ImportError, match="agentopt-py\\[gittins\\]"):
-        GittinsModelSelector(agent=object, models={"solver": ["cheap"]},
-                             eval_fn=lambda a, b: 1, dataset=[(1, 1)], tracker=tracker)
-    assert not tracker.started
-    selector = ModelSelector(agent=object, models={"solver": ["cheap"]},
-                             eval_fn=lambda a, b: 1, dataset=[(1, 1)], tracker=tracker,
-                             method="auto")
-    assert type(selector).__name__ == "ArmEliminationModelSelector"
+    for method in ("auto", "gittins"):
+        tracker = RecordingTracker()
+        with pytest.raises(ImportError, match="SciPy is required"):
+            ModelSelector(agent=object, models={"solver": ["cheap"]},
+                          eval_fn=lambda a, b: 1, dataset=[(1, 1)], tracker=tracker,
+                          method=method)
+        assert not tracker.started
 
 
 def test_multi_adaptive_search_is_reproducible_and_observations_are_shared():

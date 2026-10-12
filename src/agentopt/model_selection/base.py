@@ -9,6 +9,7 @@ import logging
 import math
 import time
 from abc import ABC, abstractmethod
+from threading import Event, Lock
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, PrivateAttr
@@ -102,6 +103,9 @@ class SelectionResults(BaseModel):
     """Results from model selection."""
 
     results: List[ModelResult] = Field(default_factory=list)
+    is_final: bool = False
+    stop_reason: Optional[str] = None
+    total_evaluations: int = 0
     selection_wall_time_seconds: Optional[float] = None
     selection_cost: Optional[float] = Field(
         default=None, description="Total selection cost in USD.",
@@ -789,6 +793,11 @@ class BaseModelSelector(ABC):
             self._tracker = tracker
         else:
             self._tracker = LLMTracker()
+        self._stop_requested = Event()
+        self._selection_lock = Lock()
+        self._external_stop_event = None
+        self._on_update = None
+        self._latest_results = None
         self._tracker.start()
 
     # ------------------------------------------------------------------
@@ -1316,46 +1325,82 @@ class BaseModelSelector(ABC):
         n_combo = max(max_concurrent, 1) // dp_concurrent
         return n_combo, dp_concurrent
 
-    def select_best(
-        self, parallel: bool = False, max_concurrent: int = 20,
-    ) -> SelectionResults:
-        """
-        Select the best model combination.
+    @property
+    def latest_results(self) -> Optional[SelectionResults]:
+        """Independent snapshot of the latest update, or None before a run."""
+        snapshot = self._latest_results
+        return snapshot.model_copy(deep=True) if snapshot is not None else None
 
-        Calls :meth:`_run_selection` (implemented by each subclass) and
-        ensures the tracker is stopped afterwards so that any disk cache
-        is flushed.
+    def request_stop(self) -> None:
+        """Stop cooperatively after the currently scheduled evaluation batch."""
+        self._stop_requested.set()
 
-        Args:
-            parallel: If True, evaluate combinations concurrently.
-            max_concurrent: Max total concurrent API calls across all
-                combinations and datapoints.
-
-        Returns:
-            SelectionResults containing all model evaluation results.
-        """
-        record_offset = len(self._tracker.get_records())
-        t0 = time.time()
-        try:
-            result = self._run_selection(parallel, max_concurrent)
-        finally:
-            self._tracker.stop()
-
-        result.selection_wall_time_seconds = time.time() - t0
-
-        # Cost: only non-cached calls made during this run
-        input_tokens: Dict[str, int] = {}
-        output_tokens: Dict[str, int] = {}
-        for r in self._tracker.get_records()[record_offset:]:
-            if r.cached:
-                continue
-            input_tokens[r.model] = input_tokens.get(r.model, 0) + r.prompt_tokens
-            output_tokens[r.model] = output_tokens.get(r.model, 0) + r.completion_tokens
-        result.selection_cost = compute_price(
-            input_tokens, output_tokens, custom_prices=self._custom_prices,
+    def _should_stop(self) -> bool:
+        return self._stop_requested.is_set() or (
+            self._external_stop_event is not None and self._external_stop_event.is_set()
         )
 
-        return result
+    def _selection_cost_so_far(self) -> Optional[float]:
+        input_tokens: Dict[str, int] = {}
+        output_tokens: Dict[str, int] = {}
+        for record in self._tracker.get_records()[self._selection_record_offset:]:
+            if record.cached:
+                continue
+            input_tokens[record.model] = input_tokens.get(record.model, 0) + record.prompt_tokens
+            output_tokens[record.model] = output_tokens.get(record.model, 0) + record.completion_tokens
+        return compute_price(input_tokens, output_tokens, custom_prices=self._custom_prices)
+
+    def _publish_update(self, result: SelectionResults, *, final: bool = False) -> SelectionResults:
+        snapshot = result.model_copy(deep=True)
+        snapshot.is_final = final
+        if not snapshot.stop_reason:
+            snapshot.stop_reason = "completed" if final else "running"
+        if final and self._should_stop():
+            snapshot.stop_reason = "user_stopped"
+        snapshot.total_evaluations = sum(len(r.datapoint_results) for r in snapshot.results)
+        snapshot.selection_wall_time_seconds = time.monotonic() - self._selection_started
+        snapshot.selection_cost = self._selection_cost_so_far()
+        self._latest_results = snapshot
+        if self._on_update is not None:
+            # User code cannot mutate the stored snapshot or algorithm state.
+            decision = self._on_update(snapshot.model_copy(deep=True))
+            if not final and decision is False:
+                self.request_stop()
+        return snapshot.model_copy(deep=True)
+
+    def select_best(
+        self, parallel: bool = False, max_concurrent: int = 20, *,
+        on_update: Optional[Callable[[SelectionResults], Optional[bool]]] = None,
+        stop_event: Optional[Event] = None,
+    ) -> SelectionResults:
+        """Evaluate candidates and return a final result.
+
+        ``on_update`` receives independent progress snapshots and a final
+        snapshot. Returning False requests a stop. ``stop_event`` or
+        :meth:`request_stop` can stop a run from another thread. A stop lets
+        the current evaluation batch finish before returning; it does not
+        cancel requests already scheduled. Read :attr:`latest_results` to
+        inspect progress without a callback.
+        """
+        if not self._selection_lock.acquire(blocking=False):
+            raise RuntimeError("This selector already has an active selection run")
+        self._on_update = on_update
+        self._external_stop_event = stop_event
+        self._latest_results = None
+        self._selection_started = time.monotonic()
+        try:
+            self._selection_record_offset = len(self._tracker.get_records())
+            result = self._run_selection(parallel, max_concurrent)
+            # Read the ledger before stop() archives tracker sessions.
+            return self._publish_update(result, final=True)
+        finally:
+            try:
+                self._tracker.stop()
+            finally:
+                self._on_update = None
+                self._external_stop_event = None
+                self._stop_requested.clear()
+                self._selection_lock.release()
 
     @abstractmethod
     def _run_selection(

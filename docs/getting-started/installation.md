@@ -11,20 +11,18 @@
 === "uv"
 
     ```bash
-    uv add agentopt
+    uv add agentopt-py
     ```
+
+Gittins, UCB, and random selection are included in the standard installation.
+SciPy is installed automatically for Gittins’ normal-distribution calculations
+and numerical root finding.
 
 ## Optional Dependencies
 
 === "Bayesian Optimization"
 
     Requires PyTorch and BoTorch:
-
-    ```bash
-    pip install "agentopt-py[bayesian]"
-    ```
-
-=== "All Extras"
 
     ```bash
     pip install "agentopt-py[bayesian]"
@@ -41,8 +39,8 @@ uv run pytest
 
 ## Requirements
 
-- **Python** >= 3.10
+- **Python** >= 3.12
 - **LLM API key** (e.g., `OPENAI_API_KEY` set in your environment)
 
 !!! tip "No framework dependency"
-    AgentOpt has minimal core dependencies (`httpx`, `pydantic`). It works alongside whatever LLM framework you already use — no need to install framework-specific adapters.
+    AgentOpt uses `httpx`, `pydantic`, `aiohttp`, `mitmproxy`, NumPy, and SciPy. It works alongside whatever LLM framework you already use — no need to install framework-specific adapters.

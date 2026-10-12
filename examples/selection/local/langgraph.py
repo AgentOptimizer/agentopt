@@ -112,7 +112,7 @@ if __name__ == "__main__":
         },
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",  # or "auto" for smarter selection algorithms
+        method="auto",  # Gittins selection
     )
 
     results = selector.select_best(parallel=True)

@@ -27,7 +27,7 @@ A [model selector](selectors.md) picks **one combination** of models and evaluat
 |:---|:---|:---|
 | Grain | One combo per experiment | One model per call |
 | Decision time | Before the run | At each HTTP request |
-| Natural algorithm | UCB, arm elimination, Bayesian | Rule-based, classifier, bandit |
+| Natural algorithm | Gittins, random, UCB, Bayesian | Rule-based, classifier, bandit |
 | Activation | `selector.select_best()` | `with LLMTracker(router=...)` |
 
 ---

@@ -90,7 +90,7 @@ if __name__ == "__main__":
         models={"agent": ["gpt-4o-mini", "gpt-4.1-nano"]},
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",
+        method="auto",
     )
     results = selector.select_best(parallel=False)
     results.print_summary()

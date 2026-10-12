@@ -7,7 +7,7 @@ Using AgentOpt with CrewAI agents and tasks.
 
 ```python
 from crewai import Agent, Crew, Task
-from agentopt import BruteForceModelSelector
+from agentopt import ModelSelector
 
 class MyAgent:
     def __init__(self, models):
@@ -36,7 +36,7 @@ class MyAgent:
         result = crew.kickoff()
         return str(result)
 
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini"],

@@ -91,6 +91,20 @@ for scheduled work to finish and saves the final result to `results.json`,
 including when you stop before any recommendation is available. Keep the process
 running while it finishes that work; force-quitting bypasses this save step.
 
+
+If authentication, rate limits, model calls, or scoring fail, the runner prints
+an English error and exits with a nonzero status. Correct the credentials,
+quota/concurrency, agent, or scorer before retrying. It does not print raw
+provider response bodies or reference answers in its error messages.
+
+When a result snapshot is available, it is saved separately as
+`results.partial.json` (or `<output-stem>.partial.json` for your output path),
+leaving the complete output file untouched. The file includes `is_partial`,
+`failure_message`, and `snapshot_scope`. It contains the last available snapshot;
+failed or unfinished work and its charges may be missing. If no snapshot is
+available, or saving fails, the terminal explicitly says no results were saved.
+Partial results are for inspection, not a resumable checkpoint.
+
 Useful variations, appended to the command above:
 
 | What you want | Arguments |

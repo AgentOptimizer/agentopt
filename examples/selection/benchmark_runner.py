@@ -11,9 +11,12 @@ it does not create a resumable checkpoint.
 import argparse
 import json
 import math
+import os
 import signal
+import sys
+import tempfile
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 
 
 METHODS = {
@@ -46,6 +49,129 @@ class AnswerAgent:
 def eval_fn(expected, actual):
     """Case-insensitive exact match after trimming surrounding whitespace."""
     return float(expected.strip().casefold() == str(actual).strip().casefold())
+
+
+class BenchmarkRunError(RuntimeError):
+    """A reported terminal failure, without exposing provider response bodies."""
+
+
+def failure_message(error, *, scoring=False):
+    if scoring:
+        return "Scoring failed. Check eval_fn; it must return a finite numeric score between 0 and 1."
+    # SDK errors can be wrapped; inspect their causes without printing credentials,
+    # prompts, reference answers, or raw provider responses.
+    chain, seen = [], set()
+    while error is not None and id(error) not in seen:
+        chain.append(error)
+        seen.add(id(error))
+        error = error.__cause__ or error.__context__
+    for cause in chain:
+        status = getattr(cause, "status_code", None)
+        if status == 401:
+            return "Authentication failed. Check OPENAI_API_KEY and ensure the key is valid."
+        if status == 403:
+            return "Access denied. Check your API key permissions and access to the selected models."
+        if status in (400, 404):
+            return "The model API rejected the request. Check the selected model names, endpoint, and request parameters."
+        if status == 429:
+            return "The API rate limit or quota was reached. Check usage and billing, or retry later with lower --max-concurrent."
+        if type(cause).__name__ == "APITimeoutError":
+            return "The model API request timed out. Check connectivity and retry, or lower --max-concurrent."
+        if type(cause).__name__ == "APIConnectionError":
+            return "Could not connect to the model API. Check your network and API endpoint, then retry."
+        if "api_key" in str(cause).lower() and "must be set" in str(cause).lower():
+            return "No API key is configured. Set OPENAI_API_KEY before running the benchmark."
+    if any(isinstance(cause, ImportError) for cause in chain):
+        return "A required dependency is missing. Install the checkout and dependencies for the selected method."
+    if any(isinstance(cause, OSError) for cause in chain):
+        return "Could not access a required file. Check file paths, permissions, and available disk space."
+    return "The benchmark failed. Check the agent, selected models, scorer, pricing, and selector settings."
+
+
+class FailureState:
+    """Retain the first actionable failure even when the SDK skips a failed sample."""
+
+    def __init__(self):
+        self.message = None
+        self.stop_event = Event()
+        self._lock = Lock()
+
+    def record(self, error, *, scoring=False):
+        with self._lock:
+            if self.message is None:
+                self.message = failure_message(error, scoring=scoring)
+        self.stop_event.set()
+        return BenchmarkRunError(self.message)
+
+    def wrap_agent(self, agent_class):
+        state = self
+
+        class CheckedAgent:
+            def __init__(self, models):
+                try:
+                    self.agent = agent_class(models)
+                except Exception as error:
+                    raise state.record(error) from error
+
+            def run(self, input_data):
+                try:
+                    return self.agent.run(input_data)
+                except Exception as error:
+                    raise state.record(error) from error
+
+        return CheckedAgent
+
+    def wrap_scorer(self, scorer):
+        def checked_score(expected, actual):
+            try:
+                score = float(scorer(expected, actual))
+                if not math.isfinite(score) or not 0 <= score <= 1:
+                    raise ValueError("Invalid score")
+                return score
+            except Exception as error:
+                raise self.record(error, scoring=True) from error
+        return checked_score
+
+
+def save_json(path, payload):
+    """Replace a result only after a complete JSON write succeeds."""
+    path = Path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, indent=2, ensure_ascii=False, allow_nan=False)
+            handle.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+
+
+def report_failure(message, *, output, snapshot=None):
+    print("\nStatus: Failed", file=sys.stderr, flush=True)
+    print(f"Error: {message}", file=sys.stderr, flush=True)
+    if snapshot is None or not snapshot.results:
+        print("No evaluation results were saved; no completed result snapshot is available.", file=sys.stderr, flush=True)
+        return
+    partial = snapshot.model_copy(deep=True)
+    partial.is_final = True
+    partial.stop_reason = "evaluation_failed"
+    payload = partial.model_dump(mode="json")
+    payload["is_partial"] = True
+    payload["failure_message"] = message
+    payload["snapshot_scope"] = "Last available result snapshot; failed or unfinished work and its charges may be missing."
+    output = Path(output)
+    partial_path = output.with_name(f"{output.stem}.partial{output.suffix or '.json'}")
+    try:
+        save_json(partial_path, payload)
+    except (OSError, ValueError, TypeError):
+        print("Partial results could not be saved. Check file permissions and available disk space.", file=sys.stderr, flush=True)
+    else:
+        print(f"Saved partial results ({partial.total_evaluations} evaluations) to {partial_path}", file=sys.stderr, flush=True)
+        print("Only the last available snapshot was saved; failed or unfinished work and its charges may be missing.", file=sys.stderr, flush=True)
+        print("This file is not a resumable checkpoint.", file=sys.stderr, flush=True)
 
 
 def load_dataset(path):
@@ -182,9 +308,17 @@ def show_progress(snapshot, *, total_questions):
             print(f"Search cost limit exceeded by: ${snapshot.search_cost_overshoot_usd:.6f}", flush=True)
 
 
-def run_selection(selector, *, max_concurrent, output):
+def run_selection(selector, *, max_concurrent, output, failures=None):
     """Run on the main thread so Ctrl+C requests a stop without cancelling work."""
-    stop_event = Event()
+    failures = failures or FailureState()
+    stop_event = failures.stop_event
+    last_snapshot = None
+
+    def update(snapshot):
+        nonlocal last_snapshot
+        last_snapshot = snapshot
+        if failures.message is None:
+            show_progress(snapshot, total_questions=len(selector.dataset))
 
     def request_stop(signum, frame):
         # Avoid raising KeyboardInterrupt while the selector drains its batch.
@@ -199,12 +333,20 @@ def run_selection(selector, *, max_concurrent, output):
         print("Press Ctrl+C to stop after the scheduled batch; its completed results will be saved.", flush=True)
         results = selector.select_best(
             parallel=True, max_concurrent=max_concurrent,
-            on_update=lambda snapshot: show_progress(snapshot, total_questions=len(selector.dataset)),
+            on_update=update,
             stop_event=stop_event,
         )
-        Path(output).write_text(results.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        if failures.message is not None:
+            raise BenchmarkRunError(failures.message)
+        save_json(output, results.model_dump(mode="json"))
         print(f"Saved results to {output}", flush=True)
         return results
+    except Exception as error:
+        message = failures.message or failure_message(error)
+        if last_snapshot is None:
+            last_snapshot = getattr(selector, "latest_results", None)
+        report_failure(message, output=output, snapshot=last_snapshot)
+        raise BenchmarkRunError(message) from None
     finally:
         signal.signal(signal.SIGINT, previous_handler)
 
@@ -225,15 +367,24 @@ def main(argv=None):
         parser.error("This example requires the OpenAI SDK: pip install openai")
     from agentopt import ModelSelector
 
-    selector = ModelSelector(
-        agent=AnswerAgent, models={"answer": args.models}, eval_fn=eval_fn,
-        dataset=dataset, method=args.method, objective_mode=args.objective_mode, **options,
-    )
+    failures = FailureState()
+    try:
+        selector = ModelSelector(
+            agent=failures.wrap_agent(AnswerAgent), models={"answer": args.models},
+            eval_fn=failures.wrap_scorer(eval_fn), dataset=dataset,
+            method=args.method, objective_mode=args.objective_mode, **options,
+        )
+    except Exception as error:
+        report_failure(failure_message(error), output=args.output)
+        raise SystemExit(1) from None
     if args.max_search_cost_usd is not None:
         print(f"Search cost limit: ${args.max_search_cost_usd:.2f} (soft limit; scheduled work may exceed it).", flush=True)
     else:
         print("Search cost limit: not set.", flush=True)
-    return run_selection(selector, max_concurrent=args.max_concurrent, output=args.output)
+    try:
+        return run_selection(selector, max_concurrent=args.max_concurrent, output=args.output, failures=failures)
+    except BenchmarkRunError:
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

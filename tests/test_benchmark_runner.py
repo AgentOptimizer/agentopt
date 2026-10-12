@@ -126,6 +126,202 @@ def test_stop_handler_restored_if_selection_fails(tmp_path):
             raise RuntimeError("provider error")
 
     previous_handler = signal.getsignal(signal.SIGINT)
-    with pytest.raises(RuntimeError, match="provider error"):
+    with pytest.raises(runner.BenchmarkRunError, match="benchmark failed"):
         runner.run_selection(BrokenSelector(), max_concurrent=1, output=tmp_path / "result.json")
     assert signal.getsignal(signal.SIGINT) is previous_handler
+
+
+@pytest.mark.parametrize("status,detail", [
+    (0, "No API key is configured"), (401, "Authentication failed"), (403, "Access denied"),
+    (429, "rate limit or quota"),
+])
+def test_provider_failures_are_reported_without_raw_response(monkeypatch, tmp_path, capsys, status, detail):
+    import httpx
+    import openai
+
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx.Response(status, request=request)
+    error_class = {0: openai.OpenAIError, 401: openai.AuthenticationError, 403: openai.PermissionDeniedError,
+                   429: openai.RateLimitError}[status]
+    error = (error_class("The api_key client option must be set") if status == 0 else
+             error_class("private-provider-response", response=response, body={}))
+    tracker = RecordingTracker()
+
+    class FailingAgent:
+        def __init__(self, models):
+            if status == 0:
+                raise error
+            self.model = models["answer"]
+
+        def run(self, question):
+            raise error
+
+    monkeypatch.setattr(runner, "AnswerAgent", FailingAgent)
+    original = agentopt.ModelSelector
+    monkeypatch.setattr(agentopt, "ModelSelector", lambda **kwargs: original(
+        **kwargs, tracker=tracker,
+        model_prices={"first": {"input_price": 1, "output_price": 0}},
+    ))
+    output = tmp_path / "results.json"
+    output.write_text("previous complete result")
+    with pytest.raises(SystemExit) as failure:
+        runner.main(["--dataset", str(SCRIPT.with_name("benchmark_sample.jsonl")),
+                     "--models", "first", "--output", str(output)])
+    assert failure.value.code == 1
+    terminal = capsys.readouterr()
+    assert "Status: Failed" in terminal.err and detail in terminal.err
+    assert "No evaluation results were saved" in terminal.err
+    assert "private-provider-response" not in terminal.out + terminal.err
+    assert "Traceback" not in terminal.err
+    assert output.read_text() == "previous complete result"
+    assert not output.with_name("results.partial.json").exists()
+    assert tracker.stopped
+
+
+@pytest.mark.parametrize("mode,fail_at,scoring", [
+    ("single", 3, False), ("single", 9, False),
+    ("multi", 9, False), ("single", 3, True),
+])
+def test_failure_saves_last_snapshot_and_preserves_complete_output(monkeypatch, tmp_path, capsys, mode, fail_at, scoring):
+    tracker = RecordingTracker()
+    calls = 0
+    answers = dict(runner.load_dataset(SCRIPT.with_name("benchmark_sample.jsonl")))
+
+    class FailingAgent:
+        def __init__(self, models):
+            self.model = models["answer"]
+
+        def run(self, question):
+            nonlocal calls
+            calls += 1
+            tracker.record(self.model, 1000)
+            if calls >= fail_at and not scoring:
+                raise RuntimeError("private-agent-input")
+            return answers[question]
+
+    original_score = runner.eval_fn
+    def failing_score(expected, actual):
+        if calls >= fail_at:
+            raise ValueError("private-reference-answer")
+        return original_score(expected, actual)
+
+    monkeypatch.setattr(runner, "AnswerAgent", FailingAgent)
+    if scoring:
+        monkeypatch.setattr(runner, "eval_fn", failing_score)
+    original = agentopt.ModelSelector
+    selectors = []
+    def factory(**kwargs):
+        selector = original(**kwargs, tracker=tracker,
+                            model_prices={name: {"input_price": 1, "output_price": 0}
+                                          for name in ("first", "second")})
+        selectors.append(selector)
+        return selector
+    monkeypatch.setattr(agentopt, "ModelSelector", factory)
+    output = tmp_path / "results.json"
+    output.write_text("previous complete result")
+    with pytest.raises(SystemExit) as failure:
+        runner.main(["--dataset", str(SCRIPT.with_name("benchmark_sample.jsonl")),
+                     "--models", "first", "second", "--objective-mode", mode,
+                     "--max-concurrent", "1", "--output", str(output)])
+    assert failure.value.code == 1
+    terminal = capsys.readouterr()
+    partial = json.loads(output.with_name("results.partial.json").read_text())
+    assert partial["is_partial"] and partial["is_final"]
+    assert partial["stop_reason"] == "evaluation_failed"
+    latest = selectors[0].latest_results
+    assert partial["total_evaluations"] == latest.total_evaluations
+    assert partial["results"] == latest.model_dump(mode="json")["results"]
+    assert bool(partial["recommendations"]) == (fail_at == 9)
+    assert "Saved partial results" in terminal.err
+    assert "charges may be missing" in terminal.err
+    assert ("Scoring failed" if scoring else "benchmark failed") in terminal.err
+    assert "Status: Finished" not in terminal.out
+    assert "private-agent-input" not in terminal.out + terminal.err
+    assert "private-reference-answer" not in terminal.out + terminal.err
+    assert output.read_text() == "previous complete result"
+    assert tracker.stopped
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1, 2, "not a score"])
+def test_invalid_scores_are_classified_as_scoring_errors(value):
+    state = runner.FailureState()
+    with pytest.raises(runner.BenchmarkRunError, match="Scoring failed"):
+        state.wrap_scorer(lambda expected, actual: value)("reference", "answer")
+    assert state.stop_event.is_set()
+
+
+def test_partial_save_error_does_not_claim_results_were_saved(monkeypatch, tmp_path, capsys):
+    from agentopt.model_selection.base import SelectionResults, ModelResult
+    snapshot = SelectionResults(results=[ModelResult(model_name="answer=first", accuracy=1,
+                                latency_seconds=1, attribute="combination")])
+    def failed_save(*args):
+        raise OSError("disk full")
+    monkeypatch.setattr(runner, "save_json", failed_save)
+    runner.report_failure("Scoring failed.", output=tmp_path / "results.json", snapshot=snapshot)
+    output = capsys.readouterr().err
+    assert "Partial results could not be saved" in output
+    assert "Saved partial results" not in output
+
+
+@pytest.mark.parametrize("method", ["random_configurations", "ucb"])
+def test_skipped_scoring_errors_still_fail_terminal_run(monkeypatch, tmp_path, capsys, method):
+    tracker = RecordingTracker()
+    class Agent:
+        def __init__(self, models):
+            self.model = models["answer"]
+        def run(self, question):
+            tracker.record(self.model, 1000)
+            return "answer"
+    def score(expected, actual):
+        raise ValueError("private-reference")
+    monkeypatch.setattr(runner, "AnswerAgent", Agent)
+    monkeypatch.setattr(runner, "eval_fn", score)
+    original = agentopt.ModelSelector
+    monkeypatch.setattr(agentopt, "ModelSelector", lambda **kwargs: original(
+        **kwargs, tracker=tracker,
+        model_prices={"first": {"input_price": 1, "output_price": 0}},
+    ))
+    output = tmp_path / "results.json"
+    with pytest.raises(SystemExit) as failure:
+        runner.main(["--dataset", str(SCRIPT.with_name("benchmark_sample.jsonl")),
+                     "--models", "first", "--method", method, "--output", str(output)])
+    assert failure.value.code == 1
+    terminal = capsys.readouterr()
+    assert "Scoring failed" in terminal.err
+    assert "Status: Finished" not in terminal.out
+    assert not output.exists()
+    assert tracker.stopped
+
+
+def test_normal_save_failure_preserves_existing_output_and_reports_partial(monkeypatch, tmp_path, capsys):
+    from agentopt.model_selection.base import SelectionResults, ModelResult
+    final = SelectionResults(results=[ModelResult(model_name="answer=first", accuracy=1,
+                             latency_seconds=1, attribute="combination")], is_final=True)
+    class Selector:
+        latest_results = final
+        def select_best(self, **kwargs):
+            return final
+    output = tmp_path / "results.json"
+    output.write_text("previous complete result")
+    real_save = runner.save_json
+    def denied_complete(path, payload):
+        if Path(path) == output:
+            raise PermissionError("write denied")
+        real_save(path, payload)
+    monkeypatch.setattr(runner, "save_json", denied_complete)
+    with pytest.raises(runner.BenchmarkRunError, match="required file"):
+        runner.run_selection(Selector(), max_concurrent=1, output=output)
+    assert output.read_text() == "previous complete result"
+    assert output.with_name("results.partial.json").exists()
+    terminal = capsys.readouterr()
+    assert "Saved partial results" in terminal.err
+    assert f"Saved results to {output}" not in terminal.out
+
+
+def test_atomic_result_write_keeps_existing_file_if_serialization_fails(tmp_path):
+    output = tmp_path / "results.json"
+    output.write_text("previous complete result")
+    with pytest.raises(ValueError):
+        runner.save_json(output, {"invalid": float("nan")})
+    assert output.read_text() == "previous complete result"
+    assert not list(tmp_path.glob("*.tmp"))

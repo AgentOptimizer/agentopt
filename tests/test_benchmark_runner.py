@@ -91,6 +91,9 @@ def test_terminal_sigint_saves_real_partial_run(monkeypatch, tmp_path, capsys, m
     assert signal.getsignal(signal.SIGINT) is previous_handler
     displayed = capsys.readouterr().out
     assert "No recommendation available yet." in displayed
+    stop_message = "Stop requested. Waiting for the current batch to finish…"
+    assert displayed.count(stop_message) == 1
+    assert displayed.index(stop_message) < displayed.index("Status: Finished")
     assert "Status: Finished" in displayed
     assert "Reason: You requested a stop." in displayed
     if has_recommendation:

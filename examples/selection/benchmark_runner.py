@@ -185,7 +185,10 @@ def run_selection(selector, *, max_concurrent, output):
 
     def request_stop(signum, frame):
         # Avoid raising KeyboardInterrupt while the selector drains its batch.
+        if stop_event.is_set():
+            return
         stop_event.set()
+        print("\nStop requested. Waiting for the current batch to finish…", flush=True)
 
     previous_handler = signal.signal(signal.SIGINT, request_stop)
     try:

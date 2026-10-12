@@ -145,7 +145,7 @@ def show_progress(snapshot):
               "Collecting initial samples" if snapshot.stop_reason == "warming_up" else "Searching")
     print(f"\nStatus: {status}", flush=True)
     print(f"Completed evaluations: {snapshot.total_evaluations}", flush=True)
-    print(f"Search spending: {cost}", flush=True)
+    print(f"Search cost: {cost}", flush=True)
     if getattr(snapshot, "objective_mode", "single") == "multi":
         recommendations = snapshot.get_recommendations()
         if recommendations:

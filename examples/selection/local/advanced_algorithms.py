@@ -130,7 +130,7 @@ def run_selection(method="auto", objective_mode="single", max_search_cost_usd=No
         cost = "Unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.6f}"
         print(f"\nStatus: {status}")
         print(f"Completed evaluations: {snapshot.total_evaluations}")
-        print(f"Search spending: {cost}")
+        print(f"Search cost: {cost}")
         if objective_mode == "single":
             best = snapshot.get_best_combo()
             print(f"Current recommendation: {best}" if best else "No recommendation available yet.")

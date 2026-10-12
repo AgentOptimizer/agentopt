@@ -48,6 +48,7 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+    - Run Your Benchmark: getting-started/your-benchmark.md
   - Concepts:
     - How It Works: concepts/how-it-works.md
     - Selection Algorithms: concepts/algorithms.md

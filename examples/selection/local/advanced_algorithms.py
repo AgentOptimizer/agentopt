@@ -106,6 +106,11 @@ def run_selection(method="auto", objective_mode="single", max_search_cost_usd=No
             print("Gittins recommends stopping; you can stop now or keep evaluating.")
         print(f"Evaluations: {snapshot.total_evaluations}; "
               f"search cost: {snapshot.selection_cost}; final: {snapshot.is_final}")
+        if objective_mode == "single":
+            print("Current recommendation:", snapshot.get_best_combo())
+        else:
+            candidates = snapshot.get_recommendations()
+            print("Current recommendations:", [candidate.combo for candidate in candidates])
         # A UI may call selector.request_stop(), or this callback may return False.
 
     return selector.select_best(parallel=True, max_concurrent=4,

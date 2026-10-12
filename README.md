@@ -341,6 +341,12 @@ for budgets, stopping, and baseline semantics.
 
 ### Live recommendations and stopping
 
+The [Run Your Benchmark guide](docs/getting-started/your-benchmark.md) walks through
+loading your examples, choosing settings, displaying recommendations, stopping,
+and saving results. For a complete terminal workflow, run
+[`benchmark_runner.py`](examples/selection/benchmark_runner.py) with your JSONL
+file; it prints live recommendations and saves the final result after Ctrl+C.
+
 Both random methods work in single and multi mode; `random` is the single-mode
 alias for `random_configurations`. Every method accepts a fraction of evaluations
 and lets the user stop while inspecting recommendations. Fractions count
@@ -394,7 +400,9 @@ warm start before recommending; random baselines recommend only from completed
 configurations or shared-question sweeps. Updates can therefore contain observed
 results without an eligible recommendation. See the
 [live selection guide](https://agentoptimizer.github.io/agentopt/api/selectors/#live-recommendations-and-user-stopping)
-for update timing and stopping limits.
+for update timing and stopping limits. Stopping returns the observations collected
+so far; there is no pause/resume API for restoring search state. A new run can
+reuse cached responses, but starts selection again.
 
 ## How It Works
 

@@ -139,20 +139,23 @@ def run_selection(method="auto", objective_mode="single", max_search_cost_usd=No
                 candidate = next(r for r in snapshot.get_recommendations() if r.combo == best)
                 print("Current recommendation (conservative score and USD/question):")
                 print(f"  {best} | score={candidate.conservative_accuracy:.4f} | "
-                      f"cost=${candidate.conservative_cost_usd:.6f}")
+                      f"cost=${candidate.conservative_cost_usd:.6f} | "
+                      f"evaluated={candidate.observed_samples}/{len(dataset)}")
             else:
                 candidate = snapshot.get_best()
                 price = candidate.price
                 cost_text = "unavailable" if price is None else f"${price:.6f}"
                 print("Current recommendation (observed score and USD/question):")
-                print(f"  {best} | score={candidate.accuracy:.4f} | cost={cost_text}")
+                print(f"  {best} | score={candidate.accuracy:.4f} | cost={cost_text} | "
+                      f"evaluated={len(candidate.datapoint_results)}/{len(dataset)}")
         else:
             candidates = snapshot.get_recommendations()
             if candidates:
                 print("Current recommendations (conservative score and USD/question):")
                 for candidate in candidates:
                     print(f"  {candidate.combo} | score={candidate.conservative_accuracy:.4f} | "
-                          f"cost=${candidate.conservative_cost_usd:.6f}")
+                          f"cost=${candidate.conservative_cost_usd:.6f} | "
+                          f"evaluated={candidate.observed_samples}/{len(dataset)}")
             else:
                 print("No recommendation available yet.")
         if snapshot.stop_recommended and not snapshot.is_final:

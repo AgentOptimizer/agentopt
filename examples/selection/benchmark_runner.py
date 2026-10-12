@@ -139,7 +139,7 @@ def stop_reason_message(reason):
     return STOP_REASON_MESSAGES.get(reason, (reason or "The search ended.").replace("_", " "))
 
 
-def show_progress(snapshot):
+def show_progress(snapshot, *, total_questions):
     cost = "unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.6f}"
     status = ("Finished" if snapshot.is_final else
               "Collecting initial samples" if snapshot.stop_reason == "warming_up" else "Searching")
@@ -152,7 +152,8 @@ def show_progress(snapshot):
             print("Current recommendations (conservative score and USD/question):", flush=True)
             for candidate in recommendations:
                 print(f"  {candidate.combo} | score={candidate.conservative_accuracy:.4f} | "
-                      f"cost=${candidate.conservative_cost_usd:.6f}", flush=True)
+                      f"cost=${candidate.conservative_cost_usd:.6f} | "
+                      f"evaluated={candidate.observed_samples}/{total_questions}", flush=True)
         else:
             print("No recommendation available yet.", flush=True)
     else:
@@ -163,13 +164,15 @@ def show_progress(snapshot):
             candidate = next(r for r in snapshot.get_recommendations() if r.combo == best)
             print("Current recommendation (conservative score and USD/question):", flush=True)
             print(f"  {best} | score={candidate.conservative_accuracy:.4f} | "
-                  f"cost=${candidate.conservative_cost_usd:.6f}", flush=True)
+                  f"cost=${candidate.conservative_cost_usd:.6f} | "
+                  f"evaluated={candidate.observed_samples}/{total_questions}", flush=True)
         else:
             candidate = snapshot.get_best()
             price = candidate.price
             cost_text = "unavailable" if price is None else f"${price:.6f}"
             print("Current recommendation (observed score and USD/question):", flush=True)
-            print(f"  {best} | score={candidate.accuracy:.4f} | cost={cost_text}", flush=True)
+            print(f"  {best} | score={candidate.accuracy:.4f} | cost={cost_text} | "
+                  f"evaluated={len(candidate.datapoint_results)}/{total_questions}", flush=True)
     if snapshot.stop_recommended and not snapshot.is_final:
         print("Stopping advice: Gittins suggests that further evaluation may not be worth its cost.", flush=True)
         print("The search can continue unless automatic stopping is enabled or a stop is requested.", flush=True)
@@ -196,7 +199,8 @@ def run_selection(selector, *, max_concurrent, output):
         print("Press Ctrl+C to stop after the scheduled batch; its completed results will be saved.", flush=True)
         results = selector.select_best(
             parallel=True, max_concurrent=max_concurrent,
-            on_update=show_progress, stop_event=stop_event,
+            on_update=lambda snapshot: show_progress(snapshot, total_questions=len(selector.dataset)),
+            stop_event=stop_event,
         )
         Path(output).write_text(results.model_dump_json(indent=2) + "\n", encoding="utf-8")
         print(f"Saved results to {output}", flush=True)

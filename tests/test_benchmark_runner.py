@@ -67,8 +67,8 @@ def test_terminal_sigint_saves_real_partial_run(monkeypatch, tmp_path, capsys, m
     original_display = runner.show_progress
     updates = []
 
-    def display_and_interrupt(snapshot):
-        original_display(snapshot)
+    def display_and_interrupt(snapshot, **kwargs):
+        original_display(snapshot, **kwargs)
         updates.append(snapshot)
         if snapshot.total_evaluations >= stop_at and not snapshot.is_final:
             signal.raise_signal(signal.SIGINT)
@@ -101,6 +101,7 @@ def test_terminal_sigint_saves_real_partial_run(monkeypatch, tmp_path, capsys, m
         for candidate in final.get_recommendations():
             assert f"score={candidate.conservative_accuracy:.4f}" in displayed
             assert f"cost=${candidate.conservative_cost_usd:.6f}" in displayed
+            assert f"evaluated={candidate.observed_samples}/{len(answers)}" in displayed
 
 
 @pytest.mark.parametrize("flags", [

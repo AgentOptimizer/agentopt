@@ -25,7 +25,7 @@ Each single-objective DP step represents one question. The numerical evaluation 
 DP evaluation cost = cost_scaling_factor × expected question cost in USD
 ```
 
-`cost_scaling_factor` defaults to `1e-4`. A larger value favors earlier stopping. It stays fixed during a single-objective run. The method stops when the best completed configuration is at least as valuable as every unfinished Gittins index, or a budget stops evaluation. The default recommendation maximizes posterior mean (`recommendation_beta=0`); a positive beta subtracts a multiple of the predictive standard deviation.
+`cost_scaling_factor` defaults to `1e-4`. A larger value favors an earlier stopping recommendation. It stays fixed during a single-objective run. When the best completed configuration is at least as valuable as every unfinished Gittins index, the result reports `stop_recommended=True`. By default, selection continues with the highest-index unfinished configuration until a user stop, a budget, or full completion. Set `stop_on_recommendation=True` to end automatically on that advice. The default configuration recommendation maximizes posterior mean (`recommendation_beta=0`); a positive beta subtracts a multiple of the predictive standard deviation.
 
 The single-objective finite-dataset convention follows BanditGittinsEval. Live uniform warm-up and estimated monetary costs are package adaptations; they are not identical to experiments with known per-arm costs. The coefficient multiplies the supplied cost units: `1e-4` per USD is not numerically equivalent to `1e-4` per unit evaluation or per cost ratio.
 
@@ -54,16 +54,29 @@ the full dataset. Gittins begins recommending after its uniform warm start and
 uses finite-dataset posterior predictions. Thus an early stop can return
 observations with no recommendation, and later observations can change a winner.
 
-## Baseline budgets
+## Evaluation allowances and spending
 
-Users do not have to specify a budget to use the random baselines. Their default
-is the complete finite configuration–question grid, with an optional user stop.
-A budget sets an automatic upper limit; live recommendations let the user decide
-whether more evaluation is worthwhile.
+Every method supports an evaluation fraction and anytime user stopping. With K
+configurations and N questions, `observation_budget_fraction` for Gittins, UCB,
+and random means a fraction of K × N configuration–question evaluations. It does
+not generally mean that only that fraction of distinct questions will be used.
 
-- Random configurations spend a whole dataset evaluation per selected configuration in either objective mode. Their cell budget must fund at least one such unit.
-- Random questions spend one evaluation per configuration for each shared question. Their cell budget must fund at least one complete sweep.
-- UCB's `observation_budget_fraction` caps individual configuration–question cells. `max_concurrent` also controls its acquisition batch size.
-- Bayesian optimization's `sample_fraction` caps configurations, with complete dataset evaluation per configuration and a minimum of two configurations when available. It requires `pip install "agentopt-py[bayesian]"`.
+- Random configurations spend N evaluations per selected configuration, so the fraction approximately specifies a fraction of configurations.
+- Random questions spend K evaluations per shared question, so the fraction approximately specifies a fraction of questions.
+- Gittins and UCB allocate their cell allowance adaptively. Gittins includes its uniform warm start in that allowance.
+- Bayesian optimization's `sample_fraction` counts configurations, each evaluated on the complete dataset, with a minimum of two configurations when available. It requires `pip install "agentopt-py[bayesian]"`.
+
+The cell allowance is rounded up; random methods require whole units to fit and
+can leave a remainder. The default evaluation allowance for random, UCB, and
+Gittins is the complete grid; Bayesian optimization uses `sample_fraction=0.25`.
+
+Random baselines report spending and offer evaluation limits, without a dollar
+budget parameter. Gittins, UCB, and Bayesian optimization additionally accept
+`max_search_cost_usd`, a soft cap on new non-cached charges. Gittins checks frozen
+cost estimates before adaptive batches. UCB and Bayesian optimization check
+actual spending before scheduling their next batch or complete configuration.
+Work already scheduled can exceed the cap. A budget, a user's stop request,
+and Gittins' model-based stopping advice express different reasons to end or
+reconsider a search.
 
 Gittins, UCB, and random baselines are included in the standard installation. See [advanced_algorithms.py](https://github.com/AgentOptimizer/agentopt/blob/main/examples/selection/local/advanced_algorithms.py) for runnable examples.

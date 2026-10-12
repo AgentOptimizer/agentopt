@@ -132,8 +132,10 @@ class GittinsModelSelector(BaseModelSelector):
     its estimated USD cost. It uses a fixed prior (``prior_mean=0.5`` in
     normalized units), finite-dataset means and per-cell DP transitions.
     Its default recommendation_beta is zero; multi mode defaults to one.
-    Single mode stops when a completed empirical value reaches every
-    unfinished index, keeping the cost coefficient fixed.
+    Single mode recommends stopping when a completed empirical value reaches
+    every unfinished index, keeping the cost coefficient fixed. By default it
+    continues selecting the largest unfinished index until a budget, user stop,
+    or full completion. Set ``stop_on_recommendation=True`` to stop automatically.
 
     In multi mode, a direction stops when a completed arm's value reaches the
     maximum unfinished Gittins index. Its eta then decays; all directions must stop
@@ -148,7 +150,7 @@ class GittinsModelSelector(BaseModelSelector):
                  max_search_cost_usd=None, recommendation_beta=None,
                  recommendation_min_samples=0, score_bounds=(0.0, 1.0),
                  prior_mean=0.5, prior_variance=0.04, score_noise_variance=0.25,
-                 cost_scaling_factor=1e-4,
+                 cost_scaling_factor=1e-4, stop_on_recommendation=False,
                  cost_reference_usd=None, search_cost_scale_eta=1.0,
                  eta_initial=1.0, eta_decay=0.5, effective_cost_bin_ratio=2.0,
                  effective_cost_bin_anchor=1e-4, grid_size=129, stop_tolerance=1e-9,
@@ -161,6 +163,11 @@ class GittinsModelSelector(BaseModelSelector):
         if objective_mode not in ("single", "multi"):
             raise ValueError("objective_mode must be 'single' or 'multi'")
         self.objective_mode = objective_mode
+        if not isinstance(stop_on_recommendation, bool):
+            raise ValueError("stop_on_recommendation must be a boolean")
+        if objective_mode != "single" and stop_on_recommendation:
+            raise ValueError("stop_on_recommendation requires single mode")
+        self.stop_on_recommendation = stop_on_recommendation
         if recommendation_beta is None:
             recommendation_beta = 0.0 if objective_mode == "single" else 1.0
         self.prior_mean = float(prior_mean)
@@ -357,6 +364,7 @@ class GittinsModelSelector(BaseModelSelector):
         self._orders = [np.random.default_rng(child).permutation(n_questions).tolist() for child in children[1:]]
         self._record_cursor = len(self._tracker.get_records())
         self._spent, self._evaluations = 0.0, 0
+        self._stop_recommended = False
         dimensions = 1 if self.objective_mode == "single" else 2
         # Completed posteriors and observed tie-break statistics never change.
         self._completed_states = [{} for _ in range(dimensions)]
@@ -417,16 +425,21 @@ class GittinsModelSelector(BaseModelSelector):
         # the current direction's eta. G0 uses the same invalidation rule.
         direction_indices = [{} for _ in range(dimensions)]
         direction, floor_stops = 0, set()
-        self._publish_update(self._results("running", eta))
+        if not single:
+            self._publish_update(self._results("running", eta))
         while True:
             completed = [i for i in range(n_arms) if self._positions[i] == n_questions]
             unfinished = [i for i in range(n_arms) if self._positions[i] < n_questions]
             if not unfinished:
+                self._stop_recommended = single
                 reason = "all_arms_completed"
                 break
-            reason = self._budget_stop(1)
-            if reason:
-                break
+            # Single mode recomputes its advice for the current observations,
+            # including when a budget ends the run after the preceding batch.
+            if not single:
+                reason = self._budget_stop(1)
+                if reason:
+                    break
             indices = {}
             for arm in unfinished:
                 if arm not in direction_indices[direction]:
@@ -437,10 +450,17 @@ class GittinsModelSelector(BaseModelSelector):
                     direction_indices[direction][arm] = table.index(int(stages[arm]), float(mean))
                 indices[arm] = direction_indices[direction][arm]
             arm, best_index, completed_arm, best_completed = self._direction_status(indices, completed, direction)
-            if completed and best_completed >= best_index - self.stop_tolerance:
-                if single:
+            direction_stop = bool(completed and best_completed >= best_index - self.stop_tolerance)
+            if single:
+                self._stop_recommended = direction_stop
+                self._publish_update(self._results("running", eta))
+                reason = self._budget_stop(1)
+                if reason:
+                    break
+                if direction_stop and self.stop_on_recommendation:
                     reason = "gittins_stop"
                     break
+            elif direction_stop:
                 remaining_penalty = max((horizon - stages[i]) * eta[direction] * base_penalties[i] for i in unfinished)
                 threshold = max(self.stop_tolerance, np.finfo(float).eps * max(1.0, abs(best_completed), abs(best_index)))
                 next_eta = eta[direction] * self.eta_decay
@@ -470,7 +490,8 @@ class GittinsModelSelector(BaseModelSelector):
             stages[arm] += len(questions) if single else 1
             floor_stops.clear()
             direction = (direction + 1) % dimensions
-            self._publish_update(self._results("running", eta))
+            if not single:
+                self._publish_update(self._results("running", eta))
         return self._results(reason, eta)
 
     def _results(self, reason, eta, calibrated=True):
@@ -533,6 +554,7 @@ class GittinsModelSelector(BaseModelSelector):
             recommendations = []
         return GittinsSelectionResults(results=records, recommendations=recommendations,
                                        objective_mode=self.objective_mode, stop_reason=reason,
+                                       stop_recommended=self._stop_recommended,
                                        total_evaluations=self._evaluations,
                                        search_cost_overshoot_usd=max(0.0, self._spent - self.max_spend) if self.max_spend is not None else 0.0,
                                        direction_eta=list(eta))

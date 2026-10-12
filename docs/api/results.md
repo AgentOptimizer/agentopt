@@ -21,10 +21,12 @@ Top-level fields are available on both live snapshots and the final result:
 |:---|:---|
 | `results` | Observed configuration results, including partial evaluations where the method supports them. |
 | `is_final` | `False` for progress snapshots; `True` for the final callback and returned result. |
-| `stop_reason` | Current phase or final stopping reason. A user-requested stop reports `user_stopped`; UCB reports `evaluation_failed` when an entire acquisition batch produces no observation. |
+| `stop_recommended` | Stopping advice from single-objective Gittins; `False` for other methods. It is independent of whether the run has ended. |
+| `stop_reason` | Current phase or final stopping reason. A user-requested stop reports `user_stopped`; adaptive methods report `search_cost_budget` at a dollar cap; UCB reports `evaluation_failed` when an entire acquisition batch produces no observation. |
 | `total_evaluations` | Successful configuration–question evaluations represented in the results. Failed evaluations may incur `selection_cost` without increasing this count. |
 | `selection_wall_time_seconds` | Elapsed selection time at the snapshot. |
 | `selection_cost` | New non-cached search spending in USD; `None` when pricing is unavailable. |
+| `search_cost_overshoot_usd` | Actual spending above the optional soft dollar cap for Gittins, UCB, and Bayesian optimization; zero without a cap. |
 
 Pass `on_update` to `select_best()` to receive independent snapshots.
 `selector.latest_results` returns a copy of the latest snapshot, or `None`
@@ -42,7 +44,8 @@ Gittins returns a `SelectionResults` subclass with these additional fields:
 |:---|:---|
 | `objective_mode` | `"single"` or `"multi"`. |
 | `recommendations` / `get_recommendations()` | Recommended configurations at the snapshot, with predicted accuracy/cost, standard deviations, conservative coordinates, node-to-model `combo`, and observed sample count. Single mode defaults to zero uncertainty penalty; multi mode defaults to one standard deviation. |
-| `stop_reason` | Final reasons include `user_stopped`, `question_budget`, `search_cost_budget`, `warm_start_budget`, `all_arms_completed`, `gittins_stop` (single), and `direction_eta_numerical_floor` (multi). Live snapshots can report `warming_up` or `running`. |
+| `stop_reason` | Final reasons include `user_stopped`, `question_budget`, `search_cost_budget`, `warm_start_budget`, `all_arms_completed`, `gittins_stop` (single with automatic stopping enabled), and `direction_eta_numerical_floor` (multi). Live snapshots can report `warming_up` or `running`. |
+| `stop_recommended` | Single-objective Gittins' model-based advice to stop. Advice can change with subsequent observations. Advice alone does not end the run: the default `stop_on_recommendation=False` continues evaluating. Check `is_final` and `stop_reason` for actual termination. |
 | `total_evaluations` | Successful configuration–question evaluations, including warm start. |
 | `search_cost_overshoot_usd` | Actual non-cached spend above the optional soft dollar cap. |
 | `direction_eta` | Current multiplier of each search direction. Single mode reports `[1.0]`; its separate `cost_scaling_factor` stays fixed. |
@@ -65,7 +68,8 @@ complete configurations or shared-question sweeps. Conservative fields equal the
 means; zero std fields mean no uncertainty model was fitted. Partial units are
 retained in evaluation records but excluded from recommendations. In single
 mode, `get_best()` and `get_best_combo()` identify an eligible empirical winner;
-in multi mode, use `get_recommendations()` and `choose(...)`.
+in multi mode, use `get_recommendations()` and `choose(...)`. Both random methods
+report actual search cost, but do not accept a dollar cap or issue stopping advice.
 
 ### Single-objective example
 

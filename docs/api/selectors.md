@@ -95,13 +95,41 @@ A snapshot can contain observations but no eligible recommendation. Further
 evaluations may change a recommendation in either direction; the displayed
 score is not a guarantee of improvement or future performance.
 
-Budgets are optional. Defaults still define finite work: random and UCB can
-exhaust the configuration–question grid, Bayesian optimization uses its default
-configuration fraction, and Gittins can stop by its index rule or at dataset
-completion. Supply a budget for a predetermined limit, or use the stopping
-interface to decide while watching the results. Gittins and random selectors
-accept the soft dollar cap `max_search_cost_usd`; a callback-based spending
-threshold is checked only after completed work and can overshoot too.
+Budgets are optional, and every run has a finite dataset. Use a fraction to
+choose the evaluation allowance in advance, a user stop to decide while watching
+results, or both. Gittins, UCB, and Bayesian optimization also accept an optional
+soft dollar cap. Random baselines report spending without using a dollar cap.
+
+## Evaluation fractions and budgets
+
+Let K be the number of configurations and N the number of dataset questions.
+A configuration–question **cell** is one agent evaluation; the full grid has
+K × N cells. A cell fraction is not a fraction of distinct dataset questions:
+adaptive methods can allocate different questions to each configuration.
+
+| Method | Fraction parameter and default | How the allowance is spent | `max_search_cost_usd` |
+|---|---|---|---|
+| Gittins | `observation_budget_fraction=1.0` of K × N cells | Uniform warm start, then adaptive batches | Optional soft cap, with estimates before adaptive batches |
+| Random configurations | `observation_budget_fraction=1.0` of K × N cells | Whole configurations, N cells each | Unsupported; spending is reported |
+| Random questions | `observation_budget_fraction=1.0` of K × N cells | Shared-question sweeps, K cells each | Unsupported; spending is reported |
+| UCB | `observation_budget_fraction=1.0` of K × N cells | Adaptive cell batches | Optional soft cap, checked between acquisition batches |
+| Bayesian optimization | `sample_fraction=0.25` of K configurations | Complete configurations; at least two when available | Optional soft cap, checked between configurations or parallel acquisition batches |
+
+Cell fractions are rounded up to a whole cell. Random baselines start only
+complete units that fit, so a remainder can be unused: a `0.5` fraction means
+approximately half the configurations for `random_configurations`, or half the
+questions shared across all configurations for `random_questions`. Gittins and
+random also accept `max_total_question_evaluations` as an absolute cell cap.
+Gittins' cap must fund its warm start; random's must fund one complete unit.
+
+Single-objective Gittins additionally publishes `stop_recommended`. Advice does
+not end the run by default: `stop_on_recommendation=False` keeps selecting
+unfinished configurations until a user stop, a budget, or full completion.
+Set it to `True` to end automatically with `stop_reason="gittins_stop"`.
+Multi-objective Gittins retains its own direction/eta termination rule.
+The advice can change as further observations arrive.
+A recommendation to stop, `user_stopped`, and budget exhaustion are separate
+signals; inspect `is_final` and `stop_reason` to tell whether a run has ended.
 
 ## Combined objective (optional cost/latency weights)
 
@@ -145,6 +173,7 @@ Each configuration receives a seeded independent permutation of question indices
 | `effective_cost_bin_anchor` | `1e-4` | **Multi only:** USD anchor for cost bins. |
 | `grid_size` | `129` | DP interpolation resolution, at least 17. |
 | `stop_tolerance` | `1e-9` | Numerical stopping comparison tolerance. |
+| `stop_on_recommendation` | `False` | **Single only:** end automatically when Gittins recommends stopping; otherwise publish the advice and continue. |
 | `seed` | `42` | Nonnegative seed for question permutations. |
 
 ### Single-objective index and stopping
@@ -164,7 +193,7 @@ DP cost per question = cost_scaling_factor × warm mean question cost in USD
 
 Costs and lambda remain fixed after warm start. A tiny positive numerical floor (`1e-12`) handles zero or extremely small DP costs. The cost coefficient has units of normalized score per USD; changing cost units requires changing this coefficient. The default `1e-4` does not guarantee a particular evaluation budget.
 
-A completed configuration's index is its exact empirical scalar mean. Single mode stops with `stop_reason="gittins_stop"` when the best completed value reaches the largest unfinished index. It does not reduce lambda after stopping. Cell/dollar budgets and full completion may end the run earlier.
+A completed configuration's index is its exact empirical scalar mean. When the best completed value reaches the largest unfinished index, single mode publishes `stop_recommended=True`. This is a model-based assessment of whether more evaluation is worth its cost. The default `stop_on_recommendation=False` continues with the highest-index unfinished configuration; it does not reduce the search-cost coefficient. Set `stop_on_recommendation=True` to end on the advice with `stop_reason="gittins_stop"`. User stopping, cell/dollar budgets, and full completion can also end a run.
 
 The winner maximizes `finite_mean - recommendation_beta × finite_std`, with lower conservative deployment cost breaking ties. At the default beta of zero this is posterior-mean recommendation. Warm-start calibration of unknown live costs is an adaptation to online evaluation; configurations with known fixed costs can have different trajectories in an offline replay.
 
@@ -199,9 +228,9 @@ Before adaptive evaluation, Gittins checks the planned batch's frozen estimate o
 
 `random_configurations` selects configurations without replacement and evaluates each on every question. `random_questions` selects questions without replacement and evaluates each on every configuration. Both support single and multi mode; `random` is the single-mode configuration-sampling alias. Single mode recommends the highest empirical scalar mean among eligible configurations; multi mode returns their empirical accuracy–cost frontier. No all-configuration warm start or Gaussian model is used.
 
-No budget argument is required: by default, both methods evaluate the finite configuration–question grid unless the user stops them. Both accept `observation_budget_fraction=1.0`, `max_total_question_evaluations=None`, `max_search_cost_usd=None`, `seed=42`, and `score_bounds=(0, 1)`. The cell cap must fund a whole configuration (N cells) or shared-question sweep (K cells), and each new unit must fit the remaining cell cap. Thus an unused cell remainder is possible.
+No budget argument is required: by default, both methods evaluate the finite configuration–question grid unless the user stops them. Both accept `observation_budget_fraction=1.0`, `max_total_question_evaluations=None`, `seed=42`, and `score_bounds=(0, 1)`. The fraction refers to K × N cells. The cap must fund a whole configuration (N cells) or shared-question sweep (K cells), and each new unit must fit the remaining cell cap. Thus an unused cell remainder is possible.
 
-A dollar cap is checked after each evaluation and can overshoot by that evaluation's charge. Interrupted units remain in evaluation records but are excluded from recommendations. For shared questions, only fully completed sweeps enter single-mode rankings or the multi-mode empirical frontier. This gives every eligible configuration the same observed questions. Cached calls do not consume search dollars. With a dollar cap, evaluations run sequentially; without one, configuration sampling can evaluate its questions concurrently.
+Random baselines do not accept `max_search_cost_usd`. They allocate an evaluation allowance independently of measured cost and report actual non-cached search spending in `selection_cost`. Configuration sampling can evaluate its questions concurrently. A user stop can interrupt a unit; its observations remain in evaluation records but are excluded from recommendations. For shared questions, only fully completed sweeps enter single-mode rankings or the multi-mode empirical frontier. This gives every eligible configuration the same observed questions.
 
 `RandomSelectionResults` supports `get_recommendations()` and `choose(...)` and adds `sampling` and `completed_units`. Recommendation score/cost are empirical means on complete units. Conservative fields equal these means; zero standard-deviation fields indicate no uncertainty model, not certainty about unseen data.
 
@@ -209,7 +238,9 @@ A dollar cap is checked after each evaluation and can overshoot by that evaluati
 
 UCB (`ucb`, alias `matrix_ucb`) uses `mean + sqrt(a/n)`, with `a=1.0`, and samples unseen questions on the selected configuration. `observation_budget_fraction=1.0` caps cells; `sample_fraction` is an alias that takes precedence. `seed` controls question sampling. `max_concurrent` controls both the batch size and concurrency, and `parallel` is ignored. If an entire acquisition batch fails to yield an observation, UCB stops with `stop_reason="evaluation_failed"`.
 
-Bayesian optimization uses a categorical `MixedSingleTaskGP` and Log Expected Improvement. Each selected configuration is evaluated over the complete dataset. If some questions fail, successful observations remain in the results, but that configuration is excluded from GP training and recommendations. `sample_fraction=0.25` caps the number of configurations (at least two if available); `batch_size=1` controls configurations per GP iteration. These baselines support scalar deployment weights but not a multi-objective frontier or Gittins' dollar budget parameter.
+Bayesian optimization uses a categorical `MixedSingleTaskGP` and Log Expected Improvement. Each selected configuration is evaluated over the complete dataset. If some questions fail, successful observations remain in the results, but that configuration is excluded from GP training and recommendations. `sample_fraction=0.25` caps the number of configurations (at least two if available); `batch_size=1` controls configurations per GP iteration. Both baselines support scalar deployment weights, single-objective recommendations, evaluation fractions, anytime user stopping, and `max_search_cost_usd=None`.
+
+Their dollar cap counts new non-cached token charges, including evaluation and judge calls. Costs must be known when a cap is requested. The cap is checked before scheduling further work: UCB can exceed it by the current acquisition batch; Bayesian optimization can exceed it by the current complete configuration, or by all configurations in the current parallel acquisition batch. Smaller batches reduce the work between spending checks. These are soft spending limits, not guarantees of an exact dollar total.
 
 ## Selector classes
 

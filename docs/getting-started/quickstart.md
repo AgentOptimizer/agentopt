@@ -121,7 +121,7 @@ results.print_summary()
 
 The `models` dict maps each step name (matching the keys your `__init__` expects) to a **list of candidates**. AgentOpt picks one from each list, constructs `MyAgent({"planner": pick1, "solver": pick2})`, and evaluates it across your dataset.
 
-With 3 candidates per step and 2 steps, that's 9 combinations. The default `ModelSelector` uses Gittins to allocate further evaluations after a warm start on each combination. Set a search budget to limit spending, or use `objective_mode="multi"` to inspect accuracy/cost alternatives.
+With 3 candidates per step and 2 steps, that's 9 combinations. The default `ModelSelector` uses Gittins to allocate further evaluations after a warm start on each combination. Set `observation_budget_fraction` to limit configuration–question evaluations, optionally add `max_search_cost_usd` to limit spending, or stop while watching live recommendations. Single mode advises when to stop but continues by default; use `stop_on_recommendation=True` for automatic stopping. Use `objective_mode="multi"` to inspect accuracy/cost alternatives.
 
 !!! tip "Optional: trade accuracy for cost or latency"
     Add `lambda_cost=0.3` and/or `lambda_latency=0.2` to the selector constructor to rank combinations by a scalar combined objective instead of accuracy alone. Omit them (default `0.0`) for accuracy-first selection. Details: [Combined objective](../api/selectors.md#combined-objective-optional-costlatency-weights).

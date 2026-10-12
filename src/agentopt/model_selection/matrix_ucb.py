@@ -205,6 +205,9 @@ class MatrixUCBModelSelector(BaseModelSelector):
     here, **fraction of matrix cells** to observe) caps evaluations. ``1.0`` fills the
     full grid; ``0.1`` stops after about 10% of cells. If both are passed, ``sample_fraction``
     wins.
+
+    ``max_search_cost_usd`` optionally stops scheduling batches once observed
+    search spending reaches the cap. The last scheduled batch may exceed it.
     """
 
     def __init__(
@@ -221,6 +224,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
         tracker=None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
+        max_search_cost_usd: Optional[float] = None,
     ) -> None:
         super().__init__(
             agent=agent,
@@ -231,6 +235,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
             tracker=tracker,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
+            max_search_cost_usd=max_search_cost_usd,
         )
         self.a = float(a)
         self.observation_budget_fraction = _resolve_observation_budget_fraction(
@@ -304,7 +309,7 @@ class MatrixUCBModelSelector(BaseModelSelector):
 
         step = 0
         while True:
-            if self._should_stop():
+            if self._search_budget_stop():
                 break
             filled = _np_filled_count(observed)
             if filled >= target_n:
@@ -314,6 +319,8 @@ class MatrixUCBModelSelector(BaseModelSelector):
                 break
             batch = _ucb_plain_next_batch(observed, self.a, mc_step, self._rng)
             if batch is None:
+                break
+            if self._search_budget_stop():
                 break
             combo_row, dp_row = batch[0], batch[1]
             step += 1
@@ -341,11 +348,13 @@ class MatrixUCBModelSelector(BaseModelSelector):
             if not any(not isinstance(res, Exception) and res[2] for res in outs):
                 # No progress in this batch: avoid retrying failed cells forever.
                 result = _build_selection_results(self, all_combos, cell_data, n_datapoints)
-                result.stop_reason = "evaluation_failed"
+                result.stop_reason = self._search_budget_stop() or "evaluation_failed"
                 return result
 
         result = _build_selection_results(self, all_combos, cell_data, n_datapoints)
-        result.stop_reason = "all_arms_completed" if len(cell_data) == total_cells else "question_budget"
+        result.stop_reason = self._search_budget_stop() or (
+            "all_arms_completed" if len(cell_data) == total_cells else "question_budget"
+        )
         return result
 
 

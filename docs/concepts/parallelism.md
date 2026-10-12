@@ -5,7 +5,7 @@
 | Selector | Parallel behavior |
 |---|---|
 | Gittins | One configuration per adaptive visit, with at most `min(batch_size, max_concurrent)` questions in flight. Warm-start questions are sequential for dollar accounting. |
-| Random configurations | One configuration at a time; without a dollar cap, questions run in chunks of at most `max_concurrent` when `parallel=True`. With a dollar cap, evaluations are sequential to check spending after each call. |
+| Random configurations | One configuration at a time; questions run in chunks of at most `max_concurrent` when `parallel=True`. |
 | Random questions | Sequential shared-question sweeps over all configurations. |
 | UCB | `max_concurrent` controls both acquisition batch size and evaluation concurrency. The `parallel` flag is ignored. |
 | Bayesian optimization | Splits slots between configurations in an acquisition batch and the questions for each configuration. |
@@ -16,7 +16,7 @@ results = selector.select_best(parallel=True, max_concurrent=4)
 
 Gittins' statistical batch size is configured on the constructor (`batch_size`), independently of the concurrency limit. For single-objective Gittins, the DP still models one question per transition. A final dataset tail can contain fewer questions than the configured batch size.
 
-A dollar cap is soft: completed evaluations can cost more than the amount predicted before the batch. Inspect `selection_cost` and `search_cost_overshoot_usd` after Gittins or random selection. Smaller batches limit the number of evaluations between spending checks.
+Gittins, UCB, and Bayesian optimization accept a soft dollar cap. Gittins checks estimated charges before adaptive batches, but actual charges can exceed the estimate. UCB checks spending between acquisition batches; Bayesian optimization checks between complete configurations or parallel acquisition batches. Already scheduled work finishes and can exceed the cap. Inspect `selection_cost` and `search_cost_overshoot_usd`. Smaller batches reduce the work between checks. Random baselines report costs without a dollar cap.
 
 ## Progress and cooperative stopping
 

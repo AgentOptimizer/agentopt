@@ -81,7 +81,7 @@ def test_completed_single_index_is_exact_empirical_mean():
 
 
 def test_single_natural_stopping_keeps_lambda_fixed():
-    selector,_=make_selector(mode="single",count=8,cost_scaling_factor=1000.)
+    selector,_=make_selector(mode="single",count=8,cost_scaling_factor=1000.,stop_on_recommendation=True)
     result=selector.select_best()
     assert result.stop_reason=="gittins_stop"
     assert result.total_evaluations<32
@@ -104,7 +104,7 @@ def test_per_cell_dp_uses_raw_cost_lambda_and_actual_cell_stage(monkeypatch):
                             outcomes={"cheap":.6},max_total_question_evaluations=6)
     selector.select_best()
     scale=1+.25/(7*.04)
-    assert [call["stage"] for call in calls]==[0,2]
+    assert [call["stage"] for call in calls]==[0,2,4]
     assert all(call["horizon"]==5 for call in calls)
     assert all(call["effective_pull_cost"]==pytest.approx(1e-7) for call in calls)
     assert all(call["obs_noise_var"]==pytest.approx(.25*scale**2) for call in calls)

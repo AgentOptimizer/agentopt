@@ -105,6 +105,8 @@ class SelectionResults(BaseModel):
     results: List[ModelResult] = Field(default_factory=list)
     is_final: bool = False
     stop_reason: Optional[str] = None
+    stop_recommended: bool = False
+    search_cost_overshoot_usd: float = 0.0
     total_evaluations: int = 0
     selection_wall_time_seconds: Optional[float] = None
     selection_cost: Optional[float] = Field(
@@ -723,6 +725,7 @@ class BaseModelSelector(ABC):
         tracker: Optional[LLMTracker] = None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
+        max_search_cost_usd: Optional[float] = None,
     ) -> None:
         """
         Initialize the model selector.
@@ -751,6 +754,8 @@ class BaseModelSelector(ABC):
                 (pure accuracy, backwards compatible).
             lambda_latency: Weight on normalized per-sample latency in the
                 combined objective. Default 0.0.
+            max_search_cost_usd: Optional positive soft search-cost limit for
+                adaptive selectors. The currently scheduled batch can overshoot.
         """
         if agent is None:
             raise TypeError("'agent' is required")
@@ -760,6 +765,12 @@ class BaseModelSelector(ABC):
             raise ValueError("lambda_cost and lambda_latency must be non-negative")
 
         validate_dataset(dataset)
+        self._search_cost_limit = None
+        if max_search_cost_usd is not None:
+            limit = float(max_search_cost_usd)
+            if not math.isfinite(limit) or limit <= 0:
+                raise ValueError("max_search_cost_usd must be finite and positive")
+            self._search_cost_limit = limit
 
         self._custom_prices: Optional[Dict[str, Tuple[float, float]]] = (
             {
@@ -1350,6 +1361,23 @@ class BaseModelSelector(ABC):
             output_tokens[record.model] = output_tokens.get(record.model, 0) + record.completion_tokens
         return compute_price(input_tokens, output_tokens, custom_prices=self._custom_prices)
 
+    def _validate_budget_cost(self, cost: Optional[float]) -> None:
+        if self._search_cost_limit is not None and (
+            cost is None or not math.isfinite(cost) or cost < 0
+        ):
+            raise ValueError("Cannot enforce max_search_cost_usd without finite nonnegative prices; supply model_prices")
+
+    def _search_budget_stop(self) -> Optional[str]:
+        """Shared stopping guard for adaptive selectors with batch spending caps."""
+        if self._should_stop():
+            return "user_stopped"
+        if self._search_cost_limit is not None:
+            cost = self._selection_cost_so_far()
+            self._validate_budget_cost(cost)
+            if cost >= self._search_cost_limit:
+                return "search_cost_budget"
+        return None
+
     def _publish_update(self, result: SelectionResults, *, final: bool = False) -> SelectionResults:
         snapshot = result.model_copy(deep=True)
         snapshot.is_final = final
@@ -1360,6 +1388,9 @@ class BaseModelSelector(ABC):
         snapshot.total_evaluations = sum(len(r.datapoint_results) for r in snapshot.results)
         snapshot.selection_wall_time_seconds = time.monotonic() - self._selection_started
         snapshot.selection_cost = self._selection_cost_so_far()
+        self._validate_budget_cost(snapshot.selection_cost)
+        if self._search_cost_limit is not None:
+            snapshot.search_cost_overshoot_usd = max(0.0, snapshot.selection_cost - self._search_cost_limit)
         self._latest_results = snapshot
         if self._on_update is not None:
             # User code cannot mutate the stored snapshot or algorithm state.

@@ -66,7 +66,7 @@ def test_random_single_returns_empirical_winner():
     assert result.recommendations[0].objective==pytest.approx(.9)
 
 
-def test_random_single_cost_weight_is_separate_from_search_budget():
+def test_random_single_cost_weight_penalizes_deployment_cost():
     selector,_,_=make_random(method="random",mode="single",lambda_cost=1)
     result=selector.select_best()
     assert result.get_best_combo()=={"solver":"cheap"}
@@ -82,28 +82,32 @@ def test_seed_reproducibility(method):
     assert histories[0]==histories[1]
 
 
-@pytest.mark.parametrize("method",["random_configurations","random_questions"])
-def test_dollar_cap_interrupted_unit_has_no_recommendations(method):
-    selector,_,_=make_random(method=method,max_search_cost_usd=.0001)
-    result=selector.select_best()
-    assert result.total_evaluations==1
-    assert result.completed_units==0
-    assert result.recommendations==[]
-    assert result.stop_reason=="search_cost_budget"
-    assert result.search_cost_overshoot_usd==pytest.approx(result.selection_cost-.0001)
+@pytest.mark.parametrize("method",["random", "random_configurations", "random_questions"])
+@pytest.mark.parametrize("cap", [None, .0001])
+def test_random_rejects_dollar_cap_before_tracker_starts(method, cap):
+    tracker = RecordingTracker()
+    with pytest.raises(TypeError, match="max_search_cost_usd"):
+        make_random(method=method, mode="single", tracker=tracker,
+                    max_search_cost_usd=cap)
+    assert not tracker.started
 
 
-def test_partial_question_sweep_does_not_change_previous_recommendations():
-    selector,_,_=make_random(method="random_questions",max_search_cost_usd=.0191)
-    result=selector.select_best()
-    assert result.completed_units==1
-    assert result.total_evaluations==6
-    assert all(r.observed_samples==1 for r in result.recommendations)
-    assert sum(r.num_samples for r in result.results)==6
+@pytest.mark.parametrize("method,expected_units", [
+    ("random_configurations", 2), ("random_questions", 2),
+])
+@pytest.mark.parametrize("mode", ["single", "multi"])
+def test_random_fraction_limits_whole_sampling_units(method, expected_units, mode):
+    selector, _, observed = make_random(method=method, mode=mode,
+                                       observation_budget_fraction=.5)
+    result = selector.select_best()
+    assert result.completed_units == expected_units
+    assert result.total_evaluations == len(observed) == expected_units * selector.unit_size
+    assert result.total_evaluations <= 10
+    assert result.stop_reason == "question_budget"
 
 
 def test_cached_calls_have_deployment_cost_but_no_search_charge():
-    selector,_,_=make_random(tracker=RecordingTracker(cached=True),max_search_cost_usd=.001)
+    selector,_,_=make_random(tracker=RecordingTracker(cached=True))
     result=selector.select_best()
     assert result.total_evaluations==20
     assert result.selection_cost==0

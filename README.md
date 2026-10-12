@@ -144,7 +144,7 @@ Output:
     ...
 ```
 
-With `method="auto"`, AgentOpt uses Gittins selection to decide which combination to evaluate next and when further evaluation is no longer worth its cost. LLM-as-judge is supported — call your judge LLM inside `eval_fn`; tracked judge calls count toward search spending.
+With `method="auto"`, AgentOpt uses Gittins selection to decide which combination to evaluate next and recommend when further evaluation is no longer worth its cost. LLM-as-judge is supported — call your judge LLM inside `eval_fn`; tracked judge calls count toward search spending.
 
 ### 2. Subprocess agent + offline model selection
 
@@ -342,9 +342,28 @@ for budgets, stopping, and baseline semantics.
 ### Live recommendations and stopping
 
 Both random methods work in single and multi mode; `random` is the single-mode
-alias for `random_configurations`. A budget is optional. Without one, random
-selection finishes the finite configuration–question grid, while Gittins can
-also stop when further evaluation is no longer worthwhile.
+alias for `random_configurations`. Every method accepts a fraction of evaluations
+and lets the user stop while inspecting recommendations. Fractions count
+configuration–question evaluations, not distinct questions across the run:
+
+| Method | Fraction parameter | Optional search-dollar cap | Stopping advice |
+|---|---|---|---|
+| Gittins | `observation_budget_fraction` of all configuration–question pairs | `max_search_cost_usd` | Single mode reports `stop_recommended` |
+| Random configurations | `observation_budget_fraction`, spent on whole configurations | — | User decides |
+| Random questions | `observation_budget_fraction`, spent on shared question sweeps | — | User decides |
+| UCB | `observation_budget_fraction` of all configuration–question pairs | `max_search_cost_usd` | User decides |
+| Bayesian optimization | `sample_fraction` of complete configurations | `max_search_cost_usd` | User decides |
+
+The default evaluation allowance for random, UCB, and Gittins is the full finite
+grid; Bayesian optimization uses a fraction of `0.25` (at least two configurations when
+available). Random baselines report spending but use evaluation counts and user
+stopping, rather than a dollar cap.
+
+Single-objective Gittins sets `stop_recommended=True` when its index rule favors
+stopping. By default it continues evaluating until the user stops, a budget is
+reached, or the dataset is complete. Set `stop_on_recommendation=True` to end the
+run automatically on that advice. Its search-cost coefficient stays fixed in
+either case.
 
 Use `on_update` to display the latest recommendation and a shared event to let a
 user stop the search:
@@ -361,6 +380,8 @@ stop = Event()  # a UI Stop button or another thread can call stop.set()
 def show_progress(snapshot):
     print(snapshot.total_evaluations, snapshot.selection_cost,
           snapshot.get_best_combo())
+    if snapshot.stop_recommended and not snapshot.is_final:
+        print("Gittins recommends stopping; you can stop now or keep evaluating.")
 
 results = selector.select_best(on_update=show_progress, stop_event=stop)
 ```

@@ -231,7 +231,8 @@ def test_cached_workflow_cost_is_separate_from_new_search_charges():
 def test_single_natural_stop_is_reached_without_evaluating_all_arms():
     selector, _ = make_selector(mode="single", count=6,
                                outcomes={"cheap": 1.0, "middle": 0.0},
-                               score_noise_variance=1e-8, prior_variance=1e-8)
+                               score_noise_variance=1e-8, prior_variance=1e-8,
+                               stop_on_recommendation=True)
     result = selector.select_best()
     assert result.stop_reason == "gittins_stop"
     assert result.total_evaluations < 12

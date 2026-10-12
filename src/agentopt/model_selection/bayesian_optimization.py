@@ -30,7 +30,12 @@ def _require_botorch() -> None:
 
 
 class BayesianOptimizationModelSelector(BaseModelSelector):
-    """Select models via Bayesian optimization."""
+    """Select models via Bayesian optimization.
+
+    ``max_search_cost_usd`` optionally caps observed search spending. Each
+    configuration is evaluated in full; a scheduled configuration or parallel
+    acquisition batch finishes before the cap is checked again.
+    """
 
     def __init__(
         self,
@@ -44,6 +49,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         tracker=None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
+        max_search_cost_usd: Optional[float] = None,
     ) -> None:
         _require_botorch()
         super().__init__(
@@ -55,6 +61,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             tracker=tracker,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
+            max_search_cost_usd=max_search_cost_usd,
         )
         self.batch_size = max(1, int(batch_size))
         if not 0 < float(sample_fraction) <= 1:
@@ -361,7 +368,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         initial_pool = list(all_index_combos)
         random.shuffle(initial_pool)
         for idx in range(min(n_initial_random, len(initial_pool))):
-            if self._should_stop():
+            if self._search_budget_stop():
                 break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
@@ -385,7 +392,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
         # 2) Bayesian optimization loop
         for it in range(n_iterations):
-            if self._should_stop():
+            if self._search_budget_stop():
                 break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
@@ -435,7 +442,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 batch = batch[:remaining]
 
             for j, combo in enumerate(batch, 1):
-                if self._should_stop():
+                if self._search_budget_stop():
                     break
                 evaluated.add(combo)
                 self._bo_eval_single(
@@ -452,7 +459,11 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 )
                 self._publish_update(self._bo_finalize(all_results))
 
-        return self._bo_finalize(all_results)
+        result = self._bo_finalize(all_results)
+        result.stop_reason = self._search_budget_stop() or (
+            "all_arms_completed" if len(evaluated) == total_combos else "question_budget"
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Async path
@@ -542,7 +553,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         initial_pool = list(all_index_combos)
         random.shuffle(initial_pool)
         for idx in range(min(n_initial_random, len(initial_pool))):
-            if self._should_stop():
+            if self._search_budget_stop():
                 break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
@@ -573,7 +584,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
         # 2) Bayesian optimization loop
         for it in range(n_iterations):
-            if self._should_stop():
+            if self._search_budget_stop():
                 break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
@@ -618,7 +629,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     break
                 batch = batch[:remaining]
 
-            if self._should_stop():
+            if self._search_budget_stop():
                 break
             for combo in batch:
                 evaluated.add(combo)
@@ -665,4 +676,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 print(f"  [BO {it+1}/{n_iterations} | {j}/{len(batch)}] {result}")
             self._publish_update(self._bo_finalize(all_results))
 
-        return self._bo_finalize(all_results)
+        result = self._bo_finalize(all_results)
+        result.stop_reason = self._search_budget_stop() or (
+            "all_arms_completed" if len(evaluated) == total_combos else "question_budget"
+        )
+        return result

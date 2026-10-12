@@ -8,7 +8,7 @@ from uuid import uuid4
 import numpy as np
 
 from .base import BaseModelSelector
-from .gittins import GittinsModelSelector, GittinsRecommendation, GittinsSelectionResults, _integer, _positive
+from .gittins import GittinsModelSelector, GittinsRecommendation, GittinsSelectionResults, _integer
 from .gittins_statistics import raw_pareto_front_indices
 
 
@@ -32,16 +32,16 @@ class RandomSearchModelSelector(GittinsModelSelector):
     configuration. Question sampling evaluates every configuration on each
     chosen shared random question. Both sample without replacement.
 
-    Cell caps fund whole units. A dollar cap is checked after each individual
-    evaluation and may overshoot by that evaluation's charge. If interrupted,
-    a partial unit is excluded from the empirical recommendations. All
-    evaluations require tracked, priced token usage, as with Gittins.
+    Evaluation caps fund whole units. Users can stop at any time; an
+    interrupted partial unit is excluded from empirical recommendations.
+    All evaluations require tracked, priced token usage to report search
+    spending and deployment costs.
     """
 
     def __init__(self, agent=None, models=None, eval_fn=None, dataset=None, *,
                  objective_mode="single", sampling="configurations", seed=42,
                  observation_budget_fraction=1.0, max_total_question_evaluations=None,
-                 max_search_cost_usd=None, score_bounds=(0.0, 1.0),
+                 score_bounds=(0.0, 1.0),
                  model_prices=None, tracker=None, lambda_cost=0.0, lambda_latency=0.0):
         if objective_mode not in ("single", "multi"):
             raise ValueError("objective_mode must be 'single' or 'multi'")
@@ -72,7 +72,8 @@ class RandomSearchModelSelector(GittinsModelSelector):
         self.objective_mode, self.sampling = objective_mode, sampling
         self.seed = _integer(seed, "seed", 0)
         self.score_bounds = (low, high)
-        self.max_spend = None if max_search_cost_usd is None else _positive(max_search_cost_usd, "max_search_cost_usd")
+        # Shared observation helpers report spending without a dollar cap.
+        self.max_spend = None
         # Reuse the tracked observation path, but not Gittins' warm-start or DP.
         BaseModelSelector.__init__(self, agent=agent, models=models, eval_fn=eval_fn,
                                    dataset=dataset, model_prices=model_prices, tracker=tracker,
@@ -106,8 +107,8 @@ class RandomSearchModelSelector(GittinsModelSelector):
             else:
                 cells = [(arm, int(unit)) for arm in range(n_arms)]
             # Bound the next scheduled batch so user stops also take effect
-            # within a configuration. Dollar-capped runs check every cell.
-            chunk_size = max_concurrent if parallel and self.max_spend is None and self.sampling == "configurations" else 1
+            # within a configuration.
+            chunk_size = max_concurrent if parallel and self.sampling == "configurations" else 1
             for offset in range(0, len(cells), chunk_size):
                 chunk = cells[offset:offset + chunk_size]
                 reason = self._budget_stop(len(chunk))
@@ -180,5 +181,5 @@ class RandomSearchModelSelector(GittinsModelSelector):
             results=records, recommendations=recommendations, objective_mode=self.objective_mode,
             stop_reason=reason, sampling=self.sampling, completed_units=completed_units,
             total_evaluations=self._evaluations,
-            search_cost_overshoot_usd=max(0.0, self._spent-self.max_spend) if self.max_spend is not None else 0.0,
+            search_cost_overshoot_usd=0.0,
         )

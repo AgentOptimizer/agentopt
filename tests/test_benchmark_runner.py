@@ -95,6 +95,9 @@ def test_terminal_sigint_saves_real_partial_run(monkeypatch, tmp_path, capsys, m
     assert "Reason: You requested a stop." in displayed
     if has_recommendation:
         assert "Current recommendation" in displayed
+        for candidate in final.get_recommendations():
+            assert f"score={candidate.conservative_accuracy:.4f}" in displayed
+            assert f"cost=${candidate.conservative_cost_usd:.6f}" in displayed
 
 
 @pytest.mark.parametrize("flags", [

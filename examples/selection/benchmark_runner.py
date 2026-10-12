@@ -157,7 +157,19 @@ def show_progress(snapshot):
             print("No recommendation available yet.", flush=True)
     else:
         best = snapshot.get_best_combo()
-        print(f"Current recommendation: {best}" if best else "No recommendation available yet.", flush=True)
+        if best is None:
+            print("No recommendation available yet.", flush=True)
+        elif hasattr(snapshot, "get_recommendations"):
+            candidate = next(r for r in snapshot.get_recommendations() if r.combo == best)
+            print("Current recommendation (conservative score and USD/question):", flush=True)
+            print(f"  {best} | score={candidate.conservative_accuracy:.4f} | "
+                  f"cost=${candidate.conservative_cost_usd:.6f}", flush=True)
+        else:
+            candidate = snapshot.get_best()
+            price = candidate.price
+            cost_text = "unavailable" if price is None else f"${price:.6f}"
+            print("Current recommendation (observed score and USD/question):", flush=True)
+            print(f"  {best} | score={candidate.accuracy:.4f} | cost={cost_text}", flush=True)
     if snapshot.stop_recommended and not snapshot.is_final:
         print("Stopping advice: Gittins suggests that further evaluation may not be worth its cost.", flush=True)
         print("The search can continue unless automatic stopping is enabled or a stop is requested.", flush=True)

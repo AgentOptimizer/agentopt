@@ -75,6 +75,23 @@ models = {
 }
 
 
+STOP_REASON_MESSAGES = {
+    "user_stopped": "You requested a stop.",
+    "question_budget": "The remaining evaluation allowance cannot cover the next batch.",
+    "search_cost_budget": "The search cost limit was reached, or the next batch would exceed it.",
+    "warm_start_budget": "The budget was reached during initial sampling; recommendations may not be available.",
+    "gittins_stop": "The search ended on Gittins stopping advice.",
+    "all_arms_completed": "All configurations have been evaluated on every test question.",
+    "direction_eta_numerical_floor": "The multi-objective search reached its numerical stopping limit.",
+    "evaluation_failed": "The evaluation batch produced no usable results.",
+    "completed": "The search completed.",
+}
+
+
+def stop_reason_message(reason):
+    return STOP_REASON_MESSAGES.get(reason, (reason or "The search ended.").replace("_", " "))
+
+
 def run_selection(method="auto", objective_mode="single", max_search_cost_usd=None,
                   cost_scaling_factor=1e-4, evaluation_fraction=0.5,
                   stop_on_recommendation=False):
@@ -101,16 +118,37 @@ def run_selection(method="auto", objective_mode="single", max_search_cost_usd=No
         method=method, objective_mode=objective_mode, **options,
     )
 
+    print("Each evaluation runs one model configuration on one test question and scores its output.")
+    if max_search_cost_usd is not None:
+        print(f"Search cost limit: ${max_search_cost_usd:.2f} (soft limit; scheduled work may exceed it).")
+    else:
+        print("Search cost limit: not set.")
+
     def show_progress(snapshot):
-        if snapshot.stop_recommended and not snapshot.is_final:
-            print("Gittins recommends stopping; you can stop now or keep evaluating.")
-        print(f"Evaluations: {snapshot.total_evaluations}; "
-              f"search cost: {snapshot.selection_cost}; final: {snapshot.is_final}")
+        status = ("Finished" if snapshot.is_final else
+                  "Collecting initial samples" if snapshot.stop_reason == "warming_up" else "Searching")
+        cost = "Unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.6f}"
+        print(f"\nStatus: {status}")
+        print(f"Completed evaluations: {snapshot.total_evaluations}")
+        print(f"Search spending: {cost}")
         if objective_mode == "single":
-            print("Current recommendation:", snapshot.get_best_combo())
+            best = snapshot.get_best_combo()
+            print(f"Current recommendation: {best}" if best else "No recommendation available yet.")
         else:
             candidates = snapshot.get_recommendations()
-            print("Current recommendations:", [candidate.combo for candidate in candidates])
+            if candidates:
+                print("Current recommendations:")
+                for candidate in candidates:
+                    print(f"  {candidate.combo}")
+            else:
+                print("No recommendation available yet.")
+        if snapshot.stop_recommended and not snapshot.is_final:
+            print("Stopping advice: Gittins suggests that further evaluation may not be worth its cost.")
+            print("The search can continue unless automatic stopping is enabled or a stop is requested.")
+        if snapshot.is_final:
+            print(f"Reason: {stop_reason_message(snapshot.stop_reason)}")
+            if snapshot.search_cost_overshoot_usd > 0:
+                print(f"Search cost limit exceeded by: ${snapshot.search_cost_overshoot_usd:.6f}")
         # A UI may call selector.request_stop(), or this callback may return False.
 
     return selector.select_best(parallel=True, max_concurrent=4,
@@ -148,11 +186,9 @@ if __name__ == "__main__":
                             args.stop_on_recommendation)
     results.print_summary()
     if args.objective_mode == "single":
-        print("Best combination:", results.get_best_combo())
+        print("Recommended configuration:", results.get_best_combo() or "No recommendation available.")
     else:
         for candidate in results.get_recommendations():
             print(candidate.combo, candidate.conservative_accuracy, candidate.conservative_cost_usd)
         chosen = results.choose(max_cost_usd=0.01)
         print("Deployment choice at $0.01/question:", chosen.combo if chosen else None)
-    if hasattr(results, "stop_reason"):
-        print(f"Stopped: {results.stop_reason}; search cost: ${results.selection_cost:.6f}")

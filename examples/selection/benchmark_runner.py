@@ -122,9 +122,30 @@ def selector_options(args):
     return options
 
 
+STOP_REASON_MESSAGES = {
+    "user_stopped": "You requested a stop.",
+    "question_budget": "The remaining evaluation allowance cannot cover the next batch.",
+    "search_cost_budget": "The search cost limit was reached, or the next batch would exceed it.",
+    "warm_start_budget": "The budget was reached during initial sampling; recommendations may not be available.",
+    "gittins_stop": "The search ended on Gittins stopping advice.",
+    "all_arms_completed": "All configurations have been evaluated on every test question.",
+    "direction_eta_numerical_floor": "The multi-objective search reached its numerical stopping limit.",
+    "evaluation_failed": "The evaluation batch produced no usable results.",
+    "completed": "The search completed.",
+}
+
+
+def stop_reason_message(reason):
+    return STOP_REASON_MESSAGES.get(reason, (reason or "The search ended.").replace("_", " "))
+
+
 def show_progress(snapshot):
     cost = "unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.6f}"
-    print(f"Evaluations: {snapshot.total_evaluations} | Search cost: {cost} | {snapshot.stop_reason}", flush=True)
+    status = ("Finished" if snapshot.is_final else
+              "Collecting initial samples" if snapshot.stop_reason == "warming_up" else "Searching")
+    print(f"\nStatus: {status}", flush=True)
+    print(f"Completed evaluations: {snapshot.total_evaluations}", flush=True)
+    print(f"Search spending: {cost}", flush=True)
     if getattr(snapshot, "objective_mode", "single") == "multi":
         recommendations = snapshot.get_recommendations()
         if recommendations:
@@ -137,10 +158,13 @@ def show_progress(snapshot):
     else:
         best = snapshot.get_best_combo()
         print(f"Current recommendation: {best}" if best else "No recommendation available yet.", flush=True)
-    if snapshot.stop_recommended:
-        print("Gittins stopping advice: further evaluation is not recommended by the current model.", flush=True)
+    if snapshot.stop_recommended and not snapshot.is_final:
+        print("Stopping advice: Gittins suggests that further evaluation may not be worth its cost.", flush=True)
+        print("The search can continue unless automatic stopping is enabled or a stop is requested.", flush=True)
     if snapshot.is_final:
-        print(f"Finished: {snapshot.stop_reason}", flush=True)
+        print(f"Reason: {stop_reason_message(snapshot.stop_reason)}", flush=True)
+        if snapshot.search_cost_overshoot_usd > 0:
+            print(f"Search cost limit exceeded by: ${snapshot.search_cost_overshoot_usd:.6f}", flush=True)
 
 
 def run_selection(selector, *, max_concurrent, output):
@@ -153,6 +177,7 @@ def run_selection(selector, *, max_concurrent, output):
 
     previous_handler = signal.signal(signal.SIGINT, request_stop)
     try:
+        print("Each evaluation runs one model configuration on one test question and scores its output.", flush=True)
         print("Press Ctrl+C to stop after the scheduled batch; its completed results will be saved.", flush=True)
         results = selector.select_best(
             parallel=True, max_concurrent=max_concurrent,
@@ -185,6 +210,10 @@ def main(argv=None):
         agent=AnswerAgent, models={"answer": args.models}, eval_fn=eval_fn,
         dataset=dataset, method=args.method, objective_mode=args.objective_mode, **options,
     )
+    if args.max_search_cost_usd is not None:
+        print(f"Search cost limit: ${args.max_search_cost_usd:.2f} (soft limit; scheduled work may exceed it).", flush=True)
+    else:
+        print("Search cost limit: not set.", flush=True)
     return run_selection(selector, max_concurrent=args.max_concurrent, output=args.output)
 
 

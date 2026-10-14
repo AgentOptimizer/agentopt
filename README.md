@@ -38,7 +38,7 @@ On top of that one primitive, AgentOpt gives you three capabilities that share t
 - **Routing** — swap models *per call* at runtime based on prompt, history, or any policy you write.
 - **Tracking** — just record token usage, latency, and per-query cost across an agent run.
 
-The combinatorial search problem is real: 3 steps × 8 models = **512 combinations** to evaluate. AgentOpt's selection algorithms (arm elimination, LUCB, Bayesian) home in on the best combination with a fraction of the brute-force cost, and the routing API lets you keep refining at runtime once you've shipped.
+The combinatorial search problem is real: 3 steps × 8 models = **512 combinations** to evaluate. AgentOpt uses Gittins selection by default to allocate evaluation effort using estimated quality, uncertainty, and evaluation cost, and the routing API lets you keep refining at runtime once you've shipped.
 
 ## Use Cases
 
@@ -126,7 +126,7 @@ selector = ModelSelector(
     },                                  # → 3 × 3 = 9 combinations
     eval_fn=eval_fn,
     dataset=dataset,
-    method="auto",                      # arm_elimination — smart + cheap
+    method="auto",                      # Gittins; single objective by default
 )
 results = selector.select_best(parallel=True, max_concurrent=50)
 results.print_summary()
@@ -144,7 +144,7 @@ Output:
     ...
 ```
 
-With `method="auto"` AgentOpt eliminates clearly worse combinations after a few datapoints; LLM-as-judge is supported — just call your judge LLM inside `eval_fn`.
+With `method="auto"`, AgentOpt uses Gittins selection to decide which combination to evaluate next and recommend when further evaluation is no longer worth its cost. LLM-as-judge is supported — call your judge LLM inside `eval_fn`; tracked judge calls count toward search spending.
 
 ### 2. Subprocess agent + offline model selection
 
@@ -172,7 +172,7 @@ selector = ModelSelector(
     models={"agent": ["gemini-2.5-flash", "gemini-2.5-pro"]},
     eval_fn=eval_fn,
     dataset=dataset,
-    method="brute_force",
+    method="auto",
 )
 selector.select_best(parallel=False).print_summary()
 ```
@@ -286,23 +286,123 @@ Working examples for the frameworks and CLI agents named above. Examples are org
 
 ## Selection Algorithms
 
-AgentOpt includes a rich set of selection algorithms. Advanced users may get significant speedups by choosing the right method for their use case. See the [documentation](https://agentoptimizer.github.io/agentopt/) and [advanced_algorithms.py](examples/selection/local/advanced_algorithms.py) for details.
+`method="auto"` uses **Gittins**, included in the standard installation.
+Choose the output with `objective_mode`: `"single"` (default) returns one
+combination; `"multi"` returns accuracy/cost tradeoffs for an explicit deployment
+choice. `auto` does not infer the objective from the dataset or budget.
 
-| `method=` | Best for | How it works |
-|-----------|----------|-------------|
-| `"auto"` (default) | General use | Automatically finds the best combination (wired to `arm_elimination` — strong best-arm identification with lower search cost than `brute_force`) |
-| `"brute_force"` | Small search spaces | Evaluates all combinations |
-| `"arm_elimination"` | Best-arm identification | Bandit; eliminates statistically dominated combinations |
-| `"matrix_ucb"` / `"matrix_ucb_lrf"` | Large combo × datapoint grids | UCB exploration over the evaluation matrix |
-| `"bayesian"` | Expensive evaluations | GP-based Bayesian optimization over categorical model choices; uses correlation between combinations (requires `pip install "agentopt-py[bayesian]"`) |
+| `method=` | Single objective | Multiple objectives |
+|---|---|---|
+| `"auto"` / `"gittins"` | Gittins winner using a finite-dataset posterior | Two-axis Gittins accuracy/cost recommendation set |
+| `"random"` | Evaluate randomly ordered configurations | — |
+| `"ucb"` | UCB exploration over configurations and questions | — |
+| `"bayesian"` | Gaussian-process optimization; requires `pip install "agentopt-py[bayesian]"` | — |
+| `"random_configurations"` | Evaluate randomly ordered configurations | Evaluate randomly ordered configurations |
+| `"random_questions"` | Evaluate every configuration on shared randomly ordered questions | Evaluate every configuration on shared randomly ordered questions |
 
 ```python
 selector = ModelSelector(
     agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
-    method="auto",
+    method="auto", objective_mode="single",
+    cost_scaling_factor=1e-4,  # search penalty per USD of evaluation cost
+    max_search_cost_usd=10.0,
 )
 results = selector.select_best(parallel=True)
+print(results.get_best_combo())
 ```
+
+`cost_scaling_factor` controls whether an additional evaluation is worth its
+cost. It does not penalize the deployed model's score. The optional
+`lambda_cost` and `lambda_latency` parameters express that separate deployment
+tradeoff; both default to zero.
+
+For several accuracy/cost alternatives:
+
+```python
+selector = ModelSelector(
+    agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+    method="auto", objective_mode="multi", max_search_cost_usd=10.0,
+)
+results = selector.select_best(parallel=True)
+for candidate in results.get_recommendations():
+    print(candidate.combo, candidate.conservative_accuracy, candidate.conservative_cost_usd)
+chosen = results.choose(max_cost_usd=0.01)  # deployment cost per question
+if chosen is not None:
+    print(chosen.combo)
+```
+
+Gittins starts with a small evaluation batch for every configuration. Its search
+budget counts new non-cached token charges, including that warm start. Predicted
+next-batch charges can underestimate actual spending; `search_cost_overshoot_usd`
+reports any excess. Multi-objective recommendations use Gaussian finite-dataset
+predictions and do not guarantee the complete true Pareto frontier. See the
+[selector guide](https://agentoptimizer.github.io/agentopt/api/selectors/)
+for budgets, stopping, and baseline semantics.
+
+### Live recommendations and stopping
+
+The [Run Your Benchmark guide](docs/getting-started/your-benchmark.md) walks through
+loading your examples, choosing settings, displaying recommendations, stopping,
+and saving results. For a complete terminal workflow, run
+[`benchmark_runner.py`](examples/selection/benchmark_runner.py) with your JSONL
+file; it prints live recommendations and saves the final result after Ctrl+C.
+
+Both random methods work in single and multi mode; `random` is the single-mode
+alias for `random_configurations`. Every method accepts a fraction of evaluations
+and lets the user stop while inspecting recommendations. Fractions count
+configuration–question evaluations, not distinct questions across the run:
+
+| Method | Fraction parameter | Optional search-dollar cap | Stopping advice |
+|---|---|---|---|
+| Gittins | `observation_budget_fraction` of all configuration–question pairs | `max_search_cost_usd` | Single mode reports `stop_recommended` |
+| Random configurations | `observation_budget_fraction`, spent on whole configurations | — | User decides |
+| Random questions | `observation_budget_fraction`, spent on shared question sweeps | — | User decides |
+| UCB | `observation_budget_fraction` of all configuration–question pairs | `max_search_cost_usd` | User decides |
+| Bayesian optimization | `sample_fraction` of complete configurations | `max_search_cost_usd` | User decides |
+
+The default evaluation allowance for random, UCB, and Gittins is the full finite
+grid; Bayesian optimization uses a fraction of `0.25` (at least two configurations when
+available). Random baselines report spending but use evaluation counts and user
+stopping, rather than a dollar cap.
+
+Single-objective Gittins sets `stop_recommended=True` when its index rule favors
+stopping. By default it continues evaluating until the user stops, a budget is
+reached, or the dataset is complete. Set `stop_on_recommendation=True` to end the
+run automatically on that advice. Its search-cost coefficient stays fixed in
+either case.
+
+Use `on_update` to display the latest recommendation and a shared event to let a
+user stop the search:
+
+```python
+from threading import Event
+
+selector = ModelSelector(
+    agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+    objective_mode="single",
+)
+stop = Event()  # a UI Stop button or another thread can call stop.set()
+
+def show_progress(snapshot):
+    print(snapshot.total_evaluations, snapshot.selection_cost,
+          snapshot.get_best_combo())
+    if snapshot.stop_recommended and not snapshot.is_final:
+        print("Gittins recommends stopping; you can stop now or keep evaluating.")
+
+results = selector.select_best(on_update=show_progress, stop_event=stop)
+```
+
+`selector.request_stop()` also requests a stop, and returning `False` from
+`on_update` has the same effect. `selector.latest_results` provides the latest
+snapshot. Stopping lets the currently scheduled batch finish and returns a final
+snapshot with `is_final=True` and `stop_reason="user_stopped"`. Gittins needs its
+warm start before recommending; random baselines recommend only from completed
+configurations or shared-question sweeps. Updates can therefore contain observed
+results without an eligible recommendation. See the
+[live selection guide](https://agentoptimizer.github.io/agentopt/api/selectors/#live-recommendations-and-user-stopping)
+for update timing and stopping limits. Stopping returns the observations collected
+so far; there is no pause/resume API for restoring search state. A new run can
+reuse cached responses, but starts selection again.
 
 ## How It Works
 
@@ -336,7 +436,7 @@ The mitmproxy CA is generated once and merged with `certifi`'s system CAs into a
 | **Caching** | Hash request body → look up SQLite/in-memory cache → short-circuit on hit | Replays of cached responses, with original latency preserved |
 | **Routing** | Run the active `Router.route(ctx)` to swap `body["model"]` before forwarding | Per-call model overrides |
 
-Selection orchestrates the same primitive: for each combination it instantiates `MyAgent(combo)`, runs `run()` over the dataset inside a tracking session, and ranks by aggregated accuracy / latency / cost. Smart algorithms (`auto` = arm-elimination by default) drop dominated combinations early so the cost scales sublinearly with the search space.
+Selection orchestrates the same primitive: for each combination it instantiates `MyAgent(combo)`, runs `run()` over the dataset inside a tracking session, and ranks by aggregated accuracy / latency / cost. The default Gittins algorithm allocates additional evaluations using their expected information value and cost; budget limits can stop the search before every configuration has been fully evaluated.
 
 ### Two backends, one API
 
@@ -361,11 +461,16 @@ For the full architecture — `_active_session_var` ContextVar attribution, per-
 
 ## Results API
 
+The example below applies to single-objective results with an eligible winner.
+Multi-objective results have no unique best configuration: use
+`get_recommendations()` and `choose(...)` as above; `get_best_combo()` returns `None`.
+
+
 ```python
 results = selector.select_best()
 
 results.print_summary()               # formatted table
-best = results.get_best()             # ModelResult with highest accuracy
+best = results.get_best()             # recommended ModelResult in single mode
 combo = results.get_best_combo()      # {"planner": "gpt-4o", "solver": "gpt-4o-mini"}
 results.to_csv("results.csv")         # export all results
 results.export_config("config.yaml")  # export best combo as YAML

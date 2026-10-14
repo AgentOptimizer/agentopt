@@ -19,7 +19,7 @@ Usage::
         models={"agent": ["anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-4-5"]},
         eval_fn=my_eval_fn,
         dataset=my_dataset,
-        method="brute_force",
+        method="auto",
     )
     results = selector.select_best(parallel=False)
 

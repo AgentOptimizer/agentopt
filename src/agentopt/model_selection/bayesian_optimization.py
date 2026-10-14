@@ -30,7 +30,12 @@ def _require_botorch() -> None:
 
 
 class BayesianOptimizationModelSelector(BaseModelSelector):
-    """Select models via Bayesian optimization."""
+    """Select models via Bayesian optimization.
+
+    ``max_search_cost_usd`` optionally caps observed search spending. Each
+    configuration is evaluated in full; a scheduled configuration or parallel
+    acquisition batch finishes before the cap is checked again.
+    """
 
     def __init__(
         self,
@@ -44,7 +49,9 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         tracker=None,
         lambda_cost: float = 0.0,
         lambda_latency: float = 0.0,
+        max_search_cost_usd: Optional[float] = None,
     ) -> None:
+        _require_botorch()
         super().__init__(
             agent=agent,
             models=models,
@@ -54,8 +61,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             tracker=tracker,
             lambda_cost=lambda_cost,
             lambda_latency=lambda_latency,
+            max_search_cost_usd=max_search_cost_usd,
         )
-        _require_botorch()
         self.batch_size = max(1, int(batch_size))
         if not 0 < float(sample_fraction) <= 1:
             raise ValueError("sample_fraction must be in the range (0, 1].")
@@ -193,8 +200,11 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         return [unseen[i] for i in topk]
 
     def _bo_finalize(self, all_results: List[ModelResult]) -> SelectionResults:
+        all_results = [result.model_copy(deep=True) for result in all_results]
+        for result in all_results:
+            result.is_best = False
         self._finalize_combined_objectives(all_results)
-        best_info = self._find_best(all_results)
+        best_info = self._find_best([r for r in all_results if len(r.datapoint_results) == len(self.dataset)])
         if best_info is not None:
             best_name, _ = best_info
             for result in all_results:
@@ -262,7 +272,6 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             accuracy, latency, input_tokens, output_tokens, dp_results = evaluate_fn(
                 combo
             )
-            X_list.append(list(combo))
             result = self._bo_record_result(
                 combo_name,
                 accuracy,
@@ -272,6 +281,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 dp_results,
                 all_results,
             )
+            if len(dp_results) != len(self.dataset):
+                logger.warning("[%s] incomplete configuration; excluding it from BO targets and recommendations", combo_name)
+                return False
+            X_list.append(list(combo))
             results_by_index[tuple(combo)] = result
             Y_list.append(self._bo_target_from_result(result))
             print(f"  {label}{result}")
@@ -355,6 +368,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         initial_pool = list(all_index_combos)
         random.shuffle(initial_pool)
         for idx in range(min(n_initial_random, len(initial_pool))):
+            if self._search_budget_stop():
+                break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
             combo = initial_pool[idx]
@@ -373,9 +388,12 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 results_by_index,
                 label="",
             )
+            self._publish_update(self._bo_finalize(all_results))
 
         # 2) Bayesian optimization loop
         for it in range(n_iterations):
+            if self._search_budget_stop():
+                break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
             if len(X_list) < 2:
@@ -398,6 +416,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     results_by_index,
                     label="",
                 )
+                self._publish_update(self._bo_finalize(all_results))
                 continue
 
             self._bo_refresh_targets(X_list, Y_list, results_by_index)
@@ -423,6 +442,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 batch = batch[:remaining]
 
             for j, combo in enumerate(batch, 1):
+                if self._search_budget_stop():
+                    break
                 evaluated.add(combo)
                 self._bo_eval_single(
                     combo,
@@ -436,8 +457,13 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     results_by_index,
                     label=f"[BO {it+1}/{n_iterations} | {j}/{len(batch)}] ",
                 )
+                self._publish_update(self._bo_finalize(all_results))
 
-        return self._bo_finalize(all_results)
+        result = self._bo_finalize(all_results)
+        result.stop_reason = self._search_budget_stop() or (
+            "all_arms_completed" if len(evaluated) == total_combos else "question_budget"
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Async path
@@ -498,7 +524,6 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 output_tokens,
                 dp_results,
             ) = await evaluate_combo(combo)
-            X_list.append(list(combo))
             result = self._bo_record_result(
                 combo_name,
                 accuracy,
@@ -508,6 +533,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 dp_results,
                 all_results,
             )
+            if len(dp_results) != len(self.dataset):
+                logger.warning("[%s] incomplete configuration; excluding it from BO targets and recommendations", combo_name)
+                return False
+            X_list.append(list(combo))
             results_by_index[tuple(combo)] = result
             Y_list.append(self._bo_target_from_result(result))
             print(f"  {label}{result}")
@@ -524,6 +553,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         initial_pool = list(all_index_combos)
         random.shuffle(initial_pool)
         for idx in range(min(n_initial_random, len(initial_pool))):
+            if self._search_budget_stop():
+                break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
             combo = initial_pool[idx]
@@ -549,9 +580,12 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                         is_best=False,
                     )
                 )
+            self._publish_update(self._bo_finalize(all_results))
 
         # 2) Bayesian optimization loop
         for it in range(n_iterations):
+            if self._search_budget_stop():
+                break
             if sample_budget is not None and len(evaluated) >= sample_budget:
                 break
             if len(X_list) < 2:
@@ -570,6 +604,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     await eval_and_record(combo, label="")
                 except Exception as e:
                     logger.warning("[random] [%s] failed: %s", combo_name, e)
+                self._publish_update(self._bo_finalize(all_results))
                 continue
 
             self._bo_refresh_targets(X_list, Y_list, results_by_index)
@@ -594,6 +629,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     break
                 batch = batch[:remaining]
 
+            if self._search_budget_stop():
+                break
             for combo in batch:
                 evaluated.add(combo)
 
@@ -621,7 +658,6 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     logger.warning("[BO] [%s] failed: %s", combo_name, res)
                     continue
                 accuracy, latency, input_tokens, output_tokens, dp_results = res
-                X_list.append(list(combo))
                 result = self._bo_record_result(
                     combo_name,
                     accuracy,
@@ -631,8 +667,17 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     dp_results,
                     all_results,
                 )
+                if len(dp_results) != len(self.dataset):
+                    logger.warning("[%s] incomplete configuration; excluding it from BO targets and recommendations", combo_name)
+                    continue
+                X_list.append(list(combo))
                 results_by_index[tuple(combo)] = result
                 Y_list.append(self._bo_target_from_result(result))
                 print(f"  [BO {it+1}/{n_iterations} | {j}/{len(batch)}] {result}")
+            self._publish_update(self._bo_finalize(all_results))
 
-        return self._bo_finalize(all_results)
+        result = self._bo_finalize(all_results)
+        result.stop_reason = self._search_budget_stop() or (
+            "all_arms_completed" if len(evaluated) == total_combos else "question_budget"
+        )
+        return result

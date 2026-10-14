@@ -1,77 +1,40 @@
 # Parallel Evaluation
 
-When you call `select_best(parallel=True)`, AgentOpt evaluates model combinations concurrently. The `max_concurrent` parameter controls the **total** number of in-flight API calls across all combinations and datapoints.
+`select_best(parallel=True, max_concurrent=20)` permits concurrent evaluations where the selected algorithm supports them. The limit controls concurrent agent evaluations; an agent can itself issue several LLM calls within one evaluation.
 
-## The Problem
-
-A naive approach would fire all combinations and all their datapoints at once. With 9 combinations and 100 datapoints each, that's 900 concurrent API calls — enough to hit rate limits and get throttled.
-
-## Two-Level Concurrency
-
-AgentOpt splits `max_concurrent` into two tiers:
-
-```mermaid
-graph TD
-    subgraph "max_concurrent = 20"
-        subgraph "Combo Semaphore (n_combo = 4)"
-            C1["Combo 1"] --> D1["dp 1..5"]
-            C2["Combo 2"] --> D2["dp 1..5"]
-            C3["Combo 3"] --> D3["dp 1..5"]
-            C4["Combo 4"] --> D4["dp 1..5"]
-        end
-        C5["Combo 5..N"] -.->|"waiting"| C1
-    end
-```
-
-| Tier | Controls | Semaphore |
-|:-----|:---------|:----------|
-| **Outer** (combo) | How many combos run simultaneously | `asyncio.Semaphore(n_combo)` |
-| **Inner** (datapoint) | How many datapoints run per combo | `asyncio.Semaphore(dp_concurrent)` |
-
-The invariant: **`n_combo * dp_concurrent <= max_concurrent`**.
-
-## How Slots Are Allocated
-
-The algorithm prioritizes **datapoint parallelism** — it's better to finish one combo quickly than to start many combos slowly:
-
-```
-dp_concurrent = min(max_concurrent, batch_size)
-n_combo       = max_concurrent // dp_concurrent
-```
-
-| `max_concurrent` | `batch_size` | `n_combo` | `dp_concurrent` | Behavior |
-|:-----------------|:-------------|:----------|:-----------------|:---------|
-| 20 | 5 | 4 | 5 | 4 combos, each with 5 dp in parallel |
-| 20 | 100 | 1 | 20 | 1 combo at a time, 20 dp in parallel |
-| 20 | 1 | 20 | 1 | 20 combos, 1 dp each (bandit algorithms) |
-| 10 | 10 | 1 | 10 | All slots to a single combo's datapoints |
-
-!!! info "Bandit algorithms"
-    Bandit-style selectors (Arm Elimination) often evaluate one datapoint at a time per round (`batch_size=1`). In this case, all `max_concurrent` slots go to running combos in parallel — which is exactly what you want for round-by-round elimination.
-
-## Per-Algorithm Behavior
-
-Each selector recomputes concurrency limits at the appropriate granularity:
-
-| Selector | When recomputed | Notes |
-|:---------|:----------------|:------|
-| **Brute Force** | Once | Full dataset, fixed batch size |
-| **Arm Elimination** | Per round | Batch size grows each round |
-| **Matrix UCB** | Per UCB step | Caps cells per step via `max_concurrent` |
-| **Bayesian Optimization** | Per BO batch | Recomputed for each acquisition batch |
-
-## Usage
+| Selector | Parallel behavior |
+|---|---|
+| Gittins | One configuration per adaptive visit, with at most `min(batch_size, max_concurrent)` questions in flight. Warm-start questions are sequential for dollar accounting. |
+| Random configurations | One configuration at a time; questions run in chunks of at most `max_concurrent` when `parallel=True`. |
+| Random questions | Sequential shared-question sweeps over all configurations. |
+| UCB | `max_concurrent` controls both acquisition batch size and evaluation concurrency. The `parallel` flag is ignored. |
+| Bayesian optimization | Splits slots between configurations in an acquisition batch and the questions for each configuration. |
 
 ```python
-# Default: 20 total concurrent API calls
-results = selector.select_best(parallel=True)
-
-# Increase for high rate limits
-results = selector.select_best(parallel=True, max_concurrent=50)
-
-# Conservative: avoid rate limits
-results = selector.select_best(parallel=True, max_concurrent=5)
+results = selector.select_best(parallel=True, max_concurrent=4)
 ```
 
-!!! tip "Choosing `max_concurrent`"
-    Start with the default (20). If you hit rate limits, lower it. If you have high rate limits (e.g., tier 4+ OpenAI), increase it. The two-level split ensures you won't accidentally fire `combos * datapoints` calls simultaneously regardless of the value.
+Gittins' statistical batch size is configured on the constructor (`batch_size`), independently of the concurrency limit. For single-objective Gittins, the DP still models one question per transition. A final dataset tail can contain fewer questions than the configured batch size.
+
+Gittins, UCB, and Bayesian optimization accept a soft dollar cap. Gittins checks estimated charges before adaptive batches, but actual charges can exceed the estimate. UCB checks spending between acquisition batches; Bayesian optimization checks between complete configurations or parallel acquisition batches. Already scheduled work finishes and can exceed the cap. Inspect `selection_cost` and `search_cost_overshoot_usd`. Smaller batches reduce the work between checks. Random baselines report costs without a dollar cap.
+
+## Progress and cooperative stopping
+
+`on_update` receives a result snapshot after completed work. Returning `False`,
+setting the supplied `stop_event`, or calling `selector.request_stop()` prevents
+a following batch from being scheduled. The currently scheduled batch finishes,
+including evaluations queued behind the concurrency limit; its results and
+charges belong to the final snapshot. Its `is_final` field is `True` and its reason is `user_stopped`.
+
+For Gittins, the response time depends on the adaptive batch size, not just the
+concurrency limit: a batch can contain more questions than can run at once.
+Random configuration sampling checks for stopping between question chunks;
+random question sampling checks between configuration evaluations. UCB checks
+after an acquisition batch. Bayesian optimization completes the currently
+scheduled configuration or parallel acquisition batch. Smaller batches allow
+more frequent user decisions, while larger batches permit more concurrent work.
+
+Use [live selection](../api/selectors.md#live-recommendations-and-user-stopping)
+for a callback and event example. Parallel execution does not change when a
+recommendation is eligible: incomplete random configurations or shared-question
+sweeps remain excluded even when some of their evaluations have finished.

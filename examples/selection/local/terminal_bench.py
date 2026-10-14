@@ -143,7 +143,7 @@ if __name__ == "__main__":
         models={"agent": ["openai/gpt-4o", "openai/gpt-4o-mini",],},
         eval_fn=eval_fn,
         dataset=dataset,
-        method="brute_force",
+        method="auto",
     )
 
     # Sequential execution: each tb run launches a Docker container.

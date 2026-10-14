@@ -7,7 +7,7 @@ Using AgentOpt with LlamaIndex LLM instances.
 
 ```python
 from llama_index.llms.openai import OpenAI as LlamaOpenAI
-from agentopt import BruteForceModelSelector
+from agentopt import ModelSelector
 
 class MyAgent:
     def __init__(self, models):
@@ -26,7 +26,7 @@ class MyAgent:
         ).text
         return answer
 
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini"],

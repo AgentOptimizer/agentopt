@@ -7,7 +7,7 @@ A two-step agent (planner + solver) using the OpenAI Python SDK directly.
 
 ```python
 from openai import OpenAI
-from agentopt import BruteForceModelSelector
+from agentopt import ModelSelector
 
 client = OpenAI()
 
@@ -48,7 +48,7 @@ dataset = [
     ("What is H2O commonly known as?", "water"),
 ]
 
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     agent=MyAgent,
     models={
         "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],

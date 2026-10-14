@@ -8,7 +8,7 @@ Using AgentOpt with LangChain's `ChatOpenAI` model instances.
 ```python
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from agentopt import BruteForceModelSelector
+from agentopt import ModelSelector
 
 class MyAgent:
     def __init__(self, models):
@@ -39,7 +39,7 @@ dataset = [
     ("What is 2 + 2?", "4"),
 ]
 
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     agent=MyAgent,
     models={
         "planner": [ChatOpenAI(model="gpt-4o"), ChatOpenAI(model="gpt-4o-mini")],

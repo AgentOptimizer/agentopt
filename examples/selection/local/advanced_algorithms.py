@@ -1,22 +1,7 @@
-"""
-Example: Advanced model selection algorithms.
+"""Compare Gittins and selection baselines with live OpenAI calls.
 
-The framework-specific examples (custom_agent_example.py, langchain_example.py, etc.)
-all use method="brute_force" for simplicity. This example demonstrates the other
-selection algorithms available via ModelSelector(method=...). The default
-method="auto" automatically finds the best combination (wired to arm_elimination —
-strong best-arm identification with lower search cost than brute_force).
-
-Prerequisites:
-    1. pip install openai agentopt-py
-    2. Set OPENAI_API_KEY environment variable (this script uses python-dotenv; install
-       it or use ``pip install \"agentopt-py[examples]\"``)
-    3. For Bayesian optimization: pip install "agentopt-py[bayesian]"
-    4. For matrix UCB-LRF: pip install "agentopt-py[ucb_lrf]"
-
-The matrix UCB demos use ``sample_fraction=0.1`` (~10% of the combination × datapoint
-grid), like ``bayesian``. Matrix UCB-LRF also accepts ``warmup_fraction``
-(alias for ``warmup_percentage``). Use ``1.0`` for a full grid; tune ``max_concurrent`` for step size.
+Install openai, python-dotenv and agentopt-py, and set OPENAI_API_KEY.
+Bayesian optimization additionally needs agentopt-py[bayesian].
 """
 
 from dotenv import load_dotenv
@@ -90,115 +75,136 @@ models = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Selection algorithms
-# ---------------------------------------------------------------------------
-
-
-def run_auto():
-    """method="auto" — automatically finds the best combination (default; wired to arm_elimination — strong best-arm identification, cheaper than brute_force)."""
-    selector = ModelSelector(
-        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset, method="auto",
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_arm_elimination():
-    """method="arm_elimination" — eliminates statistically dominated combinations early."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="arm_elimination",
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_bayesian():
-    """method="bayesian" — GP-based Bayesian optimization (requires agentopt[bayesian])."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="bayesian",
-        batch_size=4,
-        sample_fraction=0.25,  # evaluate 25% of all combinations
-    )
-    return selector.select_best(parallel=True)
-
-
-def run_matrix_ucb():
-    """method="matrix_ucb" — UCB exploration over the combination × datapoint matrix."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="matrix_ucb",
-        a=1.0,
-        sample_fraction=0.1,
-    )
-    return selector.select_best(max_concurrent=4)
-
-
-def run_matrix_ucb_lrf():
-    """method="matrix_ucb_lrf" — matrix UCB with low-rank ensemble (requires agentopt[ucb_lrf])."""
-    selector = ModelSelector(
-        agent=MyAgent,
-        models=models,
-        eval_fn=eval_fn,
-        dataset=dataset,
-        method="matrix_ucb_lrf",
-        rank=1,
-        ensemble_size=16,
-        iterations=5,
-        eta=5.0,
-        warmup_fraction=0.05,
-        sample_fraction=0.1,
-    )
-    # Unlike matrix_ucb (which always uses async eval), LRF still uses parallel=True
-    # for concurrent cell evaluation; sequential path is sync-only.
-    return selector.select_best(parallel=True, max_concurrent=4)
-
-
-# ---------------------------------------------------------------------------
-# Main — pick which algorithm to demo
-# ---------------------------------------------------------------------------
-
-METHODS = {
-    "auto": run_auto,
-    "arm_elimination": run_arm_elimination,
-    "bayesian": run_bayesian,
-    "matrix_ucb": run_matrix_ucb,
-    "matrix_ucb_lrf": run_matrix_ucb_lrf,
+STOP_REASON_MESSAGES = {
+    "user_stopped": "You requested a stop.",
+    "question_budget": "The remaining evaluation allowance cannot cover the next batch.",
+    "search_cost_budget": "The search cost limit was reached, or the next batch would exceed it.",
+    "warm_start_budget": "The budget was reached during initial sampling; recommendations may not be available.",
+    "gittins_stop": "The search ended on Gittins stopping advice.",
+    "all_arms_completed": "All configurations have been evaluated on every test question.",
+    "direction_eta_numerical_floor": "The multi-objective search reached its numerical stopping limit.",
+    "evaluation_failed": "The evaluation batch produced no usable results.",
+    "completed": "The search completed.",
 }
+
+
+def stop_reason_message(reason):
+    return STOP_REASON_MESSAGES.get(reason, (reason or "The search ended.").replace("_", " "))
+
+
+def run_selection(method="auto", objective_mode="single", max_search_cost_usd=None,
+                  cost_scaling_factor=1e-4, evaluation_fraction=0.5,
+                  stop_on_recommendation=False):
+    options = {}
+    if method in ("auto", "gittins"):
+        options.update(warm_start_batch_size=2, batch_size=2,
+                       observation_budget_fraction=evaluation_fraction,
+                       max_search_cost_usd=max_search_cost_usd)
+        if objective_mode == "single":
+            options.update(cost_scaling_factor=cost_scaling_factor,
+                           stop_on_recommendation=stop_on_recommendation)
+    elif method in ("random", "random_configurations", "random_questions"):
+        if max_search_cost_usd is not None:
+            raise ValueError("Random baselines use an evaluation fraction or user stop, not a dollar cap")
+        options.update(observation_budget_fraction=evaluation_fraction, seed=42)
+    elif method == "ucb":
+        options.update(a=1.0, observation_budget_fraction=evaluation_fraction,
+                       max_search_cost_usd=max_search_cost_usd, seed=42)
+    elif method == "bayesian":
+        options.update(batch_size=1, sample_fraction=evaluation_fraction,
+                       max_search_cost_usd=max_search_cost_usd)
+    selector = ModelSelector(
+        agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+        method=method, objective_mode=objective_mode, **options,
+    )
+
+    print("Each evaluation runs one model configuration on one test question and scores its output.")
+    if max_search_cost_usd is not None:
+        print(f"Search cost limit: ${max_search_cost_usd:.2f} (soft limit; scheduled work may exceed it).")
+    else:
+        print("Search cost limit: not set.")
+
+    def show_progress(snapshot):
+        status = ("Finished" if snapshot.is_final else
+                  "Collecting initial samples" if snapshot.stop_reason == "warming_up" else "Searching")
+        cost = "Unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.6f}"
+        print(f"\nStatus: {status}")
+        print(f"Completed evaluations: {snapshot.total_evaluations}")
+        print(f"Search cost: {cost}")
+        if objective_mode == "single":
+            best = snapshot.get_best_combo()
+            if best is None:
+                print("No recommendation available yet.")
+            elif hasattr(snapshot, "get_recommendations"):
+                candidate = next(r for r in snapshot.get_recommendations() if r.combo == best)
+                print("Current recommendation (conservative score and USD/question):")
+                print(f"  {best} | score={candidate.conservative_accuracy:.4f} | "
+                      f"cost=${candidate.conservative_cost_usd:.6f} | "
+                      f"evaluated={candidate.observed_samples}/{len(dataset)}")
+            else:
+                candidate = snapshot.get_best()
+                price = candidate.price
+                cost_text = "unavailable" if price is None else f"${price:.6f}"
+                print("Current recommendation (observed score and USD/question):")
+                print(f"  {best} | score={candidate.accuracy:.4f} | cost={cost_text} | "
+                      f"evaluated={len(candidate.datapoint_results)}/{len(dataset)}")
+        else:
+            candidates = snapshot.get_recommendations()
+            if candidates:
+                print("Current recommendations (conservative score and USD/question):")
+                for candidate in candidates:
+                    print(f"  {candidate.combo} | score={candidate.conservative_accuracy:.4f} | "
+                          f"cost=${candidate.conservative_cost_usd:.6f} | "
+                          f"evaluated={candidate.observed_samples}/{len(dataset)}")
+            else:
+                print("No recommendation available yet.")
+        if snapshot.stop_recommended and not snapshot.is_final:
+            print("Stopping advice: Gittins suggests that further evaluation may not be worth its cost.")
+            print("The search can continue unless automatic stopping is enabled or a stop is requested.")
+        if snapshot.is_final:
+            print(f"Reason: {stop_reason_message(snapshot.stop_reason)}")
+            if snapshot.search_cost_overshoot_usd > 0:
+                print(f"Search cost limit exceeded by: ${snapshot.search_cost_overshoot_usd:.6f}")
+        # A UI may call selector.request_stop(), or this callback may return False.
+
+    return selector.select_best(parallel=True, max_concurrent=4,
+                                on_update=show_progress)
+
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Demo advanced model selection algorithms",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Available methods:
-  auto              Automatically finds the best combination (wired to arm_elimination; lower search cost than brute_force) (default)
-  arm_elimination   Eliminate statistically dominated combinations early
-  bayesian          GP-based Bayesian optimization (requires agentopt[bayesian])
-  matrix_ucb        UCB on the combination × datapoint matrix (demo: 10%% budget)
-  matrix_ucb_lrf    Same with low-rank uncertainty (requires agentopt[ucb_lrf])
-""",
-    )
-    parser.add_argument("--method", choices=METHODS, default="auto")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--method", choices=("auto", "gittins", "random", "ucb", "bayesian",
+                                             "random_configurations", "random_questions"), default="auto")
+    parser.add_argument("--objective-mode", choices=("single", "multi"), default="single")
+    parser.add_argument("--max-search-cost-usd", type=float,
+                        help="Optional soft cap on new evaluation charges, for Gittins, UCB, or Bayesian optimization")
+    parser.add_argument("--cost-scaling-factor", type=float, default=1e-4,
+                        help="Single Gittins search-cost coefficient in score units per USD")
+    parser.add_argument("--evaluation-fraction", type=float, default=0.5,
+                        help="Fraction of configuration-question cells; for Bayesian, fraction of full configurations")
+    parser.add_argument("--stop-on-recommendation", action="store_true",
+                        help="End single-objective Gittins automatically on its stopping advice")
     args = parser.parse_args()
-
-    print(f"Running method: {args.method}")
-    print("-" * 60)
-
-    results = METHODS[args.method]()
+    supported = {"single": {"auto", "gittins", "random", "random_configurations", "random_questions", "ucb", "bayesian"},
+                 "multi": {"auto", "gittins", "random_configurations", "random_questions"}}
+    if args.method not in supported[args.objective_mode]:
+        parser.error(f"{args.method} does not support {args.objective_mode} mode")
+    if args.method in ("random", "random_configurations", "random_questions") and args.max_search_cost_usd is not None:
+        parser.error("Random baselines use an evaluation fraction or user stop, not a dollar cap")
+    if args.stop_on_recommendation and (args.method not in ("auto", "gittins") or args.objective_mode != "single"):
+        parser.error("--stop-on-recommendation applies only to single-objective Gittins")
+    if not 0 < args.evaluation_fraction <= 1:
+        parser.error("--evaluation-fraction must be in (0, 1]")
+    results = run_selection(args.method, args.objective_mode, args.max_search_cost_usd,
+                            args.cost_scaling_factor, args.evaluation_fraction,
+                            args.stop_on_recommendation)
     results.print_summary()
-
-    best = results.get_best_combo()
-    if best:
-        print(f"\nBest combination: {best}")
+    if args.objective_mode == "single":
+        print("Recommended configuration:", results.get_best_combo() or "No recommendation available.")
+    else:
+        for candidate in results.get_recommendations():
+            print(candidate.combo, candidate.conservative_accuracy, candidate.conservative_cost_usd)
+        chosen = results.choose(max_cost_usd=0.01)
+        print("Deployment choice at $0.01/question:", chosen.combo if chosen else None)

@@ -15,34 +15,37 @@ graph LR
 
 | Property | Detail |
 |:---------|:-------|
-| **Cache key** | SHA-256 of the request body (model + messages + params), excluding `stream` |
+| **Cache key** | SHA-256 of the request path and body (model + messages + params), excluding `stream` |
 | **In-memory** | Thread-safe dict — always active when caching is on |
 | **On disk** | Optional SQLite database (`cache.db`), flushed every 10 seconds by a background thread |
 
-Cached responses include the original latency measurement, so cost and latency comparisons remain fair.
+Cached responses retain their original token usage and latency measurement.
+Selection results use these to estimate deployment cost and latency, while
+`selection_cost` excludes cache hits because they incur no new provider charge.
 
 ## Why It Matters
 
 During model selection, many LLM calls are identical:
 
 !!! example "Shared model calls"
-    If two combinations use the same planner model, the planner call for each datapoint is identical. With 9 combinations and 3 distinct planners, you pay for **3** unique planner calls per datapoint — not 9.
+    If two configurations produce the same planner request, the second can reuse the first response once it is cached. Matching depends on the request path and body, including the model, messages, and parameters. Concurrent cache misses can still make separate provider calls.
 
-!!! example "Re-runs are free"
-    Tweak your eval function and re-run? Every LLM call hits the cache. Zero API cost, instant results.
+!!! example "Re-running a benchmark"
+    A new run can reuse matching requests from an earlier run, including when only the scoring function changes. New requests or changed prompts can incur charges; scoring and selection still take time.
 
-!!! example "Crash recovery"
-    If a long run is interrupted, cached responses survive on disk. Resume without re-calling the API.
+!!! info "Stopping and restarting"
+    A user stop ends the selection run after the currently scheduled work completes. AgentOpt does not save or resume a selection checkpoint. Create a new selector to run again, using the same cache directory to reuse saved responses. Cache entries already flushed to disk survive process restarts; an abrupt exit can lose more recent entries.
 
-## Enabling Disk Cache
+## Choosing a Cache Directory
 
-By default, caching is in-memory only (lost when the process exits). To persist:
+In local mode, `LLMTracker()` enables caching in `.agentopt_cache` by default.
+Set `cache_dir` to use a benchmark-specific directory:
 
 ```python
 from agentopt.proxy import LLMTracker
 
 tracker = LLMTracker(cache_dir="./llm_cache")
-selector = BruteForceModelSelector(
+selector = ModelSelector(
     ...,
     tracker=tracker,
 )
@@ -50,7 +53,10 @@ results = selector.select_best()
 # Cache automatically flushed to ./llm_cache/cache.db
 ```
 
-On subsequent runs with the same `cache_dir`, entries are loaded from disk at startup.
+On subsequent runs with the same `cache_dir`, entries are loaded from disk at
+startup. Use `LLMTracker(cache_dir=None)` for memory-only caching. If
+`AGENTOPT_GATEWAY_URL` selects daemon mode, cache storage is managed by the
+daemon rather than these local tracker settings.
 
 ## Cache Lifecycle
 
@@ -78,10 +84,10 @@ The cache is a standard SQLite database:
     sqlite3 ./llm_cache/cache.db "SELECT COUNT(*) FROM cache"
     ```
 
-=== "List models"
+=== "Inspect stored latency"
 
     ```bash
-    sqlite3 ./llm_cache/cache.db "SELECT DISTINCT json_extract(value, '$.body.model') FROM cache"
+    sqlite3 ./llm_cache/cache.db "SELECT key, json_extract(data_json, '$.latency_seconds') FROM cache LIMIT 10"
     ```
 
 === "Database size"

@@ -1,111 +1,47 @@
 # Benchmark Results
 
-Explore the quality and cost of model combinations, and how Gittins allocates
-an evaluation budget. Each experiment below specifies its own model pool and
-protocol; compare methods only within a matched experiment.
+## Gittins Model Selection (10×10) { #gittins-on-a-10x10-model-grid }
 
-<div class="ao-benchmark-links" markdown>
-[Gittins · 10×10](#gittins-on-a-10x10-model-grid){ .md-button .md-button--primary }
-[Earlier benchmark suite](#earlier-benchmark-suite-9-models){ .md-button }
-</div>
-
-## Gittins on a 10×10 model grid { #gittins-on-a-10x10-model-grid }
-
-<p class="ao-benchmark-eyebrow">FROZEN-MATRIX REPLAY · SDK GITTINS · SEED 42</p>
-
-### A model for each step. A budget for the search.
-
-Ten candidate models at each of two agent steps produce **100 configurations**.
-For HotpotQA and MathQA, a complete 200-question matrix lets us examine both the
-quality–cost tradeoffs and the configurations Gittins recommends while using
-only part of the evaluation budget.
-
-<div class="ao-benchmark-stats">
-<div><strong>100</strong><span>model configurations per task</span></div>
-<div><strong>200</strong><span>questions per configuration</span></div>
-<div><strong>10%</strong><span>soft search-cost limit vs. exhaustive evaluation</span></div>
-</div>
-
-!!! info "What this example establishes"
-    Model responses were collected previously. We replay their scores and
-    token-derived workflow costs through the **current package's Gittins
-    selector**, with no new model API calls. This is **one run per mode and
-    benchmark (seed 42)**, not a multi-seed estimate or a comparison with other
-    search algorithms. Initial sampling is included in search cost.
-
-### Read the two costs separately
-
-**Search cost** is the sum of workflow evaluation costs for the cells Gittins
-visits. **Cost per question** is the mean cost of running a configuration after
-selection. A cheap configuration can still take evaluation effort to discover.
-The replay assumes no cross-cell response-cache reuse; charges are derived
-from recorded tokens, not an invoice or a measurement of replay runtime.
+We evaluated **100 model configurations** on **200 questions** each for HotpotQA
+and MathQA. Gittins searches with a budget of approximately **10% of the full
+evaluation cost**, recommending one configuration or several quality–cost tradeoffs.
 
 === "HotpotQA"
 
-    A planner and solver perform multi-hop question answering. The score axis
-    shows the mean benchmark score, not a claim of exact-match accuracy.
+    **Single-objective selection**
 
-    #### One recommendation as the search progresses
+    ![HotpotQA: recommendation score versus search cost](../assets/benchmarks/gittins-10x10/hotpotqa-search.svg){ .ao-benchmark-chart }
 
-    ![HotpotQA single-objective Gittins: search cost versus the full-matrix score of the current recommendation](../assets/benchmarks/gittins-10x10/hotpotqa-search.svg){ .ao-benchmark-chart }
+    Purple: current recommendation's score. Dashed green: best score across all configurations.
 
-    The purple step line evaluates each current recommendation against all 200
-    frozen questions **after selection**. It can move up or down. The dashed
-    line is the highest full-matrix score, provided only as an offline reference;
-    it is not visible to the search policy. No recommendation is shown during
-    initial sampling.
+    **Multi-objective selection**
 
-    #### Several configurations worth considering
+    ![HotpotQA: model quality and cost per question](../assets/benchmarks/gittins-10x10/hotpotqa-tradeoffs.svg){ .ao-benchmark-chart }
 
-    ![HotpotQA multi-objective Gittins: recommended configurations among 100 full-matrix quality and deployment-cost measurements](../assets/benchmarks/gittins-10x10/hotpotqa-tradeoffs.svg){ .ao-benchmark-chart }
-
-    Gray points show all 100 configurations; the green boundary is the complete
-    matrix's Pareto frontier. Purple rings show **every configuration returned
-    by the multi-objective run at its stopping point**, without filtering.
-    Coordinates use full-matrix means for retrospective evaluation, not the
-    conservative estimates displayed by the live runner.
-
-    [Download configuration measurements](../assets/benchmarks/gittins-10x10/hotpotqa-configurations.csv) ·
-    [Single-objective trajectory](../assets/benchmarks/gittins-10x10/hotpotqa-single-history.json) ·
-    [Multi-objective trajectory](../assets/benchmarks/gittins-10x10/hotpotqa-multi-history.json)
+    Gray: all configurations. Green: quality–cost frontier. Purple: recommended configurations.
 
 === "MathQA"
 
-    An answer model and critic solve mathematics questions with reflection.
-    Scores are the recorded benchmark metric averaged over 200 questions.
+    **Single-objective selection**
 
-    #### One recommendation as the search progresses
+    ![MathQA: recommendation score versus search cost](../assets/benchmarks/gittins-10x10/mathqa-search.svg){ .ao-benchmark-chart }
 
-    ![MathQA single-objective Gittins: search cost versus the full-matrix score of the current recommendation](../assets/benchmarks/gittins-10x10/mathqa-search.svg){ .ao-benchmark-chart }
+    Purple: current recommendation's score. Dashed green: best score across all configurations.
 
-    Each step uses the configuration actually recommended at that point; it is
-    not a running maximum chosen using hidden full-matrix scores. The dashed
-    line is the best full-matrix score. Initial sampling precedes the first
-    recommendation.
+    **Multi-objective selection**
 
-    #### Several configurations worth considering
+    ![MathQA: model quality and cost per question](../assets/benchmarks/gittins-10x10/mathqa-tradeoffs.svg){ .ao-benchmark-chart }
 
-    ![MathQA multi-objective Gittins: recommended configurations among 100 full-matrix quality and deployment-cost measurements](../assets/benchmarks/gittins-10x10/mathqa-tradeoffs.svg){ .ao-benchmark-chart }
+    Gray: all configurations. Green: quality–cost frontier. Purple: recommended configurations.
 
-    The gray cloud and green frontier come from the complete matrix. Purple
-    rings mark the final multi-objective recommendations for this one seed.
-    Higher score and lower per-question cost are preferable. These are
-    retrospective measurements, not guarantees on future user tasks.
+*The figures show one offline replay per mode and task, with scores measured on
+all 200 questions. Search cost is the evaluation expense; cost per question is
+the running cost of a configuration.*
 
-    [Download configuration measurements](../assets/benchmarks/gittins-10x10/mathqa-configurations.csv) ·
-    [Single-objective trajectory](../assets/benchmarks/gittins-10x10/mathqa-single-history.json) ·
-    [Multi-objective trajectory](../assets/benchmarks/gittins-10x10/mathqa-multi-history.json)
-
-### Budget and observations
-
-The requested limit is 10% of the exhaustive, 20,000-cell workflow cost for each
-benchmark. The selector reserves estimated batch charges; actual spending and
-the number of visited cells need not be exactly 10%. These are **dollar limits,
-not 10% of questions or configurations**.
+### Search Summary
 
 <!-- gittins-summary-start -->
-| Benchmark | Mode | Search cost | Visited cells / 20,000 | Recommendations |
+| Benchmark | Mode | Search cost | Evaluations | Recommendations |
 |:--|:--|--:|--:|--:|
 | HotpotQA | Single | $6.2528 (9.99%) | 2,520 | 1 |
 | HotpotQA | Multi | $6.2545 (9.99%) | 5,928 | 8 |
@@ -113,53 +49,15 @@ not 10% of questions or configurations**.
 | MathQA | Multi | $23.4467 (10.01%) | 6,808 | 3 |
 <!-- gittins-summary-end -->
 
-??? info "Protocol, sources, and reproduction"
-    **SDK:** `d4c00e6` from the public package repository. Single mode uses its
-    fixed-prior Gittins policy and default `recommendation_beta=0`; multi mode
-    uses its accuracy/cost axes and default `recommendation_beta=1`. Both use
-    four-question warm starts per configuration, four-question adaptive batches,
-    seed 42, a 129-point DP grid, and a 10% soft dollar limit. Latency is not an
-    objective in this replay. Automatic stopping on single-objective advice is
-    disabled, as in the package default.
-
-    **Inputs:** complete score and cost matrices from
-    [AgentOpt Research, commit 9e9bab7](https://github.com/AgentOptimizer/agentopt-research/tree/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data).
-    The ten models are Claude Haiku 4.5, Claude Opus 4.6, Kimi K2.5, Ministral 3
-    8B, Qwen3 32B, Qwen3 Next 80B A3B, gpt-oss-120b, gpt-oss-20b, DeepSeek R1,
-    and GPT-5.6 Luna. These differ from the model pool in the earlier suite below.
-
-    [Input files and SHA-256 hashes](../assets/benchmarks/gittins-10x10/sources.json) ·
-    [Run parameters and final recommendations](../assets/benchmarks/gittins-10x10/manifest.json)
-
-    To regenerate from the input CSVs included in this checkout, install the
-    package and plotting dependencies in Python 3.12+, then run:
-
-    ```bash
-    python -m pip install -e . matplotlib
-    python scripts/build_gittins_showcase.py
-    ```
-
-    The adapter replaces model execution and charge accounting with matrix
-    lookups; acquisition and recommendation decisions remain in the SDK. Full
-    matrices are used only for input validation and retrospective plotting,
-    never to choose the next cell or recommendation. Observations are not a
-    held-out generalization test, and a single seeded trajectory does not
-    establish algorithm superiority.
-
-[Run your own benchmark](../getting-started/your-benchmark.md){ .md-button .md-button--primary }
+[Run your own benchmark](../getting-started/your-benchmark.md)
 
 ---
 
-## Earlier benchmark suite (9 models)
-
-These measurements use the nine-model pool and protocol described below.
-Their 81-configuration QA grids and search-method comparisons are a separate
-experiment from the 10×10 replay above; their costs and scores should not be
-used as a direct cross-suite algorithm ranking.
+## Earlier Benchmark Results (9 Models) { #earlier-benchmark-suite-9-models }
 
 We evaluated **9 models** across **4 benchmarks** using LangGraph-based agents, then ran 8 model selection algorithms to measure how efficiently each finds the best model without exhaustive search. All results use 198–200 samples per benchmark with brute force ground truth. Selector comparisons were run with 50 random seeds.
 
-### Models
+## Models
 
 All models accessed via AWS Bedrock Application Inference Profiles (on-demand pricing, March 2026).
 
@@ -175,7 +73,7 @@ All models accessed via AWS Bedrock Application Inference Profiles (on-demand pr
 | Qwen3 32B | Qwen | $0.15 | $0.60 |
 | Ministral 3 8B | Mistral | $0.15 | $0.15 |
 
-### Cross-Benchmark Summary
+## Cross-Benchmark Summary
 
 | Benchmark | Tuple | Samples | Combos | Best Combo | Accuracy | BF Cost | Arm Elim Savings |
 |:----------|:------|:--------|:-------|:-----------|:---------|:--------|:-----------------|
@@ -186,11 +84,11 @@ All models accessed via AWS Bedrock Application Inference Profiles (on-demand pr
 
 ---
 
-### GPQA Diamond
+## GPQA Diamond
 
 **Graduate-level science QA** — 198 multiple-choice questions from the GPQA Diamond dataset. Single-agent architecture: one LLM answers directly.
 
-#### Model Results
+### Model Results
 
 | Rank | Model | Accuracy | Avg Latency (s) | Cost |
 |:-----|:------|:---------|:-----------------|:-----|
@@ -204,7 +102,7 @@ All models accessed via AWS Bedrock Application Inference Profiles (on-demand pr
 | 8 | Ministral 3 8B | 36.87% | 0.25 | $0.00 |
 | 9 | Claude 3 Haiku | 34.85% | 1.79 | $0.06 |
 
-#### Selector Comparison
+### Selector Comparison
 
 | Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
 |:---------|:----------|:--------------|:------------|:-----|:--------|
@@ -212,7 +110,7 @@ All models accessed via AWS Bedrock Application Inference Profiles (on-demand pr
 | Arm Elimination | 94% | 74.10% | 666 | $3.57 | **24%** |
 | Bayesian Opt | 56% | 72.43% | 990 | $2.59 | 45% |
 
-#### Thinking Effort Ablation
+### Thinking Effort Ablation
 
 Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) and Haiku 4.5 (budget_tokens). Baseline "none" rows use brute force results.
 
@@ -229,14 +127,14 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 
 ---
 
-### BFCL Multi-Turn
+## BFCL Multi-Turn
 
 **Multi-turn function calling** — 200 samples from the Berkeley Function Calling Leaderboard (BFCL v3). Each sample has multiple turns with tool-calling loops. Models that don't support native function calling (Qwen3 32B, Kimi K2.5, Ministral 3 8B) use a text-based prompting fallback.
 
 !!! note "Comparison with official BFCL leaderboard"
     Our evaluation uses a **live LangGraph agent** that executes tool calls against real backend state machines, whereas the official BFCL leaderboard uses static response matching. Our accuracy numbers are not directly comparable to the leaderboard — they reflect end-to-end agent performance including tool execution, state management, and multi-step reasoning.
 
-#### Model Results
+### Model Results
 
 | Rank | Model | Accuracy | Avg Latency (s) | Cost |
 |:-----|:------|:---------|:-----------------|:-----|
@@ -250,7 +148,7 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 | 8 | gpt-oss-20b | 42.00% | 10.03 | $0.42 |
 | 9 | Ministral 3 8B | 34.00% | 29.03 | $0.92 |
 
-#### Selector Comparison
+### Selector Comparison
 
 | Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
 |:---------|:----------|:--------------|:------------|:-----|:--------|
@@ -260,11 +158,11 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 
 ---
 
-### HotpotQA
+## HotpotQA
 
 **Multi-hop question answering** — 200 samples from the HotpotQA distractor setting. Two-agent architecture: a **planner** proposes search steps, and a **solver** executes them with tool access. 81 model combinations (9 planners x 9 solvers).
 
-#### Top 15 Combos
+### Top 15 Combos
 
 | Rank | Planner | Solver | Accuracy | Avg Latency (s) | Cost |
 |:-----|:--------|:-------|:---------|:----------------|:-----|
@@ -284,7 +182,7 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 | 14 | Ministral 3 8B | Qwen3 Next 80B A3B | 67.98% | 3.85 | $0.11 |
 | 15 | Qwen3 32B | Qwen3 Next 80B A3B | 67.53% | 3.51 | $0.11 |
 
-#### Bottom 15 Combos
+### Bottom 15 Combos
 
 | Rank | Planner | Solver | Accuracy | Avg Latency (s) | Cost |
 |:-----|:--------|:-------|:---------|:----------------|:-----|
@@ -393,7 +291,7 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
     | 80 | Qwen3 32B | Claude Haiku 4.5 | 26.63% | 3.47 | $0.69 | |
     | 81 | Claude Haiku 4.5 | Claude Haiku 4.5 | 26.49% | 3.40 | $0.79 | |
 
-#### Selector Comparison
+### Selector Comparison
 
 | Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
 |:---------|:----------|:--------------|:------------|:-----|:--------|
@@ -403,11 +301,11 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 
 ---
 
-### MathQA
+## MathQA
 
 **Self-reflective math reasoning** — 200 samples from the MathQA dataset. Two-agent architecture: an **answer model** solves problems, and a **critic model** checks the work. If the critic rejects, the answer model retries (up to 3 iterations). 81 model combinations (9 answer models x 9 critics).
 
-#### Top 15 Combos
+### Top 15 Combos
 
 | Rank | Answer Model | Critic Model | Accuracy | Avg Latency (s) | Cost |
 |:-----|:-------------|:-------------|:---------|:----------------|:-----|
@@ -427,7 +325,7 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 | 14 | gpt-oss-20b | Claude Haiku 4.5 | 94.05% | 6.19 | $0.37 |
 | 15 | gpt-oss-20b | gpt-oss-120b | 94.02% | 4.94 | $0.11 |
 
-#### Bottom 15 Combos
+### Bottom 15 Combos
 
 | Rank | Answer Model | Critic Model | Accuracy | Avg Latency (s) | Cost |
 |:-----|:-------------|:-------------|:---------|:----------------|:-----|
@@ -533,7 +431,7 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
     | 80 | Claude 3 Haiku | Qwen3 32B | 59.30% | 6.29 | $0.29 | |
     | 81 | Claude 3 Haiku | Claude 3 Haiku | 54.37% | 7.28 | $0.30 | |
 
-#### Selector Comparison
+### Selector Comparison
 
 | Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
 |:---------|:----------|:--------------|:------------|:-----|:--------|

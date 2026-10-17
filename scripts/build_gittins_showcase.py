@@ -190,7 +190,7 @@ def make_figures(benchmark, scores, costs, single, multi, names):
 
 
 def update_summary(manifest):
-    rows = ["| Benchmark | Mode | Search cost | Visited cells / 20,000 | Recommendations |",
+    rows = ["| Benchmark | Mode | Search cost | Evaluations | Recommendations |",
             "|:--|:--|--:|--:|--:|"]
     for benchmark, report in manifest["benchmarks"].items():
         title = {"hotpotqa": "HotpotQA", "mathqa": "MathQA"}[benchmark]

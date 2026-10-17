@@ -1,0 +1,101 @@
+configuration,full_matrix_mean_score,mean_cost_usd,questions
+answer=Claude Haiku 4.5 + critic=Claude Haiku 4.5,0.94,0.01295962,200
+answer=Claude Haiku 4.5 + critic=Claude Opus 4.6,0.935,0.018838265,200
+answer=Claude Haiku 4.5 + critic=Kimi K2.5,0.935,0.012987555999999997,200
+answer=Claude Haiku 4.5 + critic=Ministral 3 8B,0.935,0.01286675325,200
+answer=Claude Haiku 4.5 + critic=Qwen3 32B,0.945,0.01255064275,200
+answer=Claude Haiku 4.5 + critic=Qwen3 Next 80B A3B,0.93,0.03902496900000001,200
+answer=Claude Haiku 4.5 + critic=gpt-oss-120b,0.93,0.014505211500000002,200
+answer=Claude Haiku 4.5 + critic=gpt-oss-20b,0.935,0.01100599275,200
+answer=Claude Haiku 4.5 + critic=DeepSeek R1,0.93,0.03555883,200
+answer=Claude Haiku 4.5 + critic=GPT-5.6 Luna,0.92,0.014394404299999998,200
+answer=Claude Opus 4.6 + critic=Claude Haiku 4.5,0.97,0.050782205000000004,200
+answer=Claude Opus 4.6 + critic=Claude Opus 4.6,0.97,0.0452522,200
+answer=Claude Opus 4.6 + critic=Kimi K2.5,0.97,0.040009196000000004,200
+answer=Claude Opus 4.6 + critic=Ministral 3 8B,0.96,0.0533628425,200
+answer=Claude Opus 4.6 + critic=Qwen3 32B,0.965,0.04001154475000001,200
+answer=Claude Opus 4.6 + critic=Qwen3 Next 80B A3B,0.97,0.047379393,200
+answer=Claude Opus 4.6 + critic=gpt-oss-120b,0.965,0.04376827775,200
+answer=Claude Opus 4.6 + critic=gpt-oss-20b,0.975,0.042218530649999995,200
+answer=Claude Opus 4.6 + critic=DeepSeek R1,0.91,0.09287864925000001,200
+answer=Claude Opus 4.6 + critic=GPT-5.6 Luna,0.925,0.0798040757,200
+answer=Kimi K2.5 + critic=Claude Haiku 4.5,0.74,0.006879046,200
+answer=Kimi K2.5 + critic=Claude Opus 4.6,0.74,0.014059353000000002,200
+answer=Kimi K2.5 + critic=Kimi K2.5,0.745,0.006771756,200
+answer=Kimi K2.5 + critic=Ministral 3 8B,0.785,0.004888762499999999,200
+answer=Kimi K2.5 + critic=Qwen3 32B,0.73,0.004667394,200
+answer=Kimi K2.5 + critic=Qwen3 Next 80B A3B,0.78,0.00504095775,200
+answer=Kimi K2.5 + critic=gpt-oss-120b,0.75,0.0047616195000000005,200
+answer=Kimi K2.5 + critic=gpt-oss-20b,0.75,0.0039276254500000005,200
+answer=Kimi K2.5 + critic=DeepSeek R1,0.925,0.011866797,200
+answer=Kimi K2.5 + critic=GPT-5.6 Luna,0.915,0.0055112288,200
+answer=Ministral 3 8B + critic=Claude Haiku 4.5,0.855,0.002437457,200
+answer=Ministral 3 8B + critic=Claude Opus 4.6,0.865,0.008501470249999999,200
+answer=Ministral 3 8B + critic=Kimi K2.5,0.865,0.0010475145,200
+answer=Ministral 3 8B + critic=Ministral 3 8B,0.85,0.0006201262499999999,200
+answer=Ministral 3 8B + critic=Qwen3 32B,0.85,0.00040950825,200
+answer=Ministral 3 8B + critic=Qwen3 Next 80B A3B,0.87,0.00044087550000000003,200
+answer=Ministral 3 8B + critic=gpt-oss-120b,0.855,0.0005829960000000001,200
+answer=Ministral 3 8B + critic=gpt-oss-20b,0.85,0.0003869915,200
+answer=Ministral 3 8B + critic=DeepSeek R1,0.85,0.00921511275,200
+answer=Ministral 3 8B + critic=GPT-5.6 Luna,0.855,0.00064884515,200
+answer=Qwen3 32B + critic=Claude Haiku 4.5,0.86,0.004552190250000001,200
+answer=Qwen3 32B + critic=Claude Opus 4.6,0.875,0.017292691250000002,200
+answer=Qwen3 32B + critic=Kimi K2.5,0.855,0.00392946675,200
+answer=Qwen3 32B + critic=Ministral 3 8B,0.855,0.0017505127499999997,200
+answer=Qwen3 32B + critic=Qwen3 32B,0.845,0.0030992009999999993,200
+answer=Qwen3 32B + critic=Qwen3 Next 80B A3B,0.88,0.00126399525,200
+answer=Qwen3 32B + critic=gpt-oss-120b,0.87,0.002406789,200
+answer=Qwen3 32B + critic=gpt-oss-20b,0.855,0.0024622592999999997,200
+answer=Qwen3 32B + critic=DeepSeek R1,0.805,0.008996808,200
+answer=Qwen3 32B + critic=GPT-5.6 Luna,0.775,0.0030744145999999995,200
+answer=Qwen3 Next 80B A3B + critic=Claude Haiku 4.5,0.765,0.0060274249999999994,200
+answer=Qwen3 Next 80B A3B + critic=Claude Opus 4.6,0.78,0.014811892750000001,200
+answer=Qwen3 Next 80B A3B + critic=Kimi K2.5,0.755,0.0039589312500000005,200
+answer=Qwen3 Next 80B A3B + critic=Ministral 3 8B,0.77,0.00272684625,200
+answer=Qwen3 Next 80B A3B + critic=Qwen3 32B,0.76,0.0020884777499999996,200
+answer=Qwen3 Next 80B A3B + critic=Qwen3 Next 80B A3B,0.76,0.002721186,200
+answer=Qwen3 Next 80B A3B + critic=gpt-oss-120b,0.765,0.00260582775,200
+answer=Qwen3 Next 80B A3B + critic=gpt-oss-20b,0.75,0.0023909356999999997,200
+answer=Qwen3 Next 80B A3B + critic=DeepSeek R1,0.765,0.0091895865,200
+answer=Qwen3 Next 80B A3B + critic=GPT-5.6 Luna,0.765,0.00247121855,200
+answer=gpt-oss-120b + critic=Claude Haiku 4.5,0.93,0.0023689444999999997,200
+answer=gpt-oss-120b + critic=Claude Opus 4.6,0.94,0.0063307785,200
+answer=gpt-oss-120b + critic=Kimi K2.5,0.93,0.00164665425,200
+answer=gpt-oss-120b + critic=Ministral 3 8B,0.935,0.00095820375,200
+answer=gpt-oss-120b + critic=Qwen3 32B,0.935,0.0008378939999999998,200
+answer=gpt-oss-120b + critic=Qwen3 Next 80B A3B,0.93,0.00114627375,200
+answer=gpt-oss-120b + critic=gpt-oss-120b,0.93,0.0009756742499999998,200
+answer=gpt-oss-120b + critic=gpt-oss-20b,0.93,0.0008915484500000001,200
+answer=gpt-oss-120b + critic=DeepSeek R1,0.925,0.0063174825,200
+answer=gpt-oss-120b + critic=GPT-5.6 Luna,0.925,0.00105552985,200
+answer=gpt-oss-20b + critic=Claude Haiku 4.5,0.935,0.0020129117,200
+answer=gpt-oss-20b + critic=Claude Opus 4.6,0.95,0.0056977938500000005,200
+answer=gpt-oss-20b + critic=Kimi K2.5,0.94,0.00145537015,200
+answer=gpt-oss-20b + critic=Ministral 3 8B,0.94,0.00060073075,200
+answer=gpt-oss-20b + critic=Qwen3 32B,0.93,0.0005353919,200
+answer=gpt-oss-20b + critic=Qwen3 Next 80B A3B,0.935,0.0008231873500000001,200
+answer=gpt-oss-20b + critic=gpt-oss-120b,0.935,0.00061940185,200
+answer=gpt-oss-20b + critic=gpt-oss-20b,0.94,0.00046831849999999996,200
+answer=gpt-oss-20b + critic=DeepSeek R1,0.9,0.0075339805000000015,200
+answer=gpt-oss-20b + critic=GPT-5.6 Luna,0.895,0.00077944255,200
+answer=DeepSeek R1 + critic=Claude Haiku 4.5,0.915,0.019249929000000002,200
+answer=DeepSeek R1 + critic=Claude Opus 4.6,0.945,0.0211460615,200
+answer=DeepSeek R1 + critic=Kimi K2.5,0.94,0.022306691250000003,200
+answer=DeepSeek R1 + critic=Ministral 3 8B,0.935,0.020497317,200
+answer=DeepSeek R1 + critic=Qwen3 32B,0.915,0.016604574,200
+answer=DeepSeek R1 + critic=Qwen3 Next 80B A3B,0.935,0.0173628135,200
+answer=DeepSeek R1 + critic=gpt-oss-120b,0.94,0.01815629175,200
+answer=DeepSeek R1 + critic=gpt-oss-20b,0.94,0.018169258150000003,200
+answer=DeepSeek R1 + critic=DeepSeek R1,0.93,0.024206971500000004,200
+answer=DeepSeek R1 + critic=GPT-5.6 Luna,0.93,0.019476271349999998,200
+answer=GPT-5.6 Luna + critic=Claude Haiku 4.5,0.92,0.0023479114,200
+answer=GPT-5.6 Luna + critic=Claude Opus 4.6,0.93,0.0060812259,200
+answer=GPT-5.6 Luna + critic=Kimi K2.5,0.92,0.0013656452,200
+answer=GPT-5.6 Luna + critic=Ministral 3 8B,0.915,0.00086258965,200
+answer=GPT-5.6 Luna + critic=Qwen3 32B,0.91,0.0007102684500000001,200
+answer=GPT-5.6 Luna + critic=Qwen3 Next 80B A3B,0.925,0.0011324979999999998,200
+answer=GPT-5.6 Luna + critic=gpt-oss-120b,0.93,0.0009439359500000001,200
+answer=GPT-5.6 Luna + critic=gpt-oss-20b,0.91,0.0007329255,200
+answer=GPT-5.6 Luna + critic=DeepSeek R1,0.92,0.006061597150000001,200
+answer=GPT-5.6 Luna + critic=GPT-5.6 Luna,0.91,0.0005919848000000001,200

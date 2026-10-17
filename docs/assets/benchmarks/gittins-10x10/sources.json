@@ -1,0 +1,24 @@
+{
+  "research_commit": "9e9bab71688abb36465dd57a4d7c1c3c43eb0400",
+  "research_repository": "https://github.com/AgentOptimizer/agentopt-research",
+  "input_sha256": {
+    "inputs/hotpotqa-scores.csv": "7ee2ef43fbd570e51595bdb63c70fb470eb62169efb383b72f91050b2bff0e84",
+    "inputs/hotpotqa-costs.csv": "c7b9f2480d90fd896e689e504edd3150f7a839fa3af4f4023f02586ca0de7e70",
+    "inputs/mathqa-scores.csv": "73790e7cb2df3a34af77358aec28d0a2e34ed9e15e49193c613e1c71c93c9a70",
+    "inputs/mathqa-costs.csv": "a3b1c8dc2d1df822d5badbd9d6834d3e281ae3f387ead0d67363a4711a70df58"
+  },
+  "source_paths": {
+    "inputs/hotpotqa-scores.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/hotpotqa/accuracy_matrix.csv",
+    "inputs/hotpotqa-costs.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/hotpotqa/cost_matrix_usd.csv",
+    "inputs/mathqa-scores.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/mathqa/accuracy_matrix.csv",
+    "inputs/mathqa-costs.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/mathqa/cost_matrix_usd.csv"
+  },
+  "selector_source_sha256": {
+    "src/agentopt/model_selection/base.py": "fb4bf72fdb5647ffce84182df9b2b2b0121df156c769d394ba3ecb2036d4dcb8",
+    "src/agentopt/model_selection/gittins.py": "fc18faadfe87e5f2ec171d678c535d0dc77fa6000df4a5ce570c8fdc67005e22",
+    "src/agentopt/model_selection/gittins_statistics.py": "480a080a5c12df0f354a9a6e686421c78309abd89f432f2f51df718e16473d0e",
+    "src/agentopt/model_selection/axis_gittins_dp.py": "341d0703036b2e8b33506ffa015aa106cd6b6ec8ef2835b901f2e8e79f3544a0"
+  },
+  "selector_hash_normalization": "UTF-8 text with LF newlines",
+  "pricing_source": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/aws_bedrock_prices_10x10.json"
+}

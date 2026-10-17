@@ -1,0 +1,288 @@
+{
+  "research_commit": "9e9bab71688abb36465dd57a4d7c1c3c43eb0400",
+  "research_repository": "https://github.com/AgentOptimizer/agentopt-research",
+  "input_sha256": {
+    "inputs/hotpotqa-scores.csv": "7ee2ef43fbd570e51595bdb63c70fb470eb62169efb383b72f91050b2bff0e84",
+    "inputs/hotpotqa-costs.csv": "c7b9f2480d90fd896e689e504edd3150f7a839fa3af4f4023f02586ca0de7e70",
+    "inputs/mathqa-scores.csv": "73790e7cb2df3a34af77358aec28d0a2e34ed9e15e49193c613e1c71c93c9a70",
+    "inputs/mathqa-costs.csv": "a3b1c8dc2d1df822d5badbd9d6834d3e281ae3f387ead0d67363a4711a70df58"
+  },
+  "source_paths": {
+    "inputs/hotpotqa-scores.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/hotpotqa/accuracy_matrix.csv",
+    "inputs/hotpotqa-costs.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/hotpotqa/cost_matrix_usd.csv",
+    "inputs/mathqa-scores.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/mathqa/accuracy_matrix.csv",
+    "inputs/mathqa-costs.csv": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/mathqa/cost_matrix_usd.csv"
+  },
+  "seed": 42,
+  "budget_fraction": 0.1,
+  "SDK_commit": "d4c00e6e86cdb9814ab534981708bf0e8a0822fd",
+  "batch_size": 4,
+  "warm_start_batch_size": 4,
+  "grid_size": 129,
+  "comparison": "None; one seed per mode and benchmark, not an algorithm ranking.",
+  "cost_definition": "Sum of frozen per-cell workflow token costs; no cross-cell cache reuse. Not an invoice or runtime measurement.",
+  "benchmarks": {
+    "hotpotqa": {
+      "configurations": 100,
+      "questions": 200,
+      "exhaustive_cost_usd": 62.581747930000006,
+      "runs": {
+        "single": {
+          "search_cost_usd": 6.252777179999994,
+          "search_fraction": 0.09991375100283162,
+          "evaluations": 2520,
+          "stop_reason": "search_cost_budget",
+          "recommendations": [
+            {
+              "model_name": "planner=Ministral 3 8B + solver=Claude Opus 4.6",
+              "combo": {
+                "planner": "Ministral 3 8B",
+                "solver": "Claude Opus 4.6"
+              },
+              "observed_samples": 56,
+              "accuracy": 0.7592886702476584,
+              "accuracy_std": 0.054607029866523354,
+              "cost_usd": 0.012660746249050926,
+              "cost_std_usd": 0.00022445968151233497,
+              "conservative_accuracy": 0.7592886702476584,
+              "conservative_cost_usd": 0.012660746249050926,
+              "objective": 0.7592886702476584,
+              "conservative_objective": 0.7592886702476584
+            }
+          ]
+        },
+        "multi": {
+          "search_cost_usd": 6.254496999999998,
+          "search_fraction": 0.09994123217836427,
+          "evaluations": 5928,
+          "stop_reason": "search_cost_budget",
+          "recommendations": [
+            {
+              "model_name": "planner=Qwen3 32B + solver=GPT-5.6 Luna",
+              "combo": {
+                "planner": "Qwen3 32B",
+                "solver": "GPT-5.6 Luna"
+              },
+              "observed_samples": 172,
+              "accuracy": 0.6949052780180266,
+              "accuracy_std": 0.01422987986828837,
+              "cost_usd": 0.0003146256838461867,
+              "cost_std_usd": 5.656825249664474e-05,
+              "conservative_accuracy": 0.6806753981497382,
+              "conservative_cost_usd": 0.00037119393634283147,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "planner=Qwen3 Next 80B A3B + solver=Qwen3 Next 80B A3B",
+              "combo": {
+                "planner": "Qwen3 Next 80B A3B",
+                "solver": "Qwen3 Next 80B A3B"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.6815172322604556,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.00057049875,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.6815172322604556,
+              "conservative_cost_usd": 0.00057049875,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "planner=Qwen3 Next 80B A3B + solver=gpt-oss-120b",
+              "combo": {
+                "planner": "Qwen3 Next 80B A3B",
+                "solver": "gpt-oss-120b"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.7182946617300388,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.0006394274999999999,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.7182946617300388,
+              "conservative_cost_usd": 0.0006394274999999999,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "planner=gpt-oss-20b + solver=GPT-5.6 Luna",
+              "combo": {
+                "planner": "gpt-oss-20b",
+                "solver": "GPT-5.6 Luna"
+              },
+              "observed_samples": 172,
+              "accuracy": 0.5397426885067059,
+              "accuracy_std": 0.01422987986828837,
+              "cost_usd": 0.00019316181672173434,
+              "cost_std_usd": 5.656825249664474e-05,
+              "conservative_accuracy": 0.5255128086384175,
+              "conservative_cost_usd": 0.00024973006921837906,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "planner=GPT-5.6 Luna + solver=Ministral 3 8B",
+              "combo": {
+                "planner": "GPT-5.6 Luna",
+                "solver": "Ministral 3 8B"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.46708597345108077,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.00011816360000000001,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.46708597345108077,
+              "conservative_cost_usd": 0.00011816360000000001,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "planner=GPT-5.6 Luna + solver=Qwen3 32B",
+              "combo": {
+                "planner": "GPT-5.6 Luna",
+                "solver": "Qwen3 32B"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.47166492081950184,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.00012007910000000001,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.47166492081950184,
+              "conservative_cost_usd": 0.00012007910000000001,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "planner=GPT-5.6 Luna + solver=gpt-oss-20b",
+              "combo": {
+                "planner": "GPT-5.6 Luna",
+                "solver": "gpt-oss-20b"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.46695634382145107,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.00011708570000000002,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.46695634382145107,
+              "conservative_cost_usd": 0.00011708570000000002,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "planner=GPT-5.6 Luna + solver=GPT-5.6 Luna",
+              "combo": {
+                "planner": "GPT-5.6 Luna",
+                "solver": "GPT-5.6 Luna"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.4626199101026644,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.00011357170000000001,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.4626199101026644,
+              "conservative_cost_usd": 0.00011357170000000001,
+              "objective": null,
+              "conservative_objective": null
+            }
+          ]
+        }
+      }
+    },
+    "mathqa": {
+      "configurations": 100,
+      "questions": 200,
+      "exhaustive_cost_usd": 234.34150516999998,
+      "runs": {
+        "single": {
+          "search_cost_usd": 23.400398679999984,
+          "search_fraction": 0.09985597157884803,
+          "evaluations": 2132,
+          "stop_reason": "search_cost_budget",
+          "recommendations": [
+            {
+              "model_name": "answer=DeepSeek R1 + critic=Ministral 3 8B",
+              "combo": {
+                "answer": "DeepSeek R1",
+                "critic": "Ministral 3 8B"
+              },
+              "observed_samples": 44,
+              "accuracy": 0.9514925373134328,
+              "accuracy_std": 0.06326030091330416,
+              "cost_usd": 0.013619325007456105,
+              "cost_std_usd": 0.010168343613535455,
+              "conservative_accuracy": 0.9514925373134328,
+              "conservative_cost_usd": 0.013619325007456105,
+              "objective": 0.9514925373134328,
+              "conservative_objective": 0.9514925373134328
+            }
+          ]
+        },
+        "multi": {
+          "search_cost_usd": 23.446730669999987,
+          "search_fraction": 0.10005368299137135,
+          "evaluations": 6808,
+          "stop_reason": "search_cost_budget",
+          "recommendations": [
+            {
+              "model_name": "answer=Ministral 3 8B + critic=Qwen3 Next 80B A3B",
+              "combo": {
+                "answer": "Ministral 3 8B",
+                "critic": "Qwen3 Next 80B A3B"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.87,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.00044087550000000003,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.87,
+              "conservative_cost_usd": 0.00044087550000000003,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "answer=Ministral 3 8B + critic=gpt-oss-20b",
+              "combo": {
+                "answer": "Ministral 3 8B",
+                "critic": "gpt-oss-20b"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.85,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.0003869915,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.85,
+              "conservative_cost_usd": 0.0003869915,
+              "objective": null,
+              "conservative_objective": null
+            },
+            {
+              "model_name": "answer=gpt-oss-20b + critic=gpt-oss-20b",
+              "combo": {
+                "answer": "gpt-oss-20b",
+                "critic": "gpt-oss-20b"
+              },
+              "observed_samples": 200,
+              "accuracy": 0.94,
+              "accuracy_std": 0.0,
+              "cost_usd": 0.00046831849999999996,
+              "cost_std_usd": 0.0,
+              "conservative_accuracy": 0.94,
+              "conservative_cost_usd": 0.00046831849999999996,
+              "objective": null,
+              "conservative_objective": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  "selector_source_sha256": {
+    "src/agentopt/model_selection/base.py": "fb4bf72fdb5647ffce84182df9b2b2b0121df156c769d394ba3ecb2036d4dcb8",
+    "src/agentopt/model_selection/gittins.py": "fc18faadfe87e5f2ec171d678c535d0dc77fa6000df4a5ce570c8fdc67005e22",
+    "src/agentopt/model_selection/gittins_statistics.py": "480a080a5c12df0f354a9a6e686421c78309abd89f432f2f51df718e16473d0e",
+    "src/agentopt/model_selection/axis_gittins_dp.py": "341d0703036b2e8b33506ffa015aa106cd6b6ec8ef2835b901f2e8e79f3544a0"
+  },
+  "selector_hash_normalization": "UTF-8 text with LF newlines",
+  "pricing_source": "https://github.com/AgentOptimizer/agentopt-research/blob/9e9bab71688abb36465dd57a4d7c1c3c43eb0400/data/aws_bedrock_prices_10x10.json"
+}

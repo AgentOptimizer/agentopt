@@ -212,6 +212,7 @@ llm_cache/
 
 # Missing-cell supplemental run artifacts (plan and docs stay tracked)
 experiments/missing_cells/output/
+experiments/missing_cells/output_guarded/
 experiments/missing_cells/completed/
 experiments/missing_cells/profile_arns.*.json
 !experiments/missing_cells/profile_arns.example.json

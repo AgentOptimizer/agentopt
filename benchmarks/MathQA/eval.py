@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import time
 from typing import Any, Dict, List, TypedDict
 
@@ -38,13 +37,14 @@ import matplotlib.pyplot as plt
 from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
-    ToolMessage,
     convert_to_messages,
 )
 from langgraph.graph import END, StateGraph
 
 from benchmarks.MathQA.tools import TOOLS as CALC_TOOLS
-from benchmarks.MathQA.tools import calculator
+from benchmarks.runtime import (
+    ToolLimits, ToolRunState, parse_math_answer, response_stop_reason, run_with_tools,
+)
 
 from benchmarks.common import (
     BEDROCK_PRICES,
@@ -205,32 +205,19 @@ def _is_system_message(message: Any) -> bool:
 
 def _extract_text(result: Any) -> str:
     if isinstance(result, dict):
-        if "final" in result:
-            return extract_text_content(result["final"])
-        if "messages" in result and result["messages"]:
-            last = result["messages"][-1]
-            if isinstance(last, dict):
-                return extract_text_content(last.get("content", ""))
-            if hasattr(last, "content"):
-                return extract_text_content(last.content)
-            return extract_text_content(last)
+        # Structured results must identify the Answerer's output explicitly.
+        # An arbitrary last message can belong to the critic or a tool.
+        return extract_text_content(result.get("answer_text", result.get("final", "")))
     return extract_text_content(result)
 
 
 def eval_fn(expected: str, actual: Any) -> bool:
-    """Compare agent's final answer letter to the correct option."""
-    text = _extract_text(actual).lower()
-    expected_letter = expected.strip().lower()
-
-    match = re.search(r"answer:\s*([a-e])", text)
-    if match:
-        return match.group(1) == expected_letter
-
-    match = re.search(r"\b([a-e])\b", text[-50:])
-    if match:
-        return match.group(1) == expected_letter
-
-    return False
+    """Score only a valid explicit choice from the final Answerer response."""
+    if isinstance(actual, dict) and actual.get("format_valid") is False:
+        return False
+    reason = actual.get("stop_reason") if isinstance(actual, dict) else None
+    parsed = parse_math_answer(_extract_text(actual), reason)
+    return parsed["format_valid"] and parsed["answer_option"] == expected.strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -239,271 +226,150 @@ def eval_fn(expected: str, actual: Any) -> bool:
 
 
 def _run_answer_with_tools(
-    llm,
-    messages,
-    use_tools=True,
-    max_tool_rounds: int | None = None,
+    llm, messages, use_tools=True, max_tool_rounds=8, *, tool_limits=None, tool_state=None,
 ):
-    """Run answer agent with optional tool calling loop."""
-    if use_tools:
-        model_with_tools = llm.bind_tools(CALC_TOOLS)
-        response = model_with_tools.invoke(_portable_message_history(messages))
-        messages = messages + [response]
-
-        tools_by_name = {t.name: t for t in CALC_TOOLS}
-        tool_rounds = 0
-        while getattr(response, "tool_calls", None):
-            for tc in response.tool_calls:
-                tool_fn = tools_by_name.get(tc["name"], calculator)
-                tool_result = tool_fn.invoke(tc["args"])
-                messages.append(
-                    ToolMessage(content=str(tool_result), tool_call_id=tc["id"])
-                )
-            tool_rounds += 1
-            if max_tool_rounds is not None and tool_rounds >= max_tool_rounds:
-                messages.append(
-                    HumanMessage(
-                        content=(
-                            "Stop calling tools. Using the tool results already "
-                            "available, finish the solution and return the final "
-                            "multiple-choice answer now."
-                        )
-                    )
-                )
-                response = llm.invoke(_portable_message_history(messages))
-                messages.append(response)
-                break
-            response = model_with_tools.invoke(_portable_message_history(messages))
-            messages.append(response)
-    else:
-        response = llm.invoke(_portable_message_history(messages))
-        messages = messages + [response]
-
-    return messages
+    return run_with_tools(
+        llm, messages, CALC_TOOLS, use_tools=use_tools,
+        limits=tool_limits or ToolLimits(max_tool_rounds=max_tool_rounds),
+        state=tool_state, prepare_messages=_portable_message_history,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Raw mode agent_fn factory
-# ---------------------------------------------------------------------------
+def _answer_snapshot(response, iteration):
+    text = extract_text_content(getattr(response, "content", ""))
+    reason = "tool_use" if getattr(response, "tool_calls", None) else response_stop_reason(response)
+    return {
+        **parse_math_answer(text, reason),
+        "final": text.strip(),
+        "answer_source": "answerer",
+        "answer_iteration": iteration,
+    }
 
 
 def _mathqa_agent_fn_raw(
-    models: Dict[str, Any],
-    max_iterations: int = 3,
-    max_tool_rounds: int | None = None,
+    models: Dict[str, Any], max_iterations=3, max_tool_rounds=8, *, tool_limits=None,
 ):
-    """Factory: raw mode agent_fn for MathQA.
-
-    models: {"answer": "<model>", "critic": "<model>"}
-    Returns a callable: (input_data) -> result_dict
-    """
-    answer_spec = models["answer"]
-    critic_spec = models["critic"]
+    """Run reflection with a dedicated final Answerer record, separate from reviews."""
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1")
+    answer_spec, critic_spec = models["answer"], models["critic"]
+    limits = tool_limits or ToolLimits(max_tool_rounds=max_tool_rounds)
 
     def run(input_data: dict) -> dict:
         answer_llm = make_llm(answer_spec) if isinstance(answer_spec, str) else answer_spec
         critic_llm = make_llm(critic_spec) if isinstance(critic_spec, str) else critic_spec
         use_tools = supports_tool_calling(answer_spec) if isinstance(answer_spec, str) else True
-
-        answer_sys = ANSWER_SYSTEM_PROMPT if use_tools else ANSWER_SYSTEM_PROMPT_NO_TOOLS
+        system = ANSWER_SYSTEM_PROMPT if use_tools else ANSWER_SYSTEM_PROMPT_NO_TOOLS
         messages = _normalize_messages(list(input_data.get("messages", [])))
         if not messages or not _is_system_message(messages[0]):
-            messages = [SystemMessage(content=answer_sys)] + messages
-
-        final = ""
-        for iteration in range(max_iterations):
-            # Answer agent
-            messages = _run_answer_with_tools(
-                answer_llm,
-                messages,
-                use_tools,
-                max_tool_rounds=max_tool_rounds,
+            messages = [SystemMessage(content=system)] + messages
+        tool_state = ToolRunState()
+        answer_rounds = []
+        for iteration in range(1, max_iterations + 1):
+            messages, response = _run_answer_with_tools(
+                answer_llm, messages, use_tools, tool_limits=limits, tool_state=tool_state,
             )
-
-            # Critic agent
-            review_prompt = HumanMessage(
-                content=(
+            snapshot = _answer_snapshot(response, iteration)
+            answer_rounds.append(dict(snapshot))
+            critic_messages = [SystemMessage(content=CRITIC_SYSTEM_PROMPT)] + messages[1:] + [
+                HumanMessage(content=(
                     "Review the previous answer. Verify it by solving the "
                     "problem yourself. Reply CORRECT if the answer is right, "
                     "or INCORRECT: <feedback> if it is wrong."
-                )
-            )
-            critic_messages = (
-                [SystemMessage(content=CRITIC_SYSTEM_PROMPT)]
-                + messages[1:]
-                + [review_prompt]
-            )
-            critic_response = critic_llm.invoke(
-                _portable_message_history(critic_messages)
-            )
-            messages.append(critic_response)
-
-            content = extract_text_content(getattr(critic_response, "content", str(critic_response)))
+                ))
+            ]
+            review = critic_llm.invoke(_portable_message_history(critic_messages))
+            messages.append(review)
+            content = extract_text_content(getattr(review, "content", ""))
             if "CORRECT" in content.upper() and "INCORRECT" not in content.upper():
                 break
-            if iteration + 1 < max_iterations:
-                # Converse-compatible chat templates require a user turn before
-                # asking the answer model to generate again.  Previously the
-                # next iteration ended with the critic's assistant message,
-                # which some Bedrock models reject with add_generation_prompt
-                # validation errors.
-                messages.append(
-                    HumanMessage(
-                        content=(
-                            "Revise your answer using the critic feedback above. "
-                            "Return a complete corrected answer."
-                        )
-                    )
-                )
-
-        # Extract final answer
-        for msg in reversed(messages):
-            raw = getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", "")
-            content = extract_text_content(raw)
-            if re.search(r"answer:\s*[a-e]", content.lower()):
-                final = content
-                break
-        if not final and messages:
-            last = messages[-1]
-            final = extract_text_content(getattr(last, "content", str(last)))
-
-        return {"messages": messages, "final": final.strip(), "iteration": iteration + 1}
+            if iteration < max_iterations:
+                messages.append(HumanMessage(content=(
+                    "Revise your answer using the critic feedback above. Return a complete corrected answer."
+                )))
+        return {"messages": messages, **snapshot, "iteration": iteration,
+                "answer_rounds": answer_rounds, **tool_state.metadata()}
 
     return run
 
 
-# ---------------------------------------------------------------------------
-# LangGraph mode agent_fn factory
-# ---------------------------------------------------------------------------
-
-
-class ReflectionState(TypedDict):
+class ReflectionState(TypedDict, total=False):
     messages: List[Any]
     final: str
     iteration: int
+    answer_text: str
+    answer_option: str | None
+    answer_iteration: int
+    answer_source: str
+    format_valid: bool
+    format_failure: str | None
+    stop_reason: str | None
+    empty_answer: bool
+    output_truncated: bool
+    answer_rounds: list
+    tool_call_count: int
+    tool_events: list
 
 
 def _mathqa_agent_fn_langgraph(
-    models: Dict[str, Any],
-    max_iterations: int = 3,
-    max_tool_rounds: int | None = None,
+    models: Dict[str, Any], max_iterations=3, max_tool_rounds=8, *, tool_limits=None,
 ):
-    """Factory: LangGraph mode agent_fn for MathQA.
-
-    models: {"answer": "<model>", "critic": "<model>"}
-    Returns a callable: (input_data) -> result_dict
-    """
-    answer_spec = models["answer"]
-    critic_spec = models["critic"]
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1")
+    answer_spec, critic_spec = models["answer"], models["critic"]
+    limits = tool_limits or ToolLimits(max_tool_rounds=max_tool_rounds)
 
     def run(input_data: dict) -> dict:
         answer_llm = make_llm(answer_spec) if isinstance(answer_spec, str) else answer_spec
         critic_llm = make_llm(critic_spec) if isinstance(critic_spec, str) else critic_spec
         use_tools = supports_tool_calling(answer_spec) if isinstance(answer_spec, str) else True
-        answer_sys = ANSWER_SYSTEM_PROMPT if use_tools else ANSWER_SYSTEM_PROMPT_NO_TOOLS
-        max_iter = max_iterations
+        system = ANSWER_SYSTEM_PROMPT if use_tools else ANSWER_SYSTEM_PROMPT_NO_TOOLS
+        # State is local to this question, including when a factory is used concurrently.
+        tool_state = ToolRunState()
 
-        def add_system(state: ReflectionState) -> ReflectionState:
+        def add_system(state):
             messages = _normalize_messages(list(state.get("messages", [])))
-            if messages and _is_system_message(messages[0]):
-                return {"messages": messages, "final": "", "iteration": 0}
-            return {
-                "messages": [SystemMessage(content=answer_sys)] + messages,
-                "final": "",
-                "iteration": 0,
-            }
+            if not messages or not _is_system_message(messages[0]):
+                messages = [SystemMessage(content=system)] + messages
+            return {"messages": messages, "iteration": 0, "answer_rounds": []}
 
-        def call_answer_agent(state: ReflectionState) -> ReflectionState:
-            messages = _normalize_messages(list(state.get("messages", [])))
+        def call_answer_agent(state):
+            messages = list(state["messages"])
             if messages and getattr(messages[-1], "type", None) == "ai":
-                # The previous graph node was the critic.  Start a new user
-                # turn before asking the answer model to revise; several
-                # Bedrock chat templates reject generation when the history
-                # ends with an assistant message.
-                messages.append(
-                    HumanMessage(
-                        content=(
-                            "Revise your answer using the critic feedback above. "
-                            "Return a complete corrected answer."
-                        )
-                    )
-                )
-            messages = _run_answer_with_tools(
-                answer_llm,
-                messages,
-                use_tools,
-                max_tool_rounds=max_tool_rounds,
+                messages.append(HumanMessage(content=(
+                    "Revise your answer using the critic feedback above. Return a complete corrected answer."
+                )))
+            messages, response = _run_answer_with_tools(
+                answer_llm, messages, use_tools, tool_limits=limits, tool_state=tool_state,
             )
-            return {"messages": messages, "final": "", "iteration": state.get("iteration", 0)}
+            snapshot = _answer_snapshot(response, state["iteration"] + 1)
+            return {**state, **snapshot, "messages": messages,
+                    "answer_rounds": state["answer_rounds"] + [dict(snapshot)], **tool_state.metadata()}
 
-        def call_critic_agent(state: ReflectionState) -> ReflectionState:
-            messages = _normalize_messages(list(state.get("messages", [])))
-            review_prompt = HumanMessage(
-                content="Review the previous answer. Reply CORRECT or INCORRECT: <feedback>."
-            )
-            critic_messages = (
-                [SystemMessage(content=CRITIC_SYSTEM_PROMPT)]
-                + messages[1:]
-                + [review_prompt]
-            )
+        def call_critic_agent(state):
+            messages = list(state["messages"])
+            critic_messages = [SystemMessage(content=CRITIC_SYSTEM_PROMPT)] + messages[1:] + [
+                HumanMessage(content="Review the previous answer. Reply CORRECT or INCORRECT: <feedback>.")
+            ]
             response = critic_llm.invoke(_portable_message_history(critic_messages))
-            return {"messages": messages + [response], "final": "", "iteration": state.get("iteration", 0)}
+            return {**state, "messages": messages + [response], "iteration": state["iteration"] + 1}
 
-        def check_critic(state: ReflectionState) -> ReflectionState:
-            return {
-                "messages": list(state.get("messages", [])),
-                "final": "",
-                "iteration": state.get("iteration", 0) + 1,
-            }
-
-        def route_after_critic(state: ReflectionState) -> str:
-            messages = list(state.get("messages", []))
-            iteration = state.get("iteration", 0)
-            if messages:
-                last = messages[-1]
-                raw = getattr(last, "content", str(last)) if not isinstance(last, dict) else last.get("content", "")
-                content = extract_text_content(raw)
-                if "CORRECT" in content.upper() and "INCORRECT" not in content.upper():
-                    return "finalize"
-            if iteration >= max_iter:
-                return "finalize"
-            return "call_answer_agent"
-
-        def finalize(state: ReflectionState) -> ReflectionState:
-            messages = list(state.get("messages", []))
-            final = ""
-            for msg in reversed(messages):
-                raw = getattr(msg, "content", "") if not isinstance(msg, dict) else msg.get("content", "")
-                content = extract_text_content(raw)
-                if re.search(r"answer:\s*[a-e]", content.lower()):
-                    final = content
-                    break
-            if not final and messages:
-                last = messages[-1]
-                raw = getattr(last, "content", str(last)) if not isinstance(last, dict) else last.get("content", "")
-                final = extract_text_content(raw)
-            return {"messages": messages, "final": final.strip(), "iteration": state.get("iteration", 0)}
+        def route_after_critic(state):
+            content = extract_text_content(getattr(state["messages"][-1], "content", ""))
+            approved = "CORRECT" in content.upper() and "INCORRECT" not in content.upper()
+            return END if approved or state["iteration"] >= max_iterations else "call_answer_agent"
 
         graph = StateGraph(ReflectionState)
         graph.add_node("add_system", add_system)
         graph.add_node("call_answer_agent", call_answer_agent)
         graph.add_node("call_critic_agent", call_critic_agent)
-        graph.add_node("check_critic", check_critic)
-        graph.add_node("finalize", finalize)
-
         graph.set_entry_point("add_system")
         graph.add_edge("add_system", "call_answer_agent")
         graph.add_edge("call_answer_agent", "call_critic_agent")
-        graph.add_edge("call_critic_agent", "check_critic")
-        graph.add_conditional_edges(
-            "check_critic",
-            route_after_critic,
-            {"finalize": "finalize", "call_answer_agent": "call_answer_agent"},
-        )
-        graph.add_edge("finalize", END)
-        compiled = graph.compile()
-
-        return compiled.invoke(input_data)
+        graph.add_conditional_edges("call_critic_agent", route_after_critic,
+                                    {END: END, "call_answer_agent": "call_answer_agent"})
+        # Three nodes per reflection at most, plus graph start/termination steps.
+        return graph.compile().invoke(input_data, config={"recursion_limit": 3 * max_iterations + 5})
 
     return run
 
@@ -563,7 +429,10 @@ def main():
         "--max-iterations", type=int, default=3,
         help="Max self-reflection iterations (default: 3)",
     )
+    from benchmarks.runtime import add_tool_limit_args, tool_limits_from_args
+    add_tool_limit_args(parser)
     args = parser.parse_args()
+    tool_limits = tool_limits_from_args(args)
 
     # Logging
     logging.basicConfig(
@@ -595,10 +464,10 @@ def main():
 
     if args.mode == "raw":
         def agent_fn(m):
-            return _mathqa_agent_fn_raw(m, max_iterations=args.max_iterations)
+            return _mathqa_agent_fn_raw(m, max_iterations=args.max_iterations, tool_limits=tool_limits)
     else:
         def agent_fn(m):
-            return _mathqa_agent_fn_langgraph(m, max_iterations=args.max_iterations)
+            return _mathqa_agent_fn_langgraph(m, max_iterations=args.max_iterations, tool_limits=tool_limits)
 
     # Model selection
     print(f"\n[3] Running model selection ({args.selector})...")

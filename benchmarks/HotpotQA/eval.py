@@ -55,6 +55,10 @@ from benchmarks.common import (
 )
 from benchmarks.HotpotQA.tools import TOOLS as SEARCH_TOOLS
 
+from benchmarks.runtime import (
+    ToolLimits, ToolRunState, answer_diagnostics, response_stop_reason, run_with_tools,
+)
+
 logger = logging.getLogger(__name__)
 
 SELECTORS = get_selectors()
@@ -291,67 +295,49 @@ def _build_planner_input(
     )
 
 
-def _invoke_with_tools(llm, new_messages, prior_messages=None, use_tools=True):
-    """Multi-turn tool loop, accumulating history across calls."""
-    messages = list(prior_messages or []) + list(new_messages)
-
-    if use_tools:
-        tools_by_name = {t.name: t for t in SEARCH_TOOLS}
-        model_with_tools = llm.bind_tools(SEARCH_TOOLS)
-        response = model_with_tools.invoke(messages)
-        messages.append(response)
-        while getattr(response, "tool_calls", None):
-            for tc in response.tool_calls:
-                tool_fn = tools_by_name.get(tc["name"])
-                if tool_fn:
-                    tool_result = tool_fn.invoke(tc["args"])
-                    messages.append(
-                        ToolMessage(content=str(tool_result), tool_call_id=tc["id"])
-                    )
-            response = model_with_tools.invoke(messages)
-            messages.append(response)
-    else:
-        response = llm.invoke(messages)
-        messages.append(response)
-
-    return extract_text_content(getattr(response, "content", response)), messages
+def _invoke_with_tools(
+    llm, new_messages, prior_messages=None, use_tools=True, *, tool_limits=None,
+    tool_state=None, diagnostics=None,
+):
+    messages, response = run_with_tools(
+        llm, list(prior_messages or []) + list(new_messages), SEARCH_TOOLS,
+        use_tools=use_tools, limits=tool_limits, state=tool_state,
+    )
+    text = extract_text_content(getattr(response, "content", ""))
+    if diagnostics is not None:
+        diagnostics.update(answer_diagnostics(text, response_stop_reason(response)))
+    return text, messages
 
 
 def _run_reflection_loop(
-    prompt: str,
-    planner_call,
-    solver_call,
-    max_reflections: int,
-    stop_policy: str,
+    prompt: str, planner_call, solver_call, max_reflections: int,
+    stop_policy: str, diagnostics=None,
 ) -> str:
+    diagnostics = diagnostics if diagnostics is not None else {}
+    diagnostics.update(answer_source="solver", solver_invoked=False)
     max_reflections = max(1, int(max_reflections))
     last_solver_output = ""
-    solver_messages: list = []
+    solver_messages = []
     for reflection_idx in range(max_reflections):
         planner_input = _build_planner_input(
-            prompt, last_solver_output, reflection_idx, max_reflections
+            prompt, last_solver_output, reflection_idx, max_reflections,
         )
         planner_notes = str(planner_call(planner_input)).strip()
-
         if _planner_requests_terminate(planner_notes):
             planner_final = _extract_planner_final(planner_notes)
             if planner_final:
+                diagnostics["answer_source"] = "planner"
                 return planner_final
-            final_text, solver_messages = solver_call(
-                _build_solver_input(prompt, planner_notes), solver_messages
-            )
-            final_text = final_text.strip()
-            return final_text if final_text else planner_notes
-
+        diagnostics["solver_invoked"] = True
         answer_text, solver_messages = solver_call(
-            _build_solver_input(prompt, planner_notes), solver_messages
+            _build_solver_input(prompt, planner_notes), solver_messages,
         )
         answer_text = answer_text.strip()
-        if (
-            stop_policy == "converged"
-            and answer_text
-            and _normalize_answer(answer_text) == _normalize_answer(last_solver_output)
-        ):
+        if _planner_requests_terminate(planner_notes):
+            # No fallback to planner instructions when the solver is empty.
+            return answer_text
+        if (stop_policy == "converged" and answer_text
+                and _normalize_answer(answer_text) == _normalize_answer(last_solver_output)):
             return answer_text
         last_solver_output = answer_text
     return last_solver_output
@@ -363,154 +349,77 @@ def _run_reflection_loop(
 
 
 def _hotpotqa_agent_fn_raw(
-    models: Dict[str, Any],
-    pipeline: str = "multi",
-    max_reflections: int = 1,
-    reflection_stop: str = "converged",
+    models: Dict[str, Any], pipeline="multi", max_reflections=1,
+    reflection_stop="converged", *, tool_limits=None,
 ):
-    """Factory: raw mode agent_fn for HotpotQA.
-
-    Single pipeline: models = {"agent": "<model>"}
-    Multi pipeline:  models = {"planner": "<model>", "solver": "<model>"}
-    """
-    if pipeline == "single":
-        model_spec = models["agent"]
-        use_tools = supports_tool_calling(model_spec) if isinstance(model_spec, str) else True
-        instructions = INSTRUCTIONS if use_tools else INSTRUCTIONS_NO_TOOLS
-
-        def run(input_data: Dict[str, Any]) -> str:
-            llm = make_llm(model_spec) if isinstance(model_spec, str) else model_spec
-            answer, _ = _invoke_with_tools(
-                llm,
-                [
-                    SystemMessage(content=instructions),
-                    HumanMessage(content=input_data["input"][:12000]),
-                ],
-                use_tools=use_tools,
-            )
-            return answer
-
-        return run
-
-    # Multi pipeline
-    planner_spec = models["planner"]
-    solver_spec = models["solver"]
+    """Return an explicit answer with its source and per-question diagnostics."""
+    limits = tool_limits or ToolLimits()
+    single = pipeline == "single"
+    solver_spec = models["agent"] if single else models["solver"]
     use_tools = supports_tool_calling(solver_spec) if isinstance(solver_spec, str) else True
     instructions = INSTRUCTIONS if use_tools else INSTRUCTIONS_NO_TOOLS
 
-    def run(input_data: Dict[str, Any]) -> str:
-        planner_llm = make_llm(planner_spec) if isinstance(planner_spec, str) else planner_spec
+    def run(input_data):
         solver_llm = make_llm(solver_spec) if isinstance(solver_spec, str) else solver_spec
-
-        def planner_call(prompt: str) -> str:
-            response = planner_llm.invoke(
-                [
-                    SystemMessage(content=PLANNER_INSTRUCTIONS),
-                    HumanMessage(content=prompt[:12000]),
-                ]
-            )
-            return extract_text_content(getattr(response, "content", response))
+        tool_state = ToolRunState()
+        source = {"answer_source": "solver", "solver_invoked": False}
+        solver_diagnostics = {}
+        planner_diagnostics = {}
 
         def solver_call(prompt, prior_messages=None):
             return _invoke_with_tools(
                 solver_llm,
-                [
-                    SystemMessage(content=instructions),
-                    HumanMessage(content=prompt[:12000]),
-                ],
-                prior_messages,
-                use_tools=use_tools,
+                [SystemMessage(content=instructions), HumanMessage(content=prompt[:12000])],
+                prior_messages, use_tools=use_tools, tool_limits=limits,
+                tool_state=tool_state, diagnostics=solver_diagnostics,
             )
 
-        return _run_reflection_loop(
-            prompt=input_data["input"],
-            planner_call=planner_call,
-            solver_call=solver_call,
-            max_reflections=max_reflections,
-            stop_policy=reflection_stop,
-        )
+        if single:
+            source["solver_invoked"] = True
+            final, _ = solver_call(input_data["input"])
+        else:
+            planner_spec = models["planner"]
+            planner_llm = make_llm(planner_spec) if isinstance(planner_spec, str) else planner_spec
+
+            def planner_call(prompt):
+                response = planner_llm.invoke([
+                    SystemMessage(content=PLANNER_INSTRUCTIONS), HumanMessage(content=prompt[:12000]),
+                ])
+                text = extract_text_content(getattr(response, "content", ""))
+                planner_diagnostics.update(answer_diagnostics(text, response_stop_reason(response)))
+                return text
+
+            final = _run_reflection_loop(
+                prompt=input_data["input"], planner_call=planner_call, solver_call=solver_call,
+                max_reflections=max_reflections, stop_policy=reflection_stop, diagnostics=source,
+            )
+        final = final.strip()
+        output_diagnostics = planner_diagnostics if source["answer_source"] == "planner" else solver_diagnostics
+        return {"final": final, **source, **tool_state.metadata(),
+                **answer_diagnostics(final, output_diagnostics.get("stop_reason")),
+                "long_answer": len(final) > 1000}
 
     return run
 
 
-# ---------------------------------------------------------------------------
-# LangGraph mode agent_fn factory
-# ---------------------------------------------------------------------------
-
-
 def _hotpotqa_agent_fn_langgraph(
-    models: Dict[str, Any],
-    pipeline: str = "multi",
-    max_reflections: int = 1,
-    reflection_stop: str = "converged",
+    models: Dict[str, Any], pipeline="multi", max_reflections=1,
+    reflection_stop="converged", *, tool_limits=None,
 ):
-    """Factory: LangGraph mode agent_fn for HotpotQA."""
+    """Expose the same answer and tool protections through the graph entry point."""
     from langgraph.graph import END, StateGraph
 
-    if pipeline == "single":
-        model_spec = models["agent"]
-        use_tools = supports_tool_calling(model_spec) if isinstance(model_spec, str) else True
-        instructions = INSTRUCTIONS if use_tools else INSTRUCTIONS_NO_TOOLS
+    agent = _hotpotqa_agent_fn_raw(
+        models, pipeline=pipeline, max_reflections=max_reflections,
+        reflection_stop=reflection_stop, tool_limits=tool_limits,
+    )
 
-        def run(input_data: Dict[str, Any]) -> Dict[str, Any]:
-            llm = make_llm(model_spec) if isinstance(model_spec, str) else model_spec
-
-            def answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
-                prompt = state["input"][:12000]
-                answer, _ = _invoke_with_tools(
-                    llm,
-                    [SystemMessage(content=instructions), HumanMessage(content=prompt)],
-                    use_tools=use_tools,
-                )
-                return {"input": state["input"], "final": answer}
-
-            graph = StateGraph(dict)
-            graph.add_node("answer", answer_node)
-            graph.set_entry_point("answer")
-            graph.add_edge("answer", END)
-            compiled = graph.compile()
-
-            return compiled.invoke({"input": input_data["input"]})
-
-        return run
-
-    # Multi pipeline — same reflection loop but with LangGraph-created LLMs
-    planner_spec = models["planner"]
-    solver_spec = models["solver"]
-    use_tools = supports_tool_calling(solver_spec) if isinstance(solver_spec, str) else True
-    instructions = INSTRUCTIONS if use_tools else INSTRUCTIONS_NO_TOOLS
-
-    def run(input_data: Dict[str, Any]) -> str:
-        planner_llm = make_llm(planner_spec) if isinstance(planner_spec, str) else planner_spec
-        solver_llm = make_llm(solver_spec) if isinstance(solver_spec, str) else solver_spec
-
-        def planner_call(prompt: str) -> str:
-            response = planner_llm.invoke(
-                [
-                    SystemMessage(content=PLANNER_INSTRUCTIONS),
-                    HumanMessage(content=prompt[:12000]),
-                ]
-            )
-            return extract_text_content(getattr(response, "content", response))
-
-        def solver_call(prompt, prior_messages=None):
-            return _invoke_with_tools(
-                solver_llm,
-                [
-                    SystemMessage(content=instructions),
-                    HumanMessage(content=prompt[:12000]),
-                ],
-                prior_messages,
-                use_tools=use_tools,
-            )
-
-        return _run_reflection_loop(
-            prompt=input_data["input"],
-            planner_call=planner_call,
-            solver_call=solver_call,
-            max_reflections=max_reflections,
-            stop_policy=reflection_stop,
-        )
+    def run(input_data):
+        graph = StateGraph(dict)
+        graph.add_node("answer", agent)
+        graph.set_entry_point("answer")
+        graph.add_edge("answer", END)
+        return graph.compile().invoke(input_data)
 
     return run
 
@@ -598,7 +507,10 @@ def main():
         "--selection-size", type=int, default=0,
         help="Fixed selection set size (overrides ratio if > 0)",
     )
+    from benchmarks.runtime import add_tool_limit_args, tool_limits_from_args
+    add_tool_limit_args(parser)
     args = parser.parse_args()
+    tool_limits = tool_limits_from_args(args)
 
     # Logging
     logging.basicConfig(
@@ -651,6 +563,7 @@ def main():
                 m, pipeline=args.pipeline,
                 max_reflections=args.max_reflections,
                 reflection_stop=args.reflection_stop,
+                tool_limits=tool_limits,
             )
     else:
         def agent_fn(m):
@@ -658,6 +571,7 @@ def main():
                 m, pipeline=args.pipeline,
                 max_reflections=args.max_reflections,
                 reflection_stop=args.reflection_stop,
+                tool_limits=tool_limits,
             )
 
     # Model selection

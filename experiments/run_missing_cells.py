@@ -23,8 +23,10 @@ from typing import Any, Iterable
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+from benchmarks.runtime import ToolLimits, add_tool_limit_args, tool_limits_from_args
+
 PLAN_PATH = REPO_ROOT / "experiments" / "missing_cells" / "plan.csv"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "experiments" / "missing_cells" / "output"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "experiments" / "missing_cells" / "output_guarded"
 EXPECTED_ACCOUNT = "920736616554"
 EXPECTED_REGION = "us-east-1"
 
@@ -298,7 +300,8 @@ def load_dataset(benchmark: str) -> list[tuple[dict[str, Any], str]]:
 def build_agent(
     cell: dict[str, Any],
     *,
-    max_tool_rounds: int | None = None,
+    max_tool_rounds: int | None = 8,
+    tool_limits: ToolLimits | None = None,
     mathqa_max_iterations: int = 3,
 ):
     if cell["benchmark"] == "hotpotqa":
@@ -311,6 +314,7 @@ def build_agent(
             },
             pipeline="multi",
             max_reflections=1,
+            tool_limits=tool_limits or ToolLimits(max_tool_rounds=max_tool_rounds),
         )
 
     from benchmarks.MathQA.eval import _mathqa_agent_fn_langgraph
@@ -322,6 +326,7 @@ def build_agent(
         },
         max_iterations=mathqa_max_iterations,
         max_tool_rounds=max_tool_rounds,
+        **({"tool_limits": tool_limits} if tool_limits is not None else {}),
     )
 
 
@@ -334,6 +339,27 @@ def score_result(benchmark: str, expected: str, actual: Any) -> float:
     from benchmarks.MathQA.eval import eval_fn
 
     return float(eval_fn(expected, actual))
+
+
+def result_diagnostics(actual: Any) -> dict[str, Any]:
+    """Persist answer provenance and failure categories beside the scalar score."""
+    if not isinstance(actual, dict):
+        return {}
+    fields = (
+        "final", "answer_text", "answer_option", "answer_iteration", "answer_source",
+        "iteration", "answer_rounds", "format_valid", "format_failure", "stop_reason",
+        "empty_answer", "output_truncated", "solver_invoked", "long_answer",
+        "tool_call_count", "tool_events",
+    )
+    result = {name: actual[name] for name in fields if name in actual}
+    failure = actual.get("format_failure")
+    if not failure and actual.get("output_truncated"):
+        failure = "output_truncated"
+    if not failure and actual.get("empty_answer"):
+        failure = "empty_answer"
+    if failure:
+        result["terminal_reason"] = failure
+    return result
 
 
 def append_jsonl(path: Path, row: dict[str, Any]) -> None:
@@ -351,7 +377,8 @@ def run_cells(
     max_concurrent: int,
     aws_context: dict[str, Any],
     use_cache: bool = True,
-    max_tool_rounds: int | None = None,
+    max_tool_rounds: int | None = 8,
+    tool_limits: ToolLimits | None = None,
     mathqa_max_iterations: int = 3,
 ) -> None:
     from agentopt import LLMTracker
@@ -370,6 +397,7 @@ def run_cells(
         cache_dir=cache_dir if use_cache else None,
     )
     tracker.start()
+    limits = tool_limits or ToolLimits(max_tool_rounds=max_tool_rounds)
     try:
         total = len(cells)
         completed_count = 0
@@ -395,7 +423,9 @@ def run_cells(
                 "project_tag": aws_context["project"],
                 "billing_tag1": aws_context["billing-tag1"],
                 "max_concurrent": max_concurrent,
-                "max_tool_rounds": max_tool_rounds,
+                "max_tool_rounds": limits.max_tool_rounds,
+                "tool_limits": vars(limits),
+                "evaluation_protocol": "guarded_answers_v1",
                 "mathqa_max_iterations": (
                     mathqa_max_iterations if benchmark == "mathqa" else None
                 ),
@@ -414,6 +444,7 @@ def run_cells(
                     **base,
                     "status": "ok",
                     "score": score_result(benchmark, expected, actual),
+                    **result_diagnostics(actual),
                     **metrics,
                 }
             except Exception as exc:
@@ -440,7 +471,8 @@ def run_cells(
             config_cells = list(grouped)
             agent = build_agent(
                 config_cells[0],
-                max_tool_rounds=max_tool_rounds,
+                max_tool_rounds=limits.max_tool_rounds,
+                tool_limits=limits,
                 mathqa_max_iterations=mathqa_max_iterations,
             )
             workers = min(max_concurrent, len(config_cells))
@@ -489,15 +521,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable reading and writing the LLM response cache for this run",
     )
-    parser.add_argument(
-        "--max-tool-rounds",
-        type=int,
-        default=None,
-        help=(
-            "Optional per-answer cap on MathQA tool-use rounds; disabled by "
-            "default to preserve the original experiment protocol"
-        ),
-    )
+    add_tool_limit_args(parser)
     parser.add_argument(
         "--mathqa-max-iterations",
         type=int,
@@ -525,8 +549,7 @@ def main() -> int:
         os.environ["AGENTOPT_BEDROCK_PROFILE_MAP"] = str(args.profile_map.resolve())
     if args.max_concurrent < 1:
         raise ValueError("--max-concurrent must be at least 1")
-    if args.max_tool_rounds is not None and args.max_tool_rounds < 1:
-        raise ValueError("--max-tool-rounds must be at least 1")
+    tool_limits = tool_limits_from_args(args)
     if args.mathqa_max_iterations < 1:
         raise ValueError("--mathqa-max-iterations must be at least 1")
     rows = load_plan(args.plan)
@@ -579,6 +602,7 @@ def main() -> int:
         aws_context=aws_context,
         use_cache=not args.no_cache,
         max_tool_rounds=args.max_tool_rounds,
+        tool_limits=tool_limits,
         mathqa_max_iterations=args.mathqa_max_iterations,
     )
     return 0

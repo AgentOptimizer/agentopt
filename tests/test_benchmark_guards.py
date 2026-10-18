@@ -69,6 +69,46 @@ def test_explicit_option_does_not_match_heading_or_word_prefix(text, option):
     assert mathqa.eval_fn(option, text)
 
 
+@pytest.mark.parametrize("text", [
+    "ANSWER: **c**",
+    "ANSWER: `c`",
+    "**ANSWER:** c",
+    "**ANSWER**: c",
+    "`ANSWER:` c",
+    "`ANSWER`: c",
+    "**ANSWER:** **c**",
+    "`ANSWER:` `c`",
+    "**ANSWER: `c`**",
+    "  **answer:** `C`  ",
+    "Final Answer:\nANSWER: **c**",
+])
+def test_markdown_wrappers_on_label_and_option_are_scored(text):
+    parsed = parse_math_answer(text)
+    assert parsed["format_valid"]
+    assert parsed["format_failure"] is None
+    assert parsed["answer_option"] == "c"
+    assert mathqa.eval_fn("c", text)
+    assert not mathqa.eval_fn("a", text)
+
+
+@pytest.mark.parametrize("text,failure", [
+    ("ANSWER: **CORRECT**", "invalid_option"),
+    ("**ANSWER:** `apple`", "invalid_option"),
+    ("ANSWER: `f`", "invalid_option"),
+    ("**ANSWER:** **a or c**", "invalid_option"),
+    ("ANSWER: **c", "invalid_option"),
+    ("ANSWER: c**", "invalid_option"),
+    ("ANSWER: `c", "invalid_option"),
+    ("ANSWER: **a**\n**ANSWER:** `c`", "conflicting_answers"),
+    ("ANSWER: **c**\nExplanation", "answer_not_final_line"),
+])
+def test_markdown_normalization_keeps_strict_choice_validation(text, failure):
+    parsed = parse_math_answer(text)
+    assert parsed["format_failure"] == failure
+    assert parsed["answer_option"] is None
+    assert not mathqa.eval_fn("c", text)
+
+
 @pytest.mark.parametrize("text,failure", [
     ("", "empty_answer"),
     ("The answer is c", "missing_answer"),

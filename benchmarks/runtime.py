@@ -27,13 +27,36 @@ def answer_diagnostics(text: str, stop_reason: str | None) -> dict[str, Any]:
     }
 
 
+def _unwrap_markdown(text: str) -> str:
+    """Remove paired bold/code wrappers while preserving unmatched markers."""
+    text = text.strip()
+    while True:
+        for wrapper in ("**", "`"):
+            if (len(text) >= 2 * len(wrapper)
+                    and text.startswith(wrapper) and text.endswith(wrapper)
+                    and wrapper not in text[len(wrapper):-len(wrapper)]):
+                text = text[len(wrapper):-len(wrapper)].strip()
+                break
+        else:
+            return text
+
+
 def parse_math_answer(text: str, stop_reason: str | None = None) -> dict[str, Any]:
     """Read explicit ANSWER lines only; never infer a letter from prose/history."""
     diagnostics = answer_diagnostics(text, stop_reason)
-    # Accept common presentation wrappers without accepting prose as an option.
-    lines = [line.strip().strip("*` ").strip() for line in text.splitlines() if line.strip()]
-    markers = [re.fullmatch(r"ANSWER\s*:\s*(.*)", line, re.I) for line in lines]
-    payloads = [match.group(1).strip().lower() for match in markers if match]
+    # Wrappers can surround the whole line, the label (with or without its
+    # colon), or the option. Normalize only those boundaries, never prose.
+    markers = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        line = _unwrap_markdown(line)
+        line = re.sub(
+            r"^(?:\*\*\s*(ANSWER\s*:?)\s*\*\*|`\s*(ANSWER\s*:?)\s*`)",
+            lambda match: match.group(1) or match.group(2), line, flags=re.I,
+        )
+        markers.append(re.fullmatch(r"ANSWER\s*:\s*(.*)", line, re.I))
+    payloads = [_unwrap_markdown(match.group(1)).lower() for match in markers if match]
     options = {value for value in payloads if re.fullmatch(r"[a-e]", value)}
     if diagnostics["output_truncated"]:
         failure = "output_truncated"

@@ -4,6 +4,47 @@ This branch was created from `cache-benchmark-run`, the branch that contains
 the Bedrock application-inference-profile mappings, benchmark agents, cache
 interceptor, and the original 200-sample run path.
 
+## Guarded reruns
+
+The runner saves new results to `experiments/missing_cells/output_guarded/` by
+default. Published matrices and historical output files are unchanged. Do not
+reuse a historical output directory for a run with the new answer parser or
+tool limits: completed cells are skipped within the chosen output directory.
+
+MathQA scores only the final Answerer response. Its last nonempty line must
+contain `ANSWER: a` through `ANSWER: e` (case, whitespace, bold and inline-code
+wrappers are accepted). It does not search critic responses or earlier rounds.
+Missing, invalid, conflicting, empty or truncated answers receive score zero
+with a separate `format_failure`; a valid wrong choice has no format failure.
+New JSONL rows include `answer_text`, `answer_option`, `answer_iteration`,
+`answer_rounds`, the provider `stop_reason`, and tool events. These terminal
+outcomes use `status=ok` so resuming does not silently retry them.
+
+HotpotQA returns a structured result with `final`, `answer_source` (`planner`
+or `solver`), `solver_invoked`, `empty_answer`, `output_truncated`, and
+`long_answer` (more than 1,000 characters). Existing planner early termination
+and HotpotQA scoring remain in place; flags identify outputs for inspection.
+Both raw and LangGraph entry points expose the same diagnostics.
+
+Tool limits apply to both benchmarks and are configurable in the supplement
+runner and benchmark CLIs:
+
+| Flag | Default | Scope |
+|---|---:|---|
+| `--max-tool-rounds` | 8 | Tool-use batches per answer generation |
+| `--max-tool-calls-per-answer` | 12 | Tool calls per answer generation |
+| `--max-tool-calls-per-question` | 24 | Calls across all revisions of a question |
+| `--max-identical-tool-calls` | 3 | Same tool and canonical JSON arguments per question |
+| `--max-consecutive-tool-errors` | 3 | Consecutive tool errors per question |
+
+Unknown tools and invalid arguments produce explicit tool error responses.
+When a limit is reached, every pending tool call receives a result and the
+model is asked once to finish without tools. `tool_events` records errors and
+limit triggers. These limits bound tool execution; they are not dollar caps.
+Each new row records `evaluation_protocol=guarded_answers_v1` and its limits.
+
+The following sections describe the historical completion runs and artifacts.
+
 ## Audited scope
 
 - HotpotQA: 32 cells across 13 configurations.
@@ -29,15 +70,16 @@ Dataset identity:
 - MathQA Hugging Face snapshot:
   `c4f1cc784c04c4957b50c97858f23893b633eea6`
 
-## Agent behavior is intentionally unchanged
+## Historical agent settings
 
-The supplement uses the same benchmark factories and parameters as the
-original run by default.  The outer MathQA reflection limit remains 3 and the
+The published supplement used the same benchmark factories and parameters as
+the original run.  The outer MathQA reflection limit remains 3 and the
 HotpotQA reflection limit remains 1.  One pathological MathQA row
 (`answer=Qwen3 32B + critic=Ministral 3 8B`, question 187) repeatedly exceeded
 Qwen's 32,768-token context window in the inner tool loop.  That row was rerun
 with `--max-tool-rounds 3`; the exception is recorded in the completed CSV and
-manifest.  All other rows retain the original unbounded inner-loop behavior.
+manifest.  All other published rows retained the original unbounded inner-loop behavior.
+New runs use the guarded limits described above.
 
 The original cache reconstruction called brute force with
 `parallel=True, max_concurrent=20`.  In global-concurrency mode that means

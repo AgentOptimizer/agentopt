@@ -19,7 +19,7 @@ Client-side agent optimization
 # Choosing the right model for your agents can save <span class="ao-accent">100x money and time</span>
 
 <p class="ao-sub">
-AgentOpt evaluates model combinations across your full agent pipeline, measures accuracy, cost, and latency, and recommends a configuration or a set of accuracy–cost tradeoffs.
+AgentOpt evaluates model combinations across your full agent pipeline, measures quality, cost, and latency, and recommends a configuration or a quality–cost Pareto recommendation set.
 </p>
 
 <div class="ao-ctas" markdown>
@@ -56,11 +56,13 @@ AgentOpt evaluates model combinations across your full agent pipeline, measures 
 
 ## The Problem
 
-Your agent has multiple steps — planning, reasoning, tool use, synthesis. Each step could use a different model. With 5 candidate models across 3 steps, that's **125 combinations**. Testing them manually is impractical. Picking blindly leaves performance (and money) on the table.
+Your agent has multiple steps — planning, reasoning, tool use, synthesis. Each step could use a different model. With 10 candidate models for each of 3 steps, that's **1,000 combinations**. Testing them manually is impractical. Picking blindly leaves performance (and money) on the table.
 
 ## The Solution
 
-Give AgentOpt your agent and a small evaluation dataset (~100 samples). Gittins selection searches the model combination space and returns one recommended configuration by default. Set `objective_mode="multi"` to inspect accuracy/cost alternatives and choose a deployment preference.
+Give AgentOpt your agent and a small evaluation dataset (~200 examples). Gittins selection searches the model combination space and returns one recommended configuration by default. Set `objective_mode="multi"` for **quality–cost Pareto recommendations**, then choose a configuration that meets your deployment preferences.
+
+The two-role example below uses 10 candidates per role, giving 100 configurations. Supply `planner_candidates` and `solver_candidates` as lists of model IDs accepted by your agent. The [Quick Start](getting-started/quickstart.md) shows how to define `MyAgent`, `dataset`, and `eval_fn`.
 
 ```python
 from agentopt import ModelSelector
@@ -68,8 +70,8 @@ from agentopt import ModelSelector
 selector = ModelSelector(
     agent=MyAgent,
     models={
-        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+        "planner": planner_candidates,
+        "solver": solver_candidates,
     },
     eval_fn=eval_fn,
     dataset=dataset,
@@ -79,18 +81,31 @@ results = selector.select_best(parallel=True)
 results.print_summary()
 ```
 
-<div class="output-block">
-<pre>
-    Model Selection Results
-    --------------------------------------------------------------------------
-    Rank  Model                                       Accuracy  Latency    Price
-    --------------------------------------------------------------------------
-<span class="highlight-row">&gt;&gt;&gt;  1  planner=gpt-4.1-nano + solver=gpt-4.1-nano   100.00%    0.85s  $0.000420</span>
-     2  planner=gpt-4o-mini + solver=gpt-4o-mini      100.00%    1.20s  $0.002372
-     3  planner=gpt-4o + solver=gpt-4o                 100.00%    2.70s  $0.014355
-    ...
-</pre>
-</div>
+This example uses the default single-objective mode. In multi mode, `results.get_recommendations()` exposes the quality–cost Pareto recommendation set, and `results.choose(...)` selects a configuration using your deployment preferences. Quality is the task score returned by `eval_fn`, such as F1 or accuracy. [Learn more about multi-objective recommendations](api/selectors.md#multi-objective-search-and-recommendations).
+
+### Measured results: single and multi objective
+
+Our HotpotQA benchmark evaluates 10 models per role: **100 planner–solver configurations on 200 examples each**. Quality is mean token F1; deployment cost is the mean API cost per workflow, calculated from recorded token usage.
+
+=== "Single objective"
+
+    With quality as the single objective, this is the highest-scoring configuration in the full benchmark:
+
+    | Planner | Solver | Quality (token F1) | Deployment cost / workflow |
+    |:---|:---|---:|---:|
+    | Qwen3 32B | DeepSeek R1 | 74.66% | $0.004038 |
+
+=== "Multi objective"
+
+    With quality and cost as separate objectives, these three configurations are among the alternatives on the full benchmark's empirical Pareto frontier:
+
+    | Planner | Solver | Quality (token F1) | Deployment cost / workflow |
+    |:---|:---|---:|---:|
+    | Ministral 3 8B | gpt-oss-20b | 68.99% | $0.000441 |
+    | Qwen3 Next 80B A3B | gpt-oss-120b | 71.83% | $0.000639 |
+    | Qwen3 32B | DeepSeek R1 | 74.66% | $0.004038 |
+
+These are full-benchmark measurements, not the output of the example search above. Sources: [quality matrix](https://github.com/AgentOptimizer/agentopt-research/blob/2480b0827d5ee32025694c094c5fc1dc88107a84/data/hotpotqa/accuracy_matrix.csv), [cost matrix](https://github.com/AgentOptimizer/agentopt-research/blob/2480b0827d5ee32025694c094c5fc1dc88107a84/data/hotpotqa/cost_matrix_usd.csv), and [evaluation metadata](https://github.com/AgentOptimizer/agentopt-research/blob/2480b0827d5ee32025694c094c5fc1dc88107a84/data/hotpotqa/metadata.json).
 
 ---
 
@@ -148,7 +163,7 @@ graph LR
     D --> E["Track tokens, latency, cost"]
     D --> F["Cache responses"]
     E --> G["Evaluate & Rank"]
-    G --> H["Winner or accuracy/cost recommendations"]
+    G --> H["One configuration or quality–cost Pareto recommendations"]
 ```
 
 AgentOpt patches `httpx` at the transport level — the same HTTP library used by every major LLM SDK. Your agent code stays untouched. AgentOpt silently records every LLM call, caches responses, and aggregates metrics per model combination.

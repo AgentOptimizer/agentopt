@@ -116,6 +116,57 @@ Useful variations, appended to the command above:
 | Gittins with a soft search-dollar limit | `--max-search-cost-usd 1.0` |
 | End automatically on single-objective Gittins advice | `--stop-on-recommendation` |
 
+## Watch the estimated Pareto frontier
+
+For an accuracy/cost search, install the plotting extra and run the example
+with `--objective-mode multi --live-plot`:
+
+```bash
+python -m pip install -e ".[plot]" openai
+python examples/selection/benchmark_runner.py \
+  --dataset my_benchmark.jsonl \
+  --models gpt-4o-mini gpt-4.1-nano \
+  --objective-mode multi --live-plot \
+  --output results.json
+```
+
+This command calls the selected model APIs. The window plots the current
+conservative score and cost estimates for Pareto recommendations. It also shows
+the initial sampling progress, completed evaluations, and search spending.
+**Pause** holds the search after the current evaluation batch; **Continue**
+resumes it; **Finish** requests a final result after scheduled work completes.
+Closing the window also requests a finish. The saved JSON contains the final
+selection results. These controls do not cancel calls already in flight, and
+the result file is not a resumable checkpoint. Add `--plot-output frontier.png`
+to save the final figure as well.
+
+For an agent with multiple model roles, use the same view with your own
+`ModelSelector`. With a `MyAgent` class from the
+[Quick Start](quickstart.md), and the `dataset` and `eval_fn` above:
+
+```python
+from agentopt import ModelSelector
+from agentopt.visualization import LiveParetoPlot
+
+selector = ModelSelector(
+    agent=MyAgent,
+    models={
+        "planner": ["gpt-4o-mini", "gpt-4.1-nano"],
+        "solver": ["gpt-4o-mini", "gpt-4.1-nano"],
+    },
+    dataset=dataset,
+    eval_fn=eval_fn,
+    method="gittins",
+    objective_mode="multi",
+)
+plot = LiveParetoPlot(total_questions=len(dataset))
+results = plot.run(selector, max_concurrent=4)
+```
+
+Run this on a desktop Python session with an interactive Matplotlib backend.
+The recommendations use the agent's actual calls and the supplied benchmark;
+they are estimates until the benchmark is fully evaluated.
+
 Small datasets can make a fraction too small to fund a warm start or even one
 complete random sampling unit. See the allowance rules below. Run `python
 examples/selection/benchmark_runner.py --help` for the runner's options; the
@@ -178,9 +229,9 @@ selection thread: send snapshots to your UI using that framework's thread-safe
 mechanism. `selector.latest_results` provides a copy of the latest snapshot for
 polling. A callback can also request a stop by returning `False`.
 
-The package supplies progress callbacks and result objects. The terminal runner
-provides a ready-to-use display; a web dashboard or notebook interface needs to
-connect these callbacks to its own controls.
+The package supplies progress callbacks, result objects, and the desktop
+`LiveParetoPlot` view for multi-objective Gittins searches. A web dashboard or
+notebook interface can connect the same callbacks to its own controls.
 
 Updates happen after completed evaluations or batches, not while a model streams
 tokens. Gittins needs its uniform warm start before it can recommend a

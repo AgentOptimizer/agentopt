@@ -213,6 +213,10 @@ def make_parser():
     parser.add_argument("--seed", type=int, help="Seed for Gittins, random, or UCB; Bayesian has no seed option")
     parser.add_argument("--max-concurrent", type=int, default=4, help="Maximum concurrent evaluations (default 4)")
     parser.add_argument("--output", type=Path, default=Path("results.json"), help="Result JSON path (default results.json)")
+    parser.add_argument("--live-plot", action="store_true",
+                        help="show the estimated Pareto frontier during a real multi-objective Gittins run")
+    parser.add_argument("--plot-output", type=Path,
+                        help="save the final estimated Pareto plot as an image")
     return parser
 
 
@@ -220,6 +224,10 @@ def selector_options(args):
     """Route only supported options, before creating a tracker or making requests."""
     if args.method not in METHODS[args.objective_mode]:
         raise ValueError(f"{args.method} does not support {args.objective_mode} mode")
+    if (args.live_plot or args.plot_output is not None) and (
+        args.objective_mode != "multi" or args.method not in ("auto", "gittins")
+    ):
+        raise ValueError("Pareto plotting requires --objective-mode multi with Gittins")
     single_gittins = args.method in ("auto", "gittins") and args.objective_mode == "single"
     if (args.cost_scaling_factor is not None or args.stop_on_recommendation) and not single_gittins:
         raise ValueError("--cost-scaling-factor and --stop-on-recommendation apply only to single Gittins")
@@ -308,7 +316,7 @@ def show_progress(snapshot, *, total_questions):
             print(f"Search cost limit exceeded by: ${snapshot.search_cost_overshoot_usd:.6f}", flush=True)
 
 
-def run_selection(selector, *, max_concurrent, output, failures=None):
+def run_selection(selector, *, max_concurrent, output, failures=None, plot=None):
     """Run on the main thread so Ctrl+C requests a stop without cancelling work."""
     failures = failures or FailureState()
     stop_event = failures.stop_event
@@ -317,31 +325,41 @@ def run_selection(selector, *, max_concurrent, output, failures=None):
     def update(snapshot):
         nonlocal last_snapshot
         last_snapshot = snapshot
-        if failures.message is None:
+        if failures.message is None and (plot is None or not plot.show_window or snapshot.is_final):
             show_progress(snapshot, total_questions=len(selector.dataset))
 
     def request_stop(signum, frame):
         # Avoid raising KeyboardInterrupt while the selector drains its batch.
         if stop_event.is_set():
             return
-        stop_event.set()
+        if plot is None:
+            stop_event.set()
+        else:
+            plot.finish_search(None)
         print("\nStop requested. Waiting for the current batch to finish…", flush=True)
 
     previous_handler = signal.signal(signal.SIGINT, request_stop)
     try:
         print("Each evaluation runs one model configuration on one test question and scores its output.", flush=True)
         print("Press Ctrl+C to stop after the scheduled batch; its completed results will be saved.", flush=True)
-        results = selector.select_best(
-            parallel=True, max_concurrent=max_concurrent,
-            on_update=update,
-            stop_event=stop_event,
-        )
+        if plot is None:
+            results = selector.select_best(
+                parallel=True, max_concurrent=max_concurrent,
+                on_update=update, stop_event=stop_event,
+            )
+        else:
+            results = plot.run(selector, parallel=True, max_concurrent=max_concurrent,
+                               on_update=update)
         if failures.message is not None:
             raise BenchmarkRunError(failures.message)
         save_json(output, results.model_dump(mode="json"))
         print(f"Saved results to {output}", flush=True)
+        if plot is not None:
+            plot.wait_for_close()
         return results
     except Exception as error:
+        if plot is not None:
+            plot.plt.close(plot.figure)
         message = failures.message or failure_message(error)
         if last_snapshot is None:
             last_snapshot = getattr(selector, "latest_results", None)
@@ -359,6 +377,10 @@ def main(argv=None):
         dataset = load_dataset(args.dataset)
         if not args.output.parent.is_dir() or args.output.is_dir():
             raise ValueError("--output must name a file in an existing directory")
+        if args.plot_output is not None and (
+            not args.plot_output.parent.is_dir() or args.plot_output.is_dir()
+        ):
+            raise ValueError("--plot-output must name a file in an existing directory")
     except (ValueError, OSError) as error:
         parser.error(str(error))
     try:
@@ -381,8 +403,22 @@ def main(argv=None):
         print(f"Search cost limit: ${args.max_search_cost_usd:.2f} (soft limit; scheduled work may exceed it).", flush=True)
     else:
         print("Search cost limit: not set.", flush=True)
+    plot = None
+    if args.live_plot or args.plot_output is not None:
+        from agentopt.visualization import LiveParetoPlot
+        try:
+            plot = LiveParetoPlot(
+                total_questions=len(dataset),
+                warm_total=len(args.models) * min(selector.warm_start_batch_size, len(dataset)),
+                output=args.plot_output,
+                show_window=args.live_plot,
+                stop_event=failures.stop_event,
+            )
+        except (RuntimeError, ValueError) as error:
+            parser.error(str(error))
     try:
-        return run_selection(selector, max_concurrent=args.max_concurrent, output=args.output, failures=failures)
+        return run_selection(selector, max_concurrent=args.max_concurrent, output=args.output,
+                             failures=failures, plot=plot)
     except BenchmarkRunError:
         raise SystemExit(1) from None
 

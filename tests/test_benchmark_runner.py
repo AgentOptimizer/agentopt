@@ -110,6 +110,8 @@ def test_terminal_sigint_saves_real_partial_run(monkeypatch, tmp_path, capsys, m
     ["--method", "ucb", "--stop-on-recommendation"],
     ["--method", "bayesian", "--seed", "42"],
     ["--evaluation-fraction", "nan"],
+    ["--live-plot"],
+    ["--plot-output", "frontier.png"],
 ])
 def test_invalid_options_fail_before_loading_sdk_or_constructing_selector(monkeypatch, tmp_path, flags):
     constructed = []
@@ -118,6 +120,44 @@ def test_invalid_options_fail_before_loading_sdk_or_constructing_selector(monkey
         runner.main(["--dataset", str(tmp_path / "missing.jsonl"), "--models", "first", *flags])
     assert error.value.code == 2
     assert constructed == []
+
+
+def test_multi_objective_runner_saves_actual_frontier(monkeypatch, tmp_path):
+    pytest.importorskip("matplotlib")
+    import matplotlib
+    matplotlib.use("Agg", force=True)
+
+    tracker = RecordingTracker()
+    source = SCRIPT.with_name("benchmark_sample.jsonl")
+    answers = dict(runner.load_dataset(source))
+
+    class FakeOpenAI:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, *, model, messages):
+            tracker.record(model, 1000)
+            answer = answers[messages[-1]["content"]]
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+    factory = agentopt.ModelSelector
+    monkeypatch.setattr(agentopt, "ModelSelector", lambda **kwargs: factory(
+        **kwargs, tracker=tracker,
+        model_prices={name: {"input_price": 1, "output_price": 0} for name in ("first", "second")},
+    ))
+    output = tmp_path / "results.json"
+    figure = tmp_path / "frontier.png"
+    result = runner.main([
+        "--dataset", str(source), "--models", "first", "second",
+        "--objective-mode", "multi", "--plot-output", str(figure),
+        "--output", str(output),
+    ])
+
+    assert result.is_final
+    assert json.loads(output.read_text())["total_evaluations"] == result.total_evaluations
+    assert figure.read_bytes().startswith(b"\x89PNG")
+    assert len(tracker.records) == result.total_evaluations
 
 
 def test_stop_handler_restored_if_selection_fails(tmp_path):

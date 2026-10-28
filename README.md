@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <em>A simple model swap can cut your agent's costs by 10–100x without sacrificing performance.</em>
+  <em>Explore quality–cost trade-offs for your agent with cost-efficient search.</em>
 </p>
 
 <p align="center">
@@ -20,6 +20,10 @@
 
 <p align="center">
   AgentOpt is supported by <a href="https://daplab.cs.columbia.edu/">DAPLab</a> at Columbia University.
+</p>
+
+<p align="center">
+  <img width="900" alt="HotpotQA evaluation cost and quality–cost recommendations" src="docs/assets/hotpotqa_cost_frontier_20seed_recommendations.png" />
 </p>
 
 ---

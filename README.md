@@ -22,6 +22,10 @@
   AgentOpt is supported by <a href="https://daplab.cs.columbia.edu/">DAPLab</a> at Columbia University.
 </p>
 
+<p align="center">
+  <img width="900" alt="HotpotQA evaluation cost and quality–cost recommendations" src="docs/assets/hotpotqa_cost_frontier_20seed_recommendations.png" />
+</p>
+
 ---
 
 ## News
@@ -41,14 +45,6 @@ On top of that one primitive, AgentOpt gives you three capabilities that share t
 **Model choices multiply across roles.** Our two-role benchmarks use 10 candidate models per role, yielding **100 configurations**. Exhaustively evaluating those configurations on just 100 examples requires **10,000 workflow runs**, each potentially involving multiple LLM calls. AgentOpt supports user-defined roles and candidate model sets: with 10 candidates per role, a five-role workflow would have **100,000 configurations**.
 
 AgentOpt uses Gittins selection by default to allocate evaluation effort using estimated quality, uncertainty, and evaluation cost, and the routing API lets you keep refining at runtime once you've shipped.
-
-### Cost-efficient Pareto recommendation
-
-AgentOpt's **CC-Gittins** approximates HotpotQA's quality–cost Pareto frontier at **84.14% lower mean evaluation cost** (\$9.93 versus \$62.58), with **97.66% mean precision** and **64.33% mean recall** over 20 seeds.
-
-![HotpotQA: CC-Gittins evaluation cost versus exhaustive evaluation, and quality–deployment-cost recommendations across 20 seeds](docs/assets/hotpotqa_cost_frontier_20seed_recommendations.png)
-
-The reference frontier uses all 100 planner–solver assignments (10 models per role), each evaluated on 200 questions. Checkpoints are selected post hoc per seed to illustrate approximate frontier coverage; this retrospective selection is not an online stopping rule.
 
 ## Use Cases
 

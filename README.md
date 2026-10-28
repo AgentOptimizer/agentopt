@@ -42,6 +42,14 @@ On top of that one primitive, AgentOpt gives you three capabilities that share t
 
 AgentOpt uses Gittins selection by default to allocate evaluation effort using estimated quality, uncertainty, and evaluation cost, and the routing API lets you keep refining at runtime once you've shipped.
 
+### Cost-efficient Pareto recommendation
+
+AgentOpt's **CC-Gittins** approximates HotpotQA's quality–cost Pareto frontier at **84.14% lower mean evaluation cost** (\$9.93 versus \$62.58), with **97.66% mean precision** and **64.33% mean recall** over 20 seeds.
+
+![HotpotQA: CC-Gittins evaluation cost versus exhaustive evaluation, and quality–deployment-cost recommendations across 20 seeds](docs/assets/hotpotqa_cost_frontier_20seed_recommendations.png)
+
+The reference frontier uses all 100 planner–solver assignments (10 models per role), each evaluated on 200 questions. Checkpoints are selected post hoc per seed to illustrate approximate frontier coverage; this retrospective selection is not an online stopping rule.
+
 ## Use Cases
 
 ### Offline model selection — find the best fixed combination

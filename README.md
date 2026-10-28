@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <em>A simple model swap can cut your agent's costs by 10–100x without sacrificing performance.</em>
+  <em>Explore quality–cost trade-offs for your agent with cost-efficient search.</em>
 </p>
 
 <p align="center">

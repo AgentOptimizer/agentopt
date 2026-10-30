@@ -2,7 +2,7 @@
 
 HotpotQA and MathQA evaluate **10 candidates in each of two roles**, giving **100 model combinations and 20,000 configuration–question outcomes per benchmark**. Their tables report complete 200-question means for quality, deployment cost, and server-reported LLM latency.
 
-GPQA Diamond and BFCL are separate single-role benchmarks with nine candidates. Their selector comparisons below use 50 random seeds. The HotpotQA/MathQA measurement definitions and data links appear below.
+GPQA Diamond and BFCL are separate single-role benchmarks with nine candidates. Their model tables report mean server LLM latency and invocation cost per complete sample; their selector comparisons use 50 random seeds. Measurement definitions and fixed data-source links accompany the benchmark sections below.
 
 ## Models
 
@@ -24,14 +24,26 @@ The table lists the token rates used for cost accounting in the recorded experim
 
 ## Cross-Benchmark Summary
 
-| Benchmark | Roles | Questions | Configurations | Best assignment | Best mean score | Full-matrix cost |
+| Benchmark | Roles | Questions | Configurations | Best assignment | Best mean score | Full-matrix evaluation cost (USD) |
 |:----------|------:|----------:|---------------:|:----------------|----------------:|-----------------:|
 | GPQA Diamond | 1 | 198 | 9 | Claude Opus 4.6 | 74.75% accuracy | $4.71 |
 | BFCL Multi-Turn | 1 | 200 | 9 | Kimi K2.5, Claude Opus 4.6, Qwen3 Next 80B A3B (tied) | 70.00% accuracy | $84.80 |
 | HotpotQA | 2 | 200 | 100 | Qwen3 32B / DeepSeek R1 | 74.66% F1 | $62.58 |
 | MathQA | 2 | 200 | 100 | Claude Opus 4.6 / gpt-oss-20b | 97.50% accuracy | $234.34 |
 
-**Full-matrix cost** sums the recorded invocation costs across every configuration and question. The HotpotQA and MathQA assignment names are ordered by their first and second workflow roles.
+**Full-matrix evaluation cost** is the sum of the archived per-configuration benchmark totals. For GPQA and BFCL these totals are $4.7103 and $84.8049, respectively, displayed to cents above. The HotpotQA and MathQA assignment names are ordered by their first and second workflow roles.
+
+---
+
+## GPQA and BFCL Data and Measurements
+
+The following **Model Results** tables describe one complete sample: a GPQA question or a BFCL multi-turn task. The [GPQA source CSV](https://github.com/AgentOptimizer/agentopt/blob/b87e652b6a0c90e31daeb47054ecca615f25acee/cached_results/gpqa/brute_force_results.csv) and [BFCL source CSV](https://github.com/AgentOptimizer/agentopt/blob/b87e652b6a0c90e31daeb47054ecca615f25acee/cached_results/bfcl/brute_force_results.csv) preserve the model-level server latency means and benchmark cost totals at a fixed data revision.
+
+- **Mean server LLM latency:** sum the recorded Bedrock `metrics.latencyMs` values across LLM calls within each sample, convert milliseconds to seconds, then average across samples with recorded server metrics. For BFCL, the sum spans recorded LLM calls across the multi-turn task; it is not a per-call or per-turn mean. This measure excludes client processing, network transfer, tool execution, and worker-queue time. Missing server metrics are excluded rather than counted as zero. The retained BFCL records provide server totals for all 200 samples per model. GPQA uses the archived model means; its retained replay lookup does not preserve the per-sample server metrics needed to independently audit their coverage.
+- **Mean cost:** divide the archived per-model benchmark total by 198 GPQA questions or 200 BFCL samples. Cost accounts for LLM invocation token usage at the recorded experiment prices; it is not a provider invoice or the cost of running tools and other infrastructure. The source CSV's `Cost ($)` is a benchmark total, not a per-sample amount. Calculations retain the source totals at their recorded precision; per-sample means are rounded to six decimal places only for display. Full-matrix totals are summed directly from the archived totals.
+- **Mean search cost:** the selector tables report the total evaluation cost incurred during model selection, averaged over 50 seeds, in USD per search run. Savings are relative to exhaustive evaluation of the same benchmark matrix. This is distinct from the cost of serving one sample with the selected model.
+
+The retained GPQA replay lookup assigns each question its model's mean cost and has no per-question token records; it cannot independently recover historical question-level cost variation. BFCL retains question-level cost and token records. These provenance limits apply to the archived GPQA/BFCL model results and replay data.
 
 ---
 
@@ -41,22 +53,22 @@ The table lists the token rates used for cost accounting in the recorded experim
 
 ### Model Results
 
-| Rank | Model | Accuracy | Avg Latency (s) | Cost |
-|:-----|:------|:---------|:-----------------|:-----|
-| 1 | Claude Opus 4.6 | **74.75%** | 9.16 | $2.48 |
-| 2 | Kimi K2.5 | 72.73% | 16.41 | $1.13 |
-| 3 | gpt-oss-120b | 68.18% | 6.46 | $0.20 |
-| 4 | Claude Haiku 4.5 | 59.60% | 3.70 | $0.51 |
-| 5 | Qwen3 Next 80B A3B | 51.01% | 10.33 | $0.14 |
-| 6 | gpt-oss-20b | 50.00% | 6.21 | $0.14 |
-| 7 | Qwen3 32B | 46.97% | 1.54 | $0.08 |
-| 8 | Ministral 3 8B | 36.87% | 0.25 | $0.00 |
-| 9 | Claude 3 Haiku | 34.85% | 1.79 | $0.06 |
+| Rank | Model | Accuracy | Mean server LLM latency (s/sample) | Mean cost (USD/sample) |
+|:-----|:------|:---------|----------------------------------:|-----------------------:|
+| 1 | Claude Opus 4.6 | **74.75%** | 9.16 | $0.012471 |
+| 2 | Kimi K2.5 | 72.73% | 16.41 | $0.005730 |
+| 3 | gpt-oss-120b | 68.18% | 6.46 | $0.000960 |
+| 4 | Claude Haiku 4.5 | 59.60% | 3.70 | $0.002611 |
+| 5 | Qwen3 Next 80B A3B | 51.01% | 10.33 | $0.000671 |
+| 6 | gpt-oss-20b | 50.00% | 6.21 | $0.000658 |
+| 7 | Qwen3 32B | 46.97% | 1.54 | $0.000370 |
+| 8 | Ministral 3 8B | 36.87% | 0.25 | $0.000036 |
+| 9 | Claude 3 Haiku | 34.85% | 1.79 | $0.000283 |
 
 ### Selector Comparison
 
-| Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
-|:---------|:----------|:--------------|:------------|:-----|:--------|
+| Selector | Find Rate | Mean Accuracy | Evaluations | Mean search cost (USD/run) | Savings |
+|:---------|:----------|:--------------|:------------|---------------------------:|:--------|
 | Brute Force | 100% | 74.75% | 1,782 | $4.71 | -- |
 | Arm Elimination | 94% | 74.10% | 666 | $3.57 | **24%** |
 | Bayesian Opt | 56% | 72.43% | 990 | $2.59 | 45% |
@@ -87,22 +99,22 @@ Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) 
 
 ### Model Results
 
-| Rank | Model | Accuracy | Avg Latency (s) | Cost |
-|:-----|:------|:---------|:-----------------|:-----|
-| 1 | Kimi K2.5 | **70.00%** | 21.30 | $3.86 |
-| 2 | Claude Opus 4.6 | 70.00% | 42.35 | $60.14 |
-| 3 | Qwen3 Next 80B A3B | 70.00% | 60.54 | $1.90 |
-| 4 | Claude Haiku 4.5 | 65.00% | 20.90 | $11.98 |
-| 5 | gpt-oss-120b | 58.50% | 20.01 | $1.16 |
-| 6 | Qwen3 32B | 47.00% | 10.78 | $1.00 |
-| 7 | Claude 3 Haiku | 43.50% | 17.96 | $3.42 |
-| 8 | gpt-oss-20b | 42.00% | 10.03 | $0.42 |
-| 9 | Ministral 3 8B | 34.00% | 29.03 | $0.92 |
+| Rank | Model | Accuracy | Mean server LLM latency (s/sample) | Mean cost (USD/sample) |
+|:-----|:------|:---------|----------------------------------:|-----------------------:|
+| 1 | Kimi K2.5 | **70.00%** | 21.30 | $0.019256 |
+| 2 | Claude Opus 4.6 | 70.00% | 42.35 | $0.300663 |
+| 3 | Qwen3 Next 80B A3B | 70.00% | 60.54 | $0.009481 |
+| 4 | Claude Haiku 4.5 | 65.00% | 20.90 | $0.059920 |
+| 5 | gpt-oss-120b | 58.50% | 20.01 | $0.005804 |
+| 6 | Qwen3 32B | 47.00% | 10.78 | $0.005028 |
+| 7 | Claude 3 Haiku | 43.50% | 17.96 | $0.017096 |
+| 8 | gpt-oss-20b | 42.00% | 10.03 | $0.002145 |
+| 9 | Ministral 3 8B | 34.00% | 29.03 | $0.004633 |
 
 ### Selector Comparison
 
-| Selector | Find Rate | Mean Accuracy | Evaluations | Cost | Savings |
-|:---------|:----------|:--------------|:------------|:-----|:--------|
+| Selector | Find Rate | Mean Accuracy | Evaluations | Mean search cost (USD/run) | Savings |
+|:---------|:----------|:--------------|:------------|---------------------------:|:--------|
 | Brute Force | 100% | 70.00% | 1,800 | $84.80 | -- |
 | Arm Elimination | 88% | 69.37% | 912 | $74.39 | **12%** |
 | Bayesian Opt | 44% | 69.27% | 1,000 | $50.64 | 40% |

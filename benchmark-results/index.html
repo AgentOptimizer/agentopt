@@ -1,0 +1,4289 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Find the right LLM models for your AI agents">
+      
+      
+      
+        <link rel="canonical" href="https://agentoptimizer.github.io/agentopt/benchmark-results/">
+      
+      
+        <link rel="prev" href="../examples/llamaindex/">
+      
+      
+        <link rel="next" href="../api/selectors/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo-icon-transparent.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Benchmark Results - AgentOpt</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=DM+Sans:300,300i,400,400i,700,700i%7CDM+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"DM Sans";--md-code-font:"DM Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#benchmark-results" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AgentOpt" class="md-header__button md-logo" aria-label="AgentOpt" data-md-component="logo">
+      
+  <img src="../assets/logo-full-text-transparent-dark-v2.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AgentOpt
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Benchmark Results
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AgentOptimizer/agentopt" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AgentOptimizer/agentopt
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../concepts/how-it-works/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../examples/openai/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Examples
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Benchmark Results
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../api/selectors/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../blog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Blog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AgentOpt" class="md-nav__button md-logo" aria-label="AgentOpt" data-md-component="logo">
+      
+  <img src="../assets/logo-full-text-transparent-dark-v2.png" alt="logo">
+
+    </a>
+    AgentOpt
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AgentOptimizer/agentopt" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AgentOptimizer/agentopt
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/your-benchmark/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run Your Benchmark
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/algorithms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection Algorithms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/caching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Response Caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/openai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAI SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/langchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LangChain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/crewai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CrewAI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LlamaIndex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="./" class="md-nav__link md-nav__link--active">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmark Results
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Benchmark Results
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/selectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/tracker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tracker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+    
+  
+  
+    <li class="md-nav__item">
+      <a href="../blog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-benchmark-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-Benchmark Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpqa-and-bfcl-data-and-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPQA and BFCL Data and Measurements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpqa-diamond" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPQA Diamond
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GPQA Diamond">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#selector-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selector Comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#thinking-effort-ablation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thinking Effort Ablation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bfcl-multi-turn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BFCL Multi-Turn
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BFCL Multi-Turn">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-results_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#selector-comparison_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selector Comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hotpotqa-and-mathqa-data-and-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HotpotQA and MathQA Data and Measurements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hotpotqa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HotpotQA
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HotpotQA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#top-15-combos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top 15 Combos
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bottom-15-combos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bottom 15 Combos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mathqa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MathQA
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MathQA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#top-15-combos_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top 15 Combos
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bottom-15-combos_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bottom 15 Combos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="benchmark-results">Benchmark Results<a class="headerlink" href="#benchmark-results" title="Permanent link">&para;</a></h1>
+<p>HotpotQA and MathQA evaluate <strong>10 candidates in each of two roles</strong>, giving <strong>100 model combinations and 20,000 configuration–question outcomes per benchmark</strong>. Their tables report complete 200-question means for quality, deployment cost, and server-reported LLM latency.</p>
+<p>GPQA Diamond and BFCL are separate single-role benchmarks with nine candidates. Their model tables report mean server LLM latency and invocation cost per complete sample; their selector comparisons use 50 random seeds. Measurement definitions and fixed data-source links accompany the benchmark sections below.</p>
+<h2 id="models">Models<a class="headerlink" href="#models" title="Permanent link">&para;</a></h2>
+<p>The table lists the token rates used for cost accounting in the recorded experiments, in USD per million input or output tokens. These are experiment accounting rates, not a live pricing quote. The <strong>All four</strong> rows appear in both candidate sets; DeepSeek R1 and GPT-5.6 Luna are used by HotpotQA/MathQA, while Claude 3 Haiku is used by GPQA/BFCL.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Model</th>
+<th style="text-align: left;">Provider</th>
+<th style="text-align: right;">Input $/MTok</th>
+<th style="text-align: right;">Output $/MTok</th>
+<th style="text-align: left;">Benchmarks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Anthropic</td>
+<td style="text-align: right;">$5.00</td>
+<td style="text-align: right;">$25.00</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Anthropic</td>
+<td style="text-align: right;">$1.00</td>
+<td style="text-align: right;">$5.00</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">Claude 3 Haiku</td>
+<td style="text-align: left;">Anthropic</td>
+<td style="text-align: right;">$0.25</td>
+<td style="text-align: right;">$1.25</td>
+<td style="text-align: left;">GPQA / BFCL</td>
+</tr>
+<tr>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">OpenAI</td>
+<td style="text-align: right;">$0.15</td>
+<td style="text-align: right;">$0.60</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">OpenAI</td>
+<td style="text-align: right;">$0.07</td>
+<td style="text-align: right;">$0.30</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Moonshot AI</td>
+<td style="text-align: right;">$0.60</td>
+<td style="text-align: right;">$3.00</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Qwen</td>
+<td style="text-align: right;">$0.15</td>
+<td style="text-align: right;">$1.20</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Qwen</td>
+<td style="text-align: right;">$0.15</td>
+<td style="text-align: right;">$0.60</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Mistral</td>
+<td style="text-align: right;">$0.15</td>
+<td style="text-align: right;">$0.15</td>
+<td style="text-align: left;">All four</td>
+</tr>
+<tr>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">DeepSeek</td>
+<td style="text-align: right;">$1.35</td>
+<td style="text-align: right;">$5.40</td>
+<td style="text-align: left;">HotpotQA / MathQA</td>
+</tr>
+<tr>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">OpenAI</td>
+<td style="text-align: right;">$0.22</td>
+<td style="text-align: right;">$1.32</td>
+<td style="text-align: left;">HotpotQA / MathQA</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cross-benchmark-summary">Cross-Benchmark Summary<a class="headerlink" href="#cross-benchmark-summary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Benchmark</th>
+<th style="text-align: right;">Roles</th>
+<th style="text-align: right;">Questions</th>
+<th style="text-align: right;">Configurations</th>
+<th style="text-align: left;">Best assignment</th>
+<th style="text-align: right;">Best mean score</th>
+<th style="text-align: right;">Full-matrix evaluation cost (USD)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">GPQA Diamond</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">198</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: right;">74.75% accuracy</td>
+<td style="text-align: right;">$4.71</td>
+</tr>
+<tr>
+<td style="text-align: left;">BFCL Multi-Turn</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: left;">Kimi K2.5, Claude Opus 4.6, Qwen3 Next 80B A3B (tied)</td>
+<td style="text-align: right;">70.00% accuracy</td>
+<td style="text-align: right;">$84.80</td>
+</tr>
+<tr>
+<td style="text-align: left;">HotpotQA</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: left;">Qwen3 32B / DeepSeek R1</td>
+<td style="text-align: right;">74.66% F1</td>
+<td style="text-align: right;">$62.58</td>
+</tr>
+<tr>
+<td style="text-align: left;">MathQA</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: left;">Claude Opus 4.6 / gpt-oss-20b</td>
+<td style="text-align: right;">97.50% accuracy</td>
+<td style="text-align: right;">$234.34</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Full-matrix evaluation cost</strong> is the sum of the archived per-configuration benchmark totals. For GPQA and BFCL these totals are $4.7103 and $84.8049, respectively, displayed to cents above. The HotpotQA and MathQA assignment names are ordered by their first and second workflow roles.</p>
+<hr />
+<h2 id="gpqa-and-bfcl-data-and-measurements">GPQA and BFCL Data and Measurements<a class="headerlink" href="#gpqa-and-bfcl-data-and-measurements" title="Permanent link">&para;</a></h2>
+<p>The following <strong>Model Results</strong> tables describe one complete sample: a GPQA question or a BFCL multi-turn task. The <a href="https://github.com/AgentOptimizer/agentopt/blob/b87e652b6a0c90e31daeb47054ecca615f25acee/cached_results/gpqa/brute_force_results.csv">GPQA source CSV</a> and <a href="https://github.com/AgentOptimizer/agentopt/blob/b87e652b6a0c90e31daeb47054ecca615f25acee/cached_results/bfcl/brute_force_results.csv">BFCL source CSV</a> preserve the model-level server latency means and benchmark cost totals at a fixed data revision.</p>
+<ul>
+<li><strong>Mean server LLM latency:</strong> sum the recorded Bedrock <code>metrics.latencyMs</code> values across LLM calls within each sample, convert milliseconds to seconds, then average across samples with recorded server metrics. For BFCL, the sum spans recorded LLM calls across the multi-turn task; it is not a per-call or per-turn mean. This measure excludes client processing, network transfer, tool execution, and worker-queue time. Missing server metrics are excluded rather than counted as zero. The retained BFCL records provide server totals for all 200 samples per model. GPQA uses the archived model means; its retained replay lookup does not preserve the per-sample server metrics needed to independently audit their coverage.</li>
+<li><strong>Mean cost:</strong> divide the archived per-model benchmark total by 198 GPQA questions or 200 BFCL samples. Cost accounts for LLM invocation token usage at the recorded experiment prices; it is not a provider invoice or the cost of running tools and other infrastructure. The source CSV's <code>Cost ($)</code> is a benchmark total, not a per-sample amount. Calculations retain the source totals at their recorded precision; per-sample means are rounded to six decimal places only for display. Full-matrix totals are summed directly from the archived totals.</li>
+<li><strong>Mean search cost:</strong> the selector tables report the total evaluation cost incurred during model selection, averaged over 50 seeds, in USD per search run. Savings are relative to exhaustive evaluation of the same benchmark matrix. This is distinct from the cost of serving one sample with the selected model.</li>
+</ul>
+<p>The retained GPQA replay lookup assigns each question its model's mean cost and has no per-question token records; it cannot independently recover historical question-level cost variation. BFCL retains question-level cost and token records. These provenance limits apply to the archived GPQA/BFCL model results and replay data.</p>
+<hr />
+<h2 id="gpqa-diamond">GPQA Diamond<a class="headerlink" href="#gpqa-diamond" title="Permanent link">&para;</a></h2>
+<p><strong>Graduate-level science QA</strong> — 198 multiple-choice questions from the GPQA Diamond dataset. Single-agent architecture: one LLM answers directly.</p>
+<h3 id="model-results">Model Results<a class="headerlink" href="#model-results" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Model</th>
+<th style="text-align: left;">Accuracy</th>
+<th style="text-align: right;">Mean server LLM latency (s/sample)</th>
+<th style="text-align: right;">Mean cost (USD/sample)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;"><strong>74.75%</strong></td>
+<td style="text-align: right;">9.16</td>
+<td style="text-align: right;">$0.012471</td>
+</tr>
+<tr>
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">72.73%</td>
+<td style="text-align: right;">16.41</td>
+<td style="text-align: right;">$0.005730</td>
+</tr>
+<tr>
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">68.18%</td>
+<td style="text-align: right;">6.46</td>
+<td style="text-align: right;">$0.000960</td>
+</tr>
+<tr>
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">59.60%</td>
+<td style="text-align: right;">3.70</td>
+<td style="text-align: right;">$0.002611</td>
+</tr>
+<tr>
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">51.01%</td>
+<td style="text-align: right;">10.33</td>
+<td style="text-align: right;">$0.000671</td>
+</tr>
+<tr>
+<td style="text-align: left;">6</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">50.00%</td>
+<td style="text-align: right;">6.21</td>
+<td style="text-align: right;">$0.000658</td>
+</tr>
+<tr>
+<td style="text-align: left;">7</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">46.97%</td>
+<td style="text-align: right;">1.54</td>
+<td style="text-align: right;">$0.000370</td>
+</tr>
+<tr>
+<td style="text-align: left;">8</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">36.87%</td>
+<td style="text-align: right;">0.25</td>
+<td style="text-align: right;">$0.000036</td>
+</tr>
+<tr>
+<td style="text-align: left;">9</td>
+<td style="text-align: left;">Claude 3 Haiku</td>
+<td style="text-align: left;">34.85%</td>
+<td style="text-align: right;">1.79</td>
+<td style="text-align: right;">$0.000283</td>
+</tr>
+</tbody>
+</table>
+<h3 id="selector-comparison">Selector Comparison<a class="headerlink" href="#selector-comparison" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Selector</th>
+<th style="text-align: left;">Find Rate</th>
+<th style="text-align: left;">Mean Accuracy</th>
+<th style="text-align: left;">Evaluations</th>
+<th style="text-align: right;">Mean search cost (USD/run)</th>
+<th style="text-align: left;">Savings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Brute Force</td>
+<td style="text-align: left;">100%</td>
+<td style="text-align: left;">74.75%</td>
+<td style="text-align: left;">1,782</td>
+<td style="text-align: right;">$4.71</td>
+<td style="text-align: left;">--</td>
+</tr>
+<tr>
+<td style="text-align: left;">Arm Elimination</td>
+<td style="text-align: left;">94%</td>
+<td style="text-align: left;">74.10%</td>
+<td style="text-align: left;">666</td>
+<td style="text-align: right;">$3.57</td>
+<td style="text-align: left;"><strong>24%</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;">Bayesian Opt</td>
+<td style="text-align: left;">56%</td>
+<td style="text-align: left;">72.43%</td>
+<td style="text-align: left;">990</td>
+<td style="text-align: right;">$2.59</td>
+<td style="text-align: left;">45%</td>
+</tr>
+</tbody>
+</table>
+<h3 id="thinking-effort-ablation">Thinking Effort Ablation<a class="headerlink" href="#thinking-effort-ablation" title="Permanent link">&para;</a></h3>
+<p>Impact of thinking/reasoning budget on GPQA accuracy for Opus (adaptive effort) and Haiku 4.5 (budget_tokens). Baseline "none" rows use brute force results.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Model</th>
+<th style="text-align: left;">Effort/Budget Tokens</th>
+<th style="text-align: left;">Accuracy</th>
+<th style="text-align: left;">Cost/Sample</th>
+<th style="text-align: left;">Server Latency/Sample (s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Opus</td>
+<td style="text-align: left;">high</td>
+<td style="text-align: left;">83.90%</td>
+<td style="text-align: left;">$0.113</td>
+<td style="text-align: left;">70.4</td>
+</tr>
+<tr>
+<td style="text-align: left;">Opus</td>
+<td style="text-align: left;">medium</td>
+<td style="text-align: left;">79.30%</td>
+<td style="text-align: left;">$0.0341</td>
+<td style="text-align: left;">23.9</td>
+</tr>
+<tr>
+<td style="text-align: left;">Opus</td>
+<td style="text-align: left;">none</td>
+<td style="text-align: left;">74.75%</td>
+<td style="text-align: left;">$0.0125</td>
+<td style="text-align: left;">9.16</td>
+</tr>
+<tr>
+<td style="text-align: left;">Haiku 4.5</td>
+<td style="text-align: left;">16K</td>
+<td style="text-align: left;">71.20%</td>
+<td style="text-align: left;">$0.0192</td>
+<td style="text-align: left;">30.6</td>
+</tr>
+<tr>
+<td style="text-align: left;">Haiku 4.5</td>
+<td style="text-align: left;">32K</td>
+<td style="text-align: left;">71.20%</td>
+<td style="text-align: left;">$0.0361</td>
+<td style="text-align: left;">57.4</td>
+</tr>
+<tr>
+<td style="text-align: left;">Opus</td>
+<td style="text-align: left;">low</td>
+<td style="text-align: left;">61.60%</td>
+<td style="text-align: left;">$0.00302</td>
+<td style="text-align: left;">3.06</td>
+</tr>
+<tr>
+<td style="text-align: left;">Haiku 4.5</td>
+<td style="text-align: left;">5K</td>
+<td style="text-align: left;">60.10%</td>
+<td style="text-align: left;">$0.00925</td>
+<td style="text-align: left;">15.0</td>
+</tr>
+<tr>
+<td style="text-align: left;">Haiku 4.5</td>
+<td style="text-align: left;">none</td>
+<td style="text-align: left;">59.60%</td>
+<td style="text-align: left;">$0.0026</td>
+<td style="text-align: left;">3.70</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="bfcl-multi-turn">BFCL Multi-Turn<a class="headerlink" href="#bfcl-multi-turn" title="Permanent link">&para;</a></h2>
+<p><strong>Multi-turn function calling</strong> — 200 samples from the Berkeley Function Calling Leaderboard (BFCL v3). Each sample has multiple turns with tool-calling loops. Models that don't support native function calling (Qwen3 32B, Kimi K2.5, Ministral 3 8B) use a text-based prompting fallback.</p>
+<div class="admonition note">
+<p class="admonition-title">Comparison with official BFCL leaderboard</p>
+<p>Our evaluation uses a <strong>live LangGraph agent</strong> that executes tool calls against real backend state machines, whereas the official BFCL leaderboard uses static response matching. Our accuracy numbers are not directly comparable to the leaderboard — they reflect end-to-end agent performance including tool execution, state management, and multi-step reasoning.</p>
+</div>
+<h3 id="model-results_1">Model Results<a class="headerlink" href="#model-results_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Model</th>
+<th style="text-align: left;">Accuracy</th>
+<th style="text-align: right;">Mean server LLM latency (s/sample)</th>
+<th style="text-align: right;">Mean cost (USD/sample)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;"><strong>70.00%</strong></td>
+<td style="text-align: right;">21.30</td>
+<td style="text-align: right;">$0.019256</td>
+</tr>
+<tr>
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">70.00%</td>
+<td style="text-align: right;">42.35</td>
+<td style="text-align: right;">$0.300663</td>
+</tr>
+<tr>
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">70.00%</td>
+<td style="text-align: right;">60.54</td>
+<td style="text-align: right;">$0.009481</td>
+</tr>
+<tr>
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">65.00%</td>
+<td style="text-align: right;">20.90</td>
+<td style="text-align: right;">$0.059920</td>
+</tr>
+<tr>
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">58.50%</td>
+<td style="text-align: right;">20.01</td>
+<td style="text-align: right;">$0.005804</td>
+</tr>
+<tr>
+<td style="text-align: left;">6</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">47.00%</td>
+<td style="text-align: right;">10.78</td>
+<td style="text-align: right;">$0.005028</td>
+</tr>
+<tr>
+<td style="text-align: left;">7</td>
+<td style="text-align: left;">Claude 3 Haiku</td>
+<td style="text-align: left;">43.50%</td>
+<td style="text-align: right;">17.96</td>
+<td style="text-align: right;">$0.017096</td>
+</tr>
+<tr>
+<td style="text-align: left;">8</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">42.00%</td>
+<td style="text-align: right;">10.03</td>
+<td style="text-align: right;">$0.002145</td>
+</tr>
+<tr>
+<td style="text-align: left;">9</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">34.00%</td>
+<td style="text-align: right;">29.03</td>
+<td style="text-align: right;">$0.004633</td>
+</tr>
+</tbody>
+</table>
+<h3 id="selector-comparison_1">Selector Comparison<a class="headerlink" href="#selector-comparison_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Selector</th>
+<th style="text-align: left;">Find Rate</th>
+<th style="text-align: left;">Mean Accuracy</th>
+<th style="text-align: left;">Evaluations</th>
+<th style="text-align: right;">Mean search cost (USD/run)</th>
+<th style="text-align: left;">Savings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Brute Force</td>
+<td style="text-align: left;">100%</td>
+<td style="text-align: left;">70.00%</td>
+<td style="text-align: left;">1,800</td>
+<td style="text-align: right;">$84.80</td>
+<td style="text-align: left;">--</td>
+</tr>
+<tr>
+<td style="text-align: left;">Arm Elimination</td>
+<td style="text-align: left;">88%</td>
+<td style="text-align: left;">69.37%</td>
+<td style="text-align: left;">912</td>
+<td style="text-align: right;">$74.39</td>
+<td style="text-align: left;"><strong>12%</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;">Bayesian Opt</td>
+<td style="text-align: left;">44%</td>
+<td style="text-align: left;">69.27%</td>
+<td style="text-align: left;">1,000</td>
+<td style="text-align: right;">$50.64</td>
+<td style="text-align: left;">40%</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="hotpotqa-and-mathqa-data-and-measurements">HotpotQA and MathQA Data and Measurements<a class="headerlink" href="#hotpotqa-and-mathqa-data-and-measurements" title="Permanent link">&para;</a></h2>
+<p>Each linked CSV contains 20,000 rows keyed by <code>configuration_id</code> and <code>question_id</code>, with scores, token usage, invocation cost, <code>latency_seconds</code>, and <code>server_latency_ms</code>. These are per-question workflow summaries, rather than per-call transcripts.</p>
+<ul>
+<li><a href="https://github.com/AgentOptimizer/agentopt/blob/fb21fbbb29d757a38ca314e0df7b25a3c8f335ce/experiments/missing_cells/completed/hotpotqa_lookup.10x10.csv">HotpotQA complete 10×10 CSV</a> — 100 configurations × 200 questions.</li>
+<li><a href="https://github.com/AgentOptimizer/agentopt/blob/fb21fbbb29d757a38ca314e0df7b25a3c8f335ce/experiments/missing_cells/completed/mathqa_lookup.10x10.csv">MathQA complete 10×10 CSV</a> — 100 configurations × 200 questions.</li>
+</ul>
+<p>The links pin a specific data commit so the published tables can be reproduced.</p>
+<ul>
+<li><strong>Quality:</strong> HotpotQA reports mean token-level F1; MathQA reports the proportion of correct multiple-choice answers. Every configuration uses the same 200 questions, including zero-score outcomes.</li>
+<li><strong>Deployment cost:</strong> mean recorded invocation cost per question, calculated from model-specific input and output token usage. It is an accounting measure, not an amount read from a provider bill. The full-matrix costs above sum all 20,000 outcomes.</li>
+<li><strong>Server latency:</strong> each workflow/question's <code>server_latency_ms</code> field sums the server-reported <code>metrics.latencyMs</code> values of successful LLM calls. The tables divide this field by 1,000 to obtain seconds, then average over the 200 questions. This measure excludes tool execution, client processing, network transfer, and worker queue time. It is distinct from the CSV's <code>latency_seconds</code> field and the package's runtime workflow timer.</li>
+</ul>
+<p>The tables rank configurations by full-benchmark mean quality, breaking exact ties by lower deployment cost, then lower server latency. All costs in the following configuration tables are <strong>USD per question</strong>.</p>
+<hr />
+<h2 id="hotpotqa">HotpotQA<a class="headerlink" href="#hotpotqa" title="Permanent link">&para;</a></h2>
+<p><strong>Multi-hop question answering</strong> — 200 questions from the HotpotQA distractor setting. A planner proposes search steps and can delegate to a solver with tool access. Ten candidates per role give <strong>100 model combinations</strong>. Quality is mean token-level F1 over all 200 questions, displayed as a percentage.</p>
+<h3 id="top-15-combos">Top 15 Combos<a class="headerlink" href="#top-15-combos" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Planner</th>
+<th style="text-align: left;">Solver</th>
+<th style="text-align: left;">Mean F1</th>
+<th style="text-align: right;">Server latency (s/query)</th>
+<th style="text-align: right;">Cost (USD/query)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">74.66%</td>
+<td style="text-align: right;">3.00</td>
+<td style="text-align: right;">$0.004038</td>
+</tr>
+<tr>
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">74.27%</td>
+<td style="text-align: right;">4.97</td>
+<td style="text-align: right;">$0.013209</td>
+</tr>
+<tr>
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">73.02%</td>
+<td style="text-align: right;">4.26</td>
+<td style="text-align: right;">$0.013245</td>
+</tr>
+<tr>
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">72.10%</td>
+<td style="text-align: right;">4.67</td>
+<td style="text-align: right;">$0.013348</td>
+</tr>
+<tr>
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">72.00%</td>
+<td style="text-align: right;">3.11</td>
+<td style="text-align: right;">$0.003867</td>
+</tr>
+<tr>
+<td style="text-align: left;">6</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">71.83%</td>
+<td style="text-align: right;">3.07</td>
+<td style="text-align: right;">$0.000639</td>
+</tr>
+<tr>
+<td style="text-align: left;">7</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">71.25%</td>
+<td style="text-align: right;">3.73</td>
+<td style="text-align: right;">$0.004061</td>
+</tr>
+<tr>
+<td style="text-align: left;">8</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">70.91%</td>
+<td style="text-align: right;">3.41</td>
+<td style="text-align: right;">$0.004304</td>
+</tr>
+<tr>
+<td style="text-align: left;">9</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">70.04%</td>
+<td style="text-align: right;">2.66</td>
+<td style="text-align: right;">$0.000630</td>
+</tr>
+<tr>
+<td style="text-align: left;">10</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">69.96%</td>
+<td style="text-align: right;">4.49</td>
+<td style="text-align: right;">$0.012142</td>
+</tr>
+<tr>
+<td style="text-align: left;">11</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">69.60%</td>
+<td style="text-align: right;">2.40</td>
+<td style="text-align: right;">$0.002414</td>
+</tr>
+<tr>
+<td style="text-align: left;">12</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">68.99%</td>
+<td style="text-align: right;">5.64</td>
+<td style="text-align: right;">$0.000441</td>
+</tr>
+<tr>
+<td style="text-align: left;">13</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">68.89%</td>
+<td style="text-align: right;">13.52</td>
+<td style="text-align: right;">$0.000330</td>
+</tr>
+<tr>
+<td style="text-align: left;">14</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">68.70%</td>
+<td style="text-align: right;">3.65</td>
+<td style="text-align: right;">$0.000615</td>
+</tr>
+<tr>
+<td style="text-align: left;">15</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">68.61%</td>
+<td style="text-align: right;">27.14</td>
+<td style="text-align: right;">$0.000311</td>
+</tr>
+</tbody>
+</table>
+<h3 id="bottom-15-combos">Bottom 15 Combos<a class="headerlink" href="#bottom-15-combos" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Planner</th>
+<th style="text-align: left;">Solver</th>
+<th style="text-align: left;">Mean F1</th>
+<th style="text-align: right;">Server latency (s/query)</th>
+<th style="text-align: right;">Cost (USD/query)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">86</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">36.13%</td>
+<td style="text-align: right;">2.89</td>
+<td style="text-align: right;">$0.002297</td>
+</tr>
+<tr>
+<td style="text-align: left;">87</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">32.42%</td>
+<td style="text-align: right;">4.14</td>
+<td style="text-align: right;">$0.003514</td>
+</tr>
+<tr>
+<td style="text-align: left;">88</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">32.19%</td>
+<td style="text-align: right;">3.92</td>
+<td style="text-align: right;">$0.003614</td>
+</tr>
+<tr>
+<td style="text-align: left;">89</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">90</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">91</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">92</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">93</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">31.95%</td>
+<td style="text-align: right;">4.60</td>
+<td style="text-align: right;">$0.010105</td>
+</tr>
+<tr>
+<td style="text-align: left;">94</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">31.88%</td>
+<td style="text-align: right;">4.57</td>
+<td style="text-align: right;">$0.010136</td>
+</tr>
+<tr>
+<td style="text-align: left;">95</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">31.77%</td>
+<td style="text-align: right;">4.16</td>
+<td style="text-align: right;">$0.010151</td>
+</tr>
+<tr>
+<td style="text-align: left;">96</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">31.71%</td>
+<td style="text-align: right;">4.19</td>
+<td style="text-align: right;">$0.010111</td>
+</tr>
+<tr>
+<td style="text-align: left;">97</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">31.22%</td>
+<td style="text-align: right;">2.60</td>
+<td style="text-align: right;">$0.010142</td>
+</tr>
+<tr>
+<td style="text-align: left;">98</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">31.22%</td>
+<td style="text-align: right;">2.60</td>
+<td style="text-align: right;">$0.010142</td>
+</tr>
+<tr>
+<td style="text-align: left;">99</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">26.63%</td>
+<td style="text-align: right;">3.47</td>
+<td style="text-align: right;">$0.003471</td>
+</tr>
+<tr>
+<td style="text-align: left;">100</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">26.49%</td>
+<td style="text-align: right;">3.40</td>
+<td style="text-align: right;">$0.003954</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Role behavior matters</p>
+<p>Claude Opus 4.6 planner combinations score 31.22–31.96% mean F1 in this workflow. The planner can terminate with a direct answer instead of delegating to the solver, so model capability alone does not determine the best role assignment. The highest-scoring assignment here uses Qwen3 32B as planner and DeepSeek R1 as solver (74.66% mean F1).</p>
+</div>
+<details class="note">
+<summary>Full 100 Combo Results</summary>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Planner</th>
+<th style="text-align: left;">Solver</th>
+<th style="text-align: left;">Mean F1</th>
+<th style="text-align: right;">Server latency (s/query)</th>
+<th style="text-align: right;">Cost (USD/query)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">74.66%</td>
+<td style="text-align: right;">3.00</td>
+<td style="text-align: right;">$0.004038</td>
+</tr>
+<tr>
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">74.27%</td>
+<td style="text-align: right;">4.97</td>
+<td style="text-align: right;">$0.013209</td>
+</tr>
+<tr>
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">73.02%</td>
+<td style="text-align: right;">4.26</td>
+<td style="text-align: right;">$0.013245</td>
+</tr>
+<tr>
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">72.10%</td>
+<td style="text-align: right;">4.67</td>
+<td style="text-align: right;">$0.013348</td>
+</tr>
+<tr>
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">72.00%</td>
+<td style="text-align: right;">3.11</td>
+<td style="text-align: right;">$0.003867</td>
+</tr>
+<tr>
+<td style="text-align: left;">6</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">71.83%</td>
+<td style="text-align: right;">3.07</td>
+<td style="text-align: right;">$0.000639</td>
+</tr>
+<tr>
+<td style="text-align: left;">7</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">71.25%</td>
+<td style="text-align: right;">3.73</td>
+<td style="text-align: right;">$0.004061</td>
+</tr>
+<tr>
+<td style="text-align: left;">8</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">70.91%</td>
+<td style="text-align: right;">3.41</td>
+<td style="text-align: right;">$0.004304</td>
+</tr>
+<tr>
+<td style="text-align: left;">9</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">70.04%</td>
+<td style="text-align: right;">2.66</td>
+<td style="text-align: right;">$0.000630</td>
+</tr>
+<tr>
+<td style="text-align: left;">10</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">69.96%</td>
+<td style="text-align: right;">4.49</td>
+<td style="text-align: right;">$0.012142</td>
+</tr>
+<tr>
+<td style="text-align: left;">11</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">69.60%</td>
+<td style="text-align: right;">2.40</td>
+<td style="text-align: right;">$0.002414</td>
+</tr>
+<tr>
+<td style="text-align: left;">12</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">68.99%</td>
+<td style="text-align: right;">5.64</td>
+<td style="text-align: right;">$0.000441</td>
+</tr>
+<tr>
+<td style="text-align: left;">13</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">68.89%</td>
+<td style="text-align: right;">13.52</td>
+<td style="text-align: right;">$0.000330</td>
+</tr>
+<tr>
+<td style="text-align: left;">14</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">68.70%</td>
+<td style="text-align: right;">3.65</td>
+<td style="text-align: right;">$0.000615</td>
+</tr>
+<tr>
+<td style="text-align: left;">15</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">68.61%</td>
+<td style="text-align: right;">27.14</td>
+<td style="text-align: right;">$0.000311</td>
+</tr>
+<tr>
+<td style="text-align: left;">16</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">68.37%</td>
+<td style="text-align: right;">2.83</td>
+<td style="text-align: right;">$0.000477</td>
+</tr>
+<tr>
+<td style="text-align: left;">17</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">68.15%</td>
+<td style="text-align: right;">2.69</td>
+<td style="text-align: right;">$0.000570</td>
+</tr>
+<tr>
+<td style="text-align: left;">18</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">67.98%</td>
+<td style="text-align: right;">3.85</td>
+<td style="text-align: right;">$0.000556</td>
+</tr>
+<tr>
+<td style="text-align: left;">19</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">67.53%</td>
+<td style="text-align: right;">3.51</td>
+<td style="text-align: right;">$0.000541</td>
+</tr>
+<tr>
+<td style="text-align: left;">20</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">67.48%</td>
+<td style="text-align: right;">50.17</td>
+<td style="text-align: right;">$0.000307</td>
+</tr>
+<tr>
+<td style="text-align: left;">21</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">66.79%</td>
+<td style="text-align: right;">16.59</td>
+<td style="text-align: right;">$0.001192</td>
+</tr>
+<tr>
+<td style="text-align: left;">22</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">66.48%</td>
+<td style="text-align: right;">2.47</td>
+<td style="text-align: right;">$0.000447</td>
+</tr>
+<tr>
+<td style="text-align: left;">23</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">65.42%</td>
+<td style="text-align: right;">3.26</td>
+<td style="text-align: right;">$0.001298</td>
+</tr>
+<tr>
+<td style="text-align: left;">24</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">64.93%</td>
+<td style="text-align: right;">4.68</td>
+<td style="text-align: right;">$0.000483</td>
+</tr>
+<tr>
+<td style="text-align: left;">25</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">64.89%</td>
+<td style="text-align: right;">3.55</td>
+<td style="text-align: right;">$0.000453</td>
+</tr>
+<tr>
+<td style="text-align: left;">26</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">64.70%</td>
+<td style="text-align: right;">4.16</td>
+<td style="text-align: right;">$0.001465</td>
+</tr>
+<tr>
+<td style="text-align: left;">27</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">64.59%</td>
+<td style="text-align: right;">4.57</td>
+<td style="text-align: right;">$0.008047</td>
+</tr>
+<tr>
+<td style="text-align: left;">28</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">64.11%</td>
+<td style="text-align: right;">4.26</td>
+<td style="text-align: right;">$0.001883</td>
+</tr>
+<tr>
+<td style="text-align: left;">29</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">63.99%</td>
+<td style="text-align: right;">4.39</td>
+<td style="text-align: right;">$0.001485</td>
+</tr>
+<tr>
+<td style="text-align: left;">30</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">63.95%</td>
+<td style="text-align: right;">6.42</td>
+<td style="text-align: right;">$0.001412</td>
+</tr>
+<tr>
+<td style="text-align: left;">31</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">63.75%</td>
+<td style="text-align: right;">6.62</td>
+<td style="text-align: right;">$0.001344</td>
+</tr>
+<tr>
+<td style="text-align: left;">32</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">63.69%</td>
+<td style="text-align: right;">2.89</td>
+<td style="text-align: right;">$0.001329</td>
+</tr>
+<tr>
+<td style="text-align: left;">33</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">63.68%</td>
+<td style="text-align: right;">15.68</td>
+<td style="text-align: right;">$0.000339</td>
+</tr>
+<tr>
+<td style="text-align: left;">34</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">63.38%</td>
+<td style="text-align: right;">7.34</td>
+<td style="text-align: right;">$0.000441</td>
+</tr>
+<tr>
+<td style="text-align: left;">35</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">63.36%</td>
+<td style="text-align: right;">3.25</td>
+<td style="text-align: right;">$0.001420</td>
+</tr>
+<tr>
+<td style="text-align: left;">36</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">62.46%</td>
+<td style="text-align: right;">4.55</td>
+<td style="text-align: right;">$0.002196</td>
+</tr>
+<tr>
+<td style="text-align: left;">37</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">62.18%</td>
+<td style="text-align: right;">2.66</td>
+<td style="text-align: right;">$0.000415</td>
+</tr>
+<tr>
+<td style="text-align: left;">38</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">62.15%</td>
+<td style="text-align: right;">4.59</td>
+<td style="text-align: right;">$0.000511</td>
+</tr>
+<tr>
+<td style="text-align: left;">39</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">61.80%</td>
+<td style="text-align: right;">4.25</td>
+<td style="text-align: right;">$0.000487</td>
+</tr>
+<tr>
+<td style="text-align: left;">40</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">61.17%</td>
+<td style="text-align: right;">2.89</td>
+<td style="text-align: right;">$0.000459</td>
+</tr>
+<tr>
+<td style="text-align: left;">41</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">60.85%</td>
+<td style="text-align: right;">4.09</td>
+<td style="text-align: right;">$0.000891</td>
+</tr>
+<tr>
+<td style="text-align: left;">42</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">58.80%</td>
+<td style="text-align: right;">4.06</td>
+<td style="text-align: right;">$0.000483</td>
+</tr>
+<tr>
+<td style="text-align: left;">43</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">57.10%</td>
+<td style="text-align: right;">2.22</td>
+<td style="text-align: right;">$0.001698</td>
+</tr>
+<tr>
+<td style="text-align: left;">44</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">55.86%</td>
+<td style="text-align: right;">2.84</td>
+<td style="text-align: right;">$0.005212</td>
+</tr>
+<tr>
+<td style="text-align: left;">45</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">55.02%</td>
+<td style="text-align: right;">3.63</td>
+<td style="text-align: right;">$0.000535</td>
+</tr>
+<tr>
+<td style="text-align: left;">46</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">54.82%</td>
+<td style="text-align: right;">2.53</td>
+<td style="text-align: right;">$0.000541</td>
+</tr>
+<tr>
+<td style="text-align: left;">47</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">54.73%</td>
+<td style="text-align: right;">4.57</td>
+<td style="text-align: right;">$0.001478</td>
+</tr>
+<tr>
+<td style="text-align: left;">48</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">54.28%</td>
+<td style="text-align: right;">2.19</td>
+<td style="text-align: right;">$0.001299</td>
+</tr>
+<tr>
+<td style="text-align: left;">49</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">54.25%</td>
+<td style="text-align: right;">4.35</td>
+<td style="text-align: right;">$0.000265</td>
+</tr>
+<tr>
+<td style="text-align: left;">50</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">54.13%</td>
+<td style="text-align: right;">2.83</td>
+<td style="text-align: right;">$0.000570</td>
+</tr>
+<tr>
+<td style="text-align: left;">51</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">53.89%</td>
+<td style="text-align: right;">2.11</td>
+<td style="text-align: right;">$0.000296</td>
+</tr>
+<tr>
+<td style="text-align: left;">52</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">53.81%</td>
+<td style="text-align: right;">3.92</td>
+<td style="text-align: right;">$0.000193</td>
+</tr>
+<tr>
+<td style="text-align: left;">53</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">52.17%</td>
+<td style="text-align: right;">2.11</td>
+<td style="text-align: right;">$0.000315</td>
+</tr>
+<tr>
+<td style="text-align: left;">54</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">51.01%</td>
+<td style="text-align: right;">1.96</td>
+<td style="text-align: right;">$0.000586</td>
+</tr>
+<tr>
+<td style="text-align: left;">55</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">50.09%</td>
+<td style="text-align: right;">2.12</td>
+<td style="text-align: right;">$0.000252</td>
+</tr>
+<tr>
+<td style="text-align: left;">56</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">49.16%</td>
+<td style="text-align: right;">2.05</td>
+<td style="text-align: right;">$0.000296</td>
+</tr>
+<tr>
+<td style="text-align: left;">57</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">47.19%</td>
+<td style="text-align: right;">7.89</td>
+<td style="text-align: right;">$0.000192</td>
+</tr>
+<tr>
+<td style="text-align: left;">58</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">47.17%</td>
+<td style="text-align: right;">7.85</td>
+<td style="text-align: right;">$0.000120</td>
+</tr>
+<tr>
+<td style="text-align: left;">59</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">47.10%</td>
+<td style="text-align: right;">7.85</td>
+<td style="text-align: right;">$0.000120</td>
+</tr>
+<tr>
+<td style="text-align: left;">60</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">46.73%</td>
+<td style="text-align: right;">2.61</td>
+<td style="text-align: right;">$0.002180</td>
+</tr>
+<tr>
+<td style="text-align: left;">61</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">46.71%</td>
+<td style="text-align: right;">7.86</td>
+<td style="text-align: right;">$0.000121</td>
+</tr>
+<tr>
+<td style="text-align: left;">62</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">46.71%</td>
+<td style="text-align: right;">7.84</td>
+<td style="text-align: right;">$0.000118</td>
+</tr>
+<tr>
+<td style="text-align: left;">63</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">46.70%</td>
+<td style="text-align: right;">7.86</td>
+<td style="text-align: right;">$0.000117</td>
+</tr>
+<tr>
+<td style="text-align: left;">64</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">46.68%</td>
+<td style="text-align: right;">7.88</td>
+<td style="text-align: right;">$0.000139</td>
+</tr>
+<tr>
+<td style="text-align: left;">65</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">46.63%</td>
+<td style="text-align: right;">7.87</td>
+<td style="text-align: right;">$0.000430</td>
+</tr>
+<tr>
+<td style="text-align: left;">66</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">46.58%</td>
+<td style="text-align: right;">7.86</td>
+<td style="text-align: right;">$0.000178</td>
+</tr>
+<tr>
+<td style="text-align: left;">67</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">46.26%</td>
+<td style="text-align: right;">7.92</td>
+<td style="text-align: right;">$0.000114</td>
+</tr>
+<tr>
+<td style="text-align: left;">68</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">44.49%</td>
+<td style="text-align: right;">3.54</td>
+<td style="text-align: right;">$0.004705</td>
+</tr>
+<tr>
+<td style="text-align: left;">69</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">43.54%</td>
+<td style="text-align: right;">4.06</td>
+<td style="text-align: right;">$0.008998</td>
+</tr>
+<tr>
+<td style="text-align: left;">70</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">71</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">72</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">73</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">74</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">75</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">76</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">77</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">78</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">79</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">43.15%</td>
+<td style="text-align: right;">3.69</td>
+<td style="text-align: right;">$0.004293</td>
+</tr>
+<tr>
+<td style="text-align: left;">80</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">41.49%</td>
+<td style="text-align: right;">3.03</td>
+<td style="text-align: right;">$0.002263</td>
+</tr>
+<tr>
+<td style="text-align: left;">81</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">41.20%</td>
+<td style="text-align: right;">3.14</td>
+<td style="text-align: right;">$0.002352</td>
+</tr>
+<tr>
+<td style="text-align: left;">82</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">41.17%</td>
+<td style="text-align: right;">2.95</td>
+<td style="text-align: right;">$0.002306</td>
+</tr>
+<tr>
+<td style="text-align: left;">83</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">41.09%</td>
+<td style="text-align: right;">3.75</td>
+<td style="text-align: right;">$0.002257</td>
+</tr>
+<tr>
+<td style="text-align: left;">84</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">41.00%</td>
+<td style="text-align: right;">6.16</td>
+<td style="text-align: right;">$0.002716</td>
+</tr>
+<tr>
+<td style="text-align: left;">85</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">37.19%</td>
+<td style="text-align: right;">4.23</td>
+<td style="text-align: right;">$0.004381</td>
+</tr>
+<tr>
+<td style="text-align: left;">86</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">36.13%</td>
+<td style="text-align: right;">2.89</td>
+<td style="text-align: right;">$0.002297</td>
+</tr>
+<tr>
+<td style="text-align: left;">87</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">32.42%</td>
+<td style="text-align: right;">4.14</td>
+<td style="text-align: right;">$0.003514</td>
+</tr>
+<tr>
+<td style="text-align: left;">88</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">32.19%</td>
+<td style="text-align: right;">3.92</td>
+<td style="text-align: right;">$0.003614</td>
+</tr>
+<tr>
+<td style="text-align: left;">89</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">90</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">91</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">92</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">31.96%</td>
+<td style="text-align: right;">4.72</td>
+<td style="text-align: right;">$0.010119</td>
+</tr>
+<tr>
+<td style="text-align: left;">93</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">31.95%</td>
+<td style="text-align: right;">4.60</td>
+<td style="text-align: right;">$0.010105</td>
+</tr>
+<tr>
+<td style="text-align: left;">94</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">31.88%</td>
+<td style="text-align: right;">4.57</td>
+<td style="text-align: right;">$0.010136</td>
+</tr>
+<tr>
+<td style="text-align: left;">95</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">31.77%</td>
+<td style="text-align: right;">4.16</td>
+<td style="text-align: right;">$0.010151</td>
+</tr>
+<tr>
+<td style="text-align: left;">96</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">31.71%</td>
+<td style="text-align: right;">4.19</td>
+<td style="text-align: right;">$0.010111</td>
+</tr>
+<tr>
+<td style="text-align: left;">97</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">31.22%</td>
+<td style="text-align: right;">2.60</td>
+<td style="text-align: right;">$0.010142</td>
+</tr>
+<tr>
+<td style="text-align: left;">98</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">31.22%</td>
+<td style="text-align: right;">2.60</td>
+<td style="text-align: right;">$0.010142</td>
+</tr>
+<tr>
+<td style="text-align: left;">99</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">26.63%</td>
+<td style="text-align: right;">3.47</td>
+<td style="text-align: right;">$0.003471</td>
+</tr>
+<tr>
+<td style="text-align: left;">100</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">26.49%</td>
+<td style="text-align: right;">3.40</td>
+<td style="text-align: right;">$0.003954</td>
+</tr>
+</tbody>
+</table>
+</details>
+<hr />
+<h2 id="mathqa">MathQA<a class="headerlink" href="#mathqa" title="Permanent link">&para;</a></h2>
+<p><strong>Self-reflective math reasoning</strong> — 200 multiple-choice questions. An answer model solves a problem and a critic model checks the answer; rejected answers can be revised for up to three reflection iterations. Ten candidates per role give <strong>100 model combinations</strong>. Accuracy is the fraction of correct answers over all 200 questions.</p>
+<h3 id="top-15-combos_1">Top 15 Combos<a class="headerlink" href="#top-15-combos_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Answer model</th>
+<th style="text-align: left;">Critic model</th>
+<th style="text-align: left;">Accuracy</th>
+<th style="text-align: right;">Server latency (s/query)</th>
+<th style="text-align: right;">Cost (USD/query)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">97.50%</td>
+<td style="text-align: right;">17.09</td>
+<td style="text-align: right;">$0.042219</td>
+</tr>
+<tr>
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">18.39</td>
+<td style="text-align: right;">$0.040009</td>
+</tr>
+<tr>
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">16.43</td>
+<td style="text-align: right;">$0.045252</td>
+</tr>
+<tr>
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">15.82</td>
+<td style="text-align: right;">$0.047379</td>
+</tr>
+<tr>
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">17.39</td>
+<td style="text-align: right;">$0.050782</td>
+</tr>
+<tr>
+<td style="text-align: left;">6</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">96.50%</td>
+<td style="text-align: right;">15.25</td>
+<td style="text-align: right;">$0.040012</td>
+</tr>
+<tr>
+<td style="text-align: left;">7</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">96.50%</td>
+<td style="text-align: right;">16.27</td>
+<td style="text-align: right;">$0.043768</td>
+</tr>
+<tr>
+<td style="text-align: left;">8</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">96.00%</td>
+<td style="text-align: right;">15.91</td>
+<td style="text-align: right;">$0.053363</td>
+</tr>
+<tr>
+<td style="text-align: left;">9</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">95.00%</td>
+<td style="text-align: right;">7.20</td>
+<td style="text-align: right;">$0.005698</td>
+</tr>
+<tr>
+<td style="text-align: left;">10</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">94.50%</td>
+<td style="text-align: right;">12.68</td>
+<td style="text-align: right;">$0.012551</td>
+</tr>
+<tr>
+<td style="text-align: left;">11</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">94.50%</td>
+<td style="text-align: right;">20.17</td>
+<td style="text-align: right;">$0.021146</td>
+</tr>
+<tr>
+<td style="text-align: left;">12</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">4.23</td>
+<td style="text-align: right;">$0.000468</td>
+</tr>
+<tr>
+<td style="text-align: left;">13</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">8.51</td>
+<td style="text-align: right;">$0.000601</td>
+</tr>
+<tr>
+<td style="text-align: left;">14</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">12.17</td>
+<td style="text-align: right;">$0.001455</td>
+</tr>
+<tr>
+<td style="text-align: left;">15</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">8.94</td>
+<td style="text-align: right;">$0.006331</td>
+</tr>
+</tbody>
+</table>
+<h3 id="bottom-15-combos_1">Bottom 15 Combos<a class="headerlink" href="#bottom-15-combos_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Answer model</th>
+<th style="text-align: left;">Critic model</th>
+<th style="text-align: left;">Accuracy</th>
+<th style="text-align: right;">Server latency (s/query)</th>
+<th style="text-align: right;">Cost (USD/query)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">86</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">77.00%</td>
+<td style="text-align: right;">38.55</td>
+<td style="text-align: right;">$0.002727</td>
+</tr>
+<tr>
+<td style="text-align: left;">87</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">24.09</td>
+<td style="text-align: right;">$0.002471</td>
+</tr>
+<tr>
+<td style="text-align: left;">88</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">34.72</td>
+<td style="text-align: right;">$0.002606</td>
+</tr>
+<tr>
+<td style="text-align: left;">89</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">32.33</td>
+<td style="text-align: right;">$0.006027</td>
+</tr>
+<tr>
+<td style="text-align: left;">90</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">25.45</td>
+<td style="text-align: right;">$0.009190</td>
+</tr>
+<tr>
+<td style="text-align: left;">91</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">76.00%</td>
+<td style="text-align: right;">30.64</td>
+<td style="text-align: right;">$0.002088</td>
+</tr>
+<tr>
+<td style="text-align: left;">92</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">76.00%</td>
+<td style="text-align: right;">36.44</td>
+<td style="text-align: right;">$0.002721</td>
+</tr>
+<tr>
+<td style="text-align: left;">93</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">75.50%</td>
+<td style="text-align: right;">36.37</td>
+<td style="text-align: right;">$0.003959</td>
+</tr>
+<tr>
+<td style="text-align: left;">94</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">75.00%</td>
+<td style="text-align: right;">32.70</td>
+<td style="text-align: right;">$0.002391</td>
+</tr>
+<tr>
+<td style="text-align: left;">95</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">75.00%</td>
+<td style="text-align: right;">25.00</td>
+<td style="text-align: right;">$0.003928</td>
+</tr>
+<tr>
+<td style="text-align: left;">96</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">75.00%</td>
+<td style="text-align: right;">31.74</td>
+<td style="text-align: right;">$0.004762</td>
+</tr>
+<tr>
+<td style="text-align: left;">97</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">74.50%</td>
+<td style="text-align: right;">43.05</td>
+<td style="text-align: right;">$0.006772</td>
+</tr>
+<tr>
+<td style="text-align: left;">98</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">74.00%</td>
+<td style="text-align: right;">26.39</td>
+<td style="text-align: right;">$0.006879</td>
+</tr>
+<tr>
+<td style="text-align: left;">99</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">74.00%</td>
+<td style="text-align: right;">28.10</td>
+<td style="text-align: right;">$0.014059</td>
+</tr>
+<tr>
+<td style="text-align: left;">100</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">73.00%</td>
+<td style="text-align: right;">29.60</td>
+<td style="text-align: right;">$0.004667</td>
+</tr>
+</tbody>
+</table>
+<details class="note">
+<summary>Full 100 Combo Results</summary>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Rank</th>
+<th style="text-align: left;">Answer model</th>
+<th style="text-align: left;">Critic model</th>
+<th style="text-align: left;">Accuracy</th>
+<th style="text-align: right;">Server latency (s/query)</th>
+<th style="text-align: right;">Cost (USD/query)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">97.50%</td>
+<td style="text-align: right;">17.09</td>
+<td style="text-align: right;">$0.042219</td>
+</tr>
+<tr>
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">18.39</td>
+<td style="text-align: right;">$0.040009</td>
+</tr>
+<tr>
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">16.43</td>
+<td style="text-align: right;">$0.045252</td>
+</tr>
+<tr>
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">15.82</td>
+<td style="text-align: right;">$0.047379</td>
+</tr>
+<tr>
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">97.00%</td>
+<td style="text-align: right;">17.39</td>
+<td style="text-align: right;">$0.050782</td>
+</tr>
+<tr>
+<td style="text-align: left;">6</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">96.50%</td>
+<td style="text-align: right;">15.25</td>
+<td style="text-align: right;">$0.040012</td>
+</tr>
+<tr>
+<td style="text-align: left;">7</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">96.50%</td>
+<td style="text-align: right;">16.27</td>
+<td style="text-align: right;">$0.043768</td>
+</tr>
+<tr>
+<td style="text-align: left;">8</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">96.00%</td>
+<td style="text-align: right;">15.91</td>
+<td style="text-align: right;">$0.053363</td>
+</tr>
+<tr>
+<td style="text-align: left;">9</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">95.00%</td>
+<td style="text-align: right;">7.20</td>
+<td style="text-align: right;">$0.005698</td>
+</tr>
+<tr>
+<td style="text-align: left;">10</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">94.50%</td>
+<td style="text-align: right;">12.68</td>
+<td style="text-align: right;">$0.012551</td>
+</tr>
+<tr>
+<td style="text-align: left;">11</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">94.50%</td>
+<td style="text-align: right;">20.17</td>
+<td style="text-align: right;">$0.021146</td>
+</tr>
+<tr>
+<td style="text-align: left;">12</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">4.23</td>
+<td style="text-align: right;">$0.000468</td>
+</tr>
+<tr>
+<td style="text-align: left;">13</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">8.51</td>
+<td style="text-align: right;">$0.000601</td>
+</tr>
+<tr>
+<td style="text-align: left;">14</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">12.17</td>
+<td style="text-align: right;">$0.001455</td>
+</tr>
+<tr>
+<td style="text-align: left;">15</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">8.94</td>
+<td style="text-align: right;">$0.006331</td>
+</tr>
+<tr>
+<td style="text-align: left;">16</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">14.31</td>
+<td style="text-align: right;">$0.012960</td>
+</tr>
+<tr>
+<td style="text-align: left;">17</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">21.68</td>
+<td style="text-align: right;">$0.018156</td>
+</tr>
+<tr>
+<td style="text-align: left;">18</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">21.71</td>
+<td style="text-align: right;">$0.018169</td>
+</tr>
+<tr>
+<td style="text-align: left;">19</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">94.00%</td>
+<td style="text-align: right;">22.77</td>
+<td style="text-align: right;">$0.022307</td>
+</tr>
+<tr>
+<td style="text-align: left;">20</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">5.08</td>
+<td style="text-align: right;">$0.000619</td>
+</tr>
+<tr>
+<td style="text-align: left;">21</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">9.05</td>
+<td style="text-align: right;">$0.000823</td>
+</tr>
+<tr>
+<td style="text-align: left;">22</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">5.42</td>
+<td style="text-align: right;">$0.000838</td>
+</tr>
+<tr>
+<td style="text-align: left;">23</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">10.26</td>
+<td style="text-align: right;">$0.000958</td>
+</tr>
+<tr>
+<td style="text-align: left;">24</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">6.31</td>
+<td style="text-align: right;">$0.002013</td>
+</tr>
+<tr>
+<td style="text-align: left;">25</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">12.51</td>
+<td style="text-align: right;">$0.011006</td>
+</tr>
+<tr>
+<td style="text-align: left;">26</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">14.70</td>
+<td style="text-align: right;">$0.012867</td>
+</tr>
+<tr>
+<td style="text-align: left;">27</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">17.50</td>
+<td style="text-align: right;">$0.012988</td>
+</tr>
+<tr>
+<td style="text-align: left;">28</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">22.86</td>
+<td style="text-align: right;">$0.017363</td>
+</tr>
+<tr>
+<td style="text-align: left;">29</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">15.82</td>
+<td style="text-align: right;">$0.018838</td>
+</tr>
+<tr>
+<td style="text-align: left;">30</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">93.50%</td>
+<td style="text-align: right;">23.57</td>
+<td style="text-align: right;">$0.020497</td>
+</tr>
+<tr>
+<td style="text-align: left;">31</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">4.75</td>
+<td style="text-align: right;">$0.000535</td>
+</tr>
+<tr>
+<td style="text-align: left;">32</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">6.36</td>
+<td style="text-align: right;">$0.000892</td>
+</tr>
+<tr>
+<td style="text-align: left;">33</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">5.84</td>
+<td style="text-align: right;">$0.000944</td>
+</tr>
+<tr>
+<td style="text-align: left;">34</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">6.84</td>
+<td style="text-align: right;">$0.000976</td>
+</tr>
+<tr>
+<td style="text-align: left;">35</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">10.77</td>
+<td style="text-align: right;">$0.001146</td>
+</tr>
+<tr>
+<td style="text-align: left;">36</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">11.84</td>
+<td style="text-align: right;">$0.001647</td>
+</tr>
+<tr>
+<td style="text-align: left;">37</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">7.67</td>
+<td style="text-align: right;">$0.002369</td>
+</tr>
+<tr>
+<td style="text-align: left;">38</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">6.28</td>
+<td style="text-align: right;">$0.006081</td>
+</tr>
+<tr>
+<td style="text-align: left;">39</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">14.65</td>
+<td style="text-align: right;">$0.014505</td>
+</tr>
+<tr>
+<td style="text-align: left;">40</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">28.99</td>
+<td style="text-align: right;">$0.019476</td>
+</tr>
+<tr>
+<td style="text-align: left;">41</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">27.78</td>
+<td style="text-align: right;">$0.024207</td>
+</tr>
+<tr>
+<td style="text-align: left;">42</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">15.57</td>
+<td style="text-align: right;">$0.035559</td>
+</tr>
+<tr>
+<td style="text-align: left;">43</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">93.00%</td>
+<td style="text-align: right;">20.98</td>
+<td style="text-align: right;">$0.039025</td>
+</tr>
+<tr>
+<td style="text-align: left;">44</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">92.50%</td>
+<td style="text-align: right;">8.67</td>
+<td style="text-align: right;">$0.001056</td>
+</tr>
+<tr>
+<td style="text-align: left;">45</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">92.50%</td>
+<td style="text-align: right;">7.94</td>
+<td style="text-align: right;">$0.001132</td>
+</tr>
+<tr>
+<td style="text-align: left;">46</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">92.50%</td>
+<td style="text-align: right;">10.78</td>
+<td style="text-align: right;">$0.006317</td>
+</tr>
+<tr>
+<td style="text-align: left;">47</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">92.50%</td>
+<td style="text-align: right;">18.43</td>
+<td style="text-align: right;">$0.011867</td>
+</tr>
+<tr>
+<td style="text-align: left;">48</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">92.50%</td>
+<td style="text-align: right;">33.37</td>
+<td style="text-align: right;">$0.079804</td>
+</tr>
+<tr>
+<td style="text-align: left;">49</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">92.00%</td>
+<td style="text-align: right;">5.98</td>
+<td style="text-align: right;">$0.001366</td>
+</tr>
+<tr>
+<td style="text-align: left;">50</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">92.00%</td>
+<td style="text-align: right;">5.34</td>
+<td style="text-align: right;">$0.002348</td>
+</tr>
+<tr>
+<td style="text-align: left;">51</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">92.00%</td>
+<td style="text-align: right;">9.33</td>
+<td style="text-align: right;">$0.006062</td>
+</tr>
+<tr>
+<td style="text-align: left;">52</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">92.00%</td>
+<td style="text-align: right;">33.00</td>
+<td style="text-align: right;">$0.014394</td>
+</tr>
+<tr>
+<td style="text-align: left;">53</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">91.50%</td>
+<td style="text-align: right;">4.34</td>
+<td style="text-align: right;">$0.000863</td>
+</tr>
+<tr>
+<td style="text-align: left;">54</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">91.50%</td>
+<td style="text-align: right;">16.17</td>
+<td style="text-align: right;">$0.005511</td>
+</tr>
+<tr>
+<td style="text-align: left;">55</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">91.50%</td>
+<td style="text-align: right;">18.81</td>
+<td style="text-align: right;">$0.016605</td>
+</tr>
+<tr>
+<td style="text-align: left;">56</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">91.50%</td>
+<td style="text-align: right;">22.39</td>
+<td style="text-align: right;">$0.019250</td>
+</tr>
+<tr>
+<td style="text-align: left;">57</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">91.00%</td>
+<td style="text-align: right;">3.09</td>
+<td style="text-align: right;">$0.000592</td>
+</tr>
+<tr>
+<td style="text-align: left;">58</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">91.00%</td>
+<td style="text-align: right;">3.47</td>
+<td style="text-align: right;">$0.000710</td>
+</tr>
+<tr>
+<td style="text-align: left;">59</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">91.00%</td>
+<td style="text-align: right;">4.76</td>
+<td style="text-align: right;">$0.000733</td>
+</tr>
+<tr>
+<td style="text-align: left;">60</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">91.00%</td>
+<td style="text-align: right;">21.64</td>
+<td style="text-align: right;">$0.092879</td>
+</tr>
+<tr>
+<td style="text-align: left;">61</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">90.00%</td>
+<td style="text-align: right;">11.42</td>
+<td style="text-align: right;">$0.007534</td>
+</tr>
+<tr>
+<td style="text-align: left;">62</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">89.50%</td>
+<td style="text-align: right;">7.70</td>
+<td style="text-align: right;">$0.000779</td>
+</tr>
+<tr>
+<td style="text-align: left;">63</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">88.00%</td>
+<td style="text-align: right;">7.76</td>
+<td style="text-align: right;">$0.001264</td>
+</tr>
+<tr>
+<td style="text-align: left;">64</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">87.50%</td>
+<td style="text-align: right;">12.01</td>
+<td style="text-align: right;">$0.017293</td>
+</tr>
+<tr>
+<td style="text-align: left;">65</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">87.00%</td>
+<td style="text-align: right;">10.09</td>
+<td style="text-align: right;">$0.000441</td>
+</tr>
+<tr>
+<td style="text-align: left;">66</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">87.00%</td>
+<td style="text-align: right;">6.95</td>
+<td style="text-align: right;">$0.002407</td>
+</tr>
+<tr>
+<td style="text-align: left;">67</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">86.50%</td>
+<td style="text-align: right;">15.31</td>
+<td style="text-align: right;">$0.001048</td>
+</tr>
+<tr>
+<td style="text-align: left;">68</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">86.50%</td>
+<td style="text-align: right;">12.53</td>
+<td style="text-align: right;">$0.008501</td>
+</tr>
+<tr>
+<td style="text-align: left;">69</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">86.00%</td>
+<td style="text-align: right;">7.29</td>
+<td style="text-align: right;">$0.004552</td>
+</tr>
+<tr>
+<td style="text-align: left;">70</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">85.50%</td>
+<td style="text-align: right;">12.06</td>
+<td style="text-align: right;">$0.000583</td>
+</tr>
+<tr>
+<td style="text-align: left;">71</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">85.50%</td>
+<td style="text-align: right;">16.43</td>
+<td style="text-align: right;">$0.000649</td>
+</tr>
+<tr>
+<td style="text-align: left;">72</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">85.50%</td>
+<td style="text-align: right;">17.81</td>
+<td style="text-align: right;">$0.001751</td>
+</tr>
+<tr>
+<td style="text-align: left;">73</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">85.50%</td>
+<td style="text-align: right;">12.08</td>
+<td style="text-align: right;">$0.002437</td>
+</tr>
+<tr>
+<td style="text-align: left;">74</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">85.50%</td>
+<td style="text-align: right;">6.26</td>
+<td style="text-align: right;">$0.002462</td>
+</tr>
+<tr>
+<td style="text-align: left;">75</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">85.50%</td>
+<td style="text-align: right;">13.09</td>
+<td style="text-align: right;">$0.003929</td>
+</tr>
+<tr>
+<td style="text-align: left;">76</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">85.00%</td>
+<td style="text-align: right;">13.30</td>
+<td style="text-align: right;">$0.000387</td>
+</tr>
+<tr>
+<td style="text-align: left;">77</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">85.00%</td>
+<td style="text-align: right;">11.16</td>
+<td style="text-align: right;">$0.000410</td>
+</tr>
+<tr>
+<td style="text-align: left;">78</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">85.00%</td>
+<td style="text-align: right;">12.69</td>
+<td style="text-align: right;">$0.000620</td>
+</tr>
+<tr>
+<td style="text-align: left;">79</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">85.00%</td>
+<td style="text-align: right;">25.37</td>
+<td style="text-align: right;">$0.009215</td>
+</tr>
+<tr>
+<td style="text-align: left;">80</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">84.50%</td>
+<td style="text-align: right;">5.79</td>
+<td style="text-align: right;">$0.003099</td>
+</tr>
+<tr>
+<td style="text-align: left;">81</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">80.50%</td>
+<td style="text-align: right;">12.07</td>
+<td style="text-align: right;">$0.008997</td>
+</tr>
+<tr>
+<td style="text-align: left;">82</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">78.50%</td>
+<td style="text-align: right;">39.76</td>
+<td style="text-align: right;">$0.004889</td>
+</tr>
+<tr>
+<td style="text-align: left;">83</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">78.00%</td>
+<td style="text-align: right;">36.54</td>
+<td style="text-align: right;">$0.005041</td>
+</tr>
+<tr>
+<td style="text-align: left;">84</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">78.00%</td>
+<td style="text-align: right;">31.01</td>
+<td style="text-align: right;">$0.014812</td>
+</tr>
+<tr>
+<td style="text-align: left;">85</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">77.50%</td>
+<td style="text-align: right;">10.81</td>
+<td style="text-align: right;">$0.003074</td>
+</tr>
+<tr>
+<td style="text-align: left;">86</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Ministral 3 8B</td>
+<td style="text-align: left;">77.00%</td>
+<td style="text-align: right;">38.55</td>
+<td style="text-align: right;">$0.002727</td>
+</tr>
+<tr>
+<td style="text-align: left;">87</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">GPT-5.6 Luna</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">24.09</td>
+<td style="text-align: right;">$0.002471</td>
+</tr>
+<tr>
+<td style="text-align: left;">88</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">34.72</td>
+<td style="text-align: right;">$0.002606</td>
+</tr>
+<tr>
+<td style="text-align: left;">89</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">32.33</td>
+<td style="text-align: right;">$0.006027</td>
+</tr>
+<tr>
+<td style="text-align: left;">90</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">DeepSeek R1</td>
+<td style="text-align: left;">76.50%</td>
+<td style="text-align: right;">25.45</td>
+<td style="text-align: right;">$0.009190</td>
+</tr>
+<tr>
+<td style="text-align: left;">91</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">76.00%</td>
+<td style="text-align: right;">30.64</td>
+<td style="text-align: right;">$0.002088</td>
+</tr>
+<tr>
+<td style="text-align: left;">92</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">76.00%</td>
+<td style="text-align: right;">36.44</td>
+<td style="text-align: right;">$0.002721</td>
+</tr>
+<tr>
+<td style="text-align: left;">93</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">75.50%</td>
+<td style="text-align: right;">36.37</td>
+<td style="text-align: right;">$0.003959</td>
+</tr>
+<tr>
+<td style="text-align: left;">94</td>
+<td style="text-align: left;">Qwen3 Next 80B A3B</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">75.00%</td>
+<td style="text-align: right;">32.70</td>
+<td style="text-align: right;">$0.002391</td>
+</tr>
+<tr>
+<td style="text-align: left;">95</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">gpt-oss-20b</td>
+<td style="text-align: left;">75.00%</td>
+<td style="text-align: right;">25.00</td>
+<td style="text-align: right;">$0.003928</td>
+</tr>
+<tr>
+<td style="text-align: left;">96</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">gpt-oss-120b</td>
+<td style="text-align: left;">75.00%</td>
+<td style="text-align: right;">31.74</td>
+<td style="text-align: right;">$0.004762</td>
+</tr>
+<tr>
+<td style="text-align: left;">97</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">74.50%</td>
+<td style="text-align: right;">43.05</td>
+<td style="text-align: right;">$0.006772</td>
+</tr>
+<tr>
+<td style="text-align: left;">98</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Claude Haiku 4.5</td>
+<td style="text-align: left;">74.00%</td>
+<td style="text-align: right;">26.39</td>
+<td style="text-align: right;">$0.006879</td>
+</tr>
+<tr>
+<td style="text-align: left;">99</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Claude Opus 4.6</td>
+<td style="text-align: left;">74.00%</td>
+<td style="text-align: right;">28.10</td>
+<td style="text-align: right;">$0.014059</td>
+</tr>
+<tr>
+<td style="text-align: left;">100</td>
+<td style="text-align: left;">Kimi K2.5</td>
+<td style="text-align: left;">Qwen3 32B</td>
+<td style="text-align: left;">73.00%</td>
+<td style="text-align: right;">29.60</td>
+<td style="text-align: right;">$0.004667</td>
+</tr>
+</tbody>
+</table>
+</details>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../examples/llamaindex/" class="md-footer__link md-footer__link--prev" aria-label="Previous: LlamaIndex">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                LlamaIndex
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../api/selectors/" class="md-footer__link md-footer__link--next" aria-label="Next: Selectors">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Selectors
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/AgentOptimizer/agentopt" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.instant", "navigation.instant.progress", "navigation.top", "navigation.footer", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link", "search.suggest", "search.highlight", "toc.follow"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+        <script src="../javascripts/hero.js"></script>
+      
+    
+  </body>
+</html>

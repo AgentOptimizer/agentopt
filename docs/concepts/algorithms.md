@@ -12,6 +12,8 @@ Choose the output you need with `objective_mode`, then choose how to allocate ev
 | `auto` / `gittins` | `multi` | CC-Gittins alternating deployment and quality axes | Conservative accuracy–cost recommendation set |
 | `random_configurations` | `multi` | Random configurations, each evaluated on all questions | Empirical accuracy–cost frontier among completed configurations |
 | `random_questions` | `multi` | Shared randomly ordered questions, evaluated on every configuration | Empirical accuracy–cost frontier on the shared observed questions |
+| `cost_aware_ucb` | `multi` | Eleven optimistic quality-cost scalarizations per predicted evaluation dollar | Empirical accuracy–cost frontier at the last complete in-budget batch |
+| `cost_aware_qnehvi` | `multi` | Categorical GP noisy hypervolume improvement per predicted evaluation dollar | Empirical accuracy–cost frontier at the last complete in-budget batch |
 
 All random sampling is without replacement. Multi-objective selection does not designate a unique best configuration. Use `results.get_recommendations()` to inspect the set and `results.choose(...)` to express a deployment preference.
 
@@ -30,6 +32,26 @@ DP evaluation cost = cost_scaling_factor × expected question cost in USD
 The single-objective finite-dataset convention follows BanditGittinsEval. Live uniform warm-up and estimated monetary costs are package adaptations; they are not identical to experiments with known per-arm costs. The coefficient multiplies the supplied cost units: `1e-4` per USD is not numerically equivalent to `1e-4` per unit evaluation or per cost ratio.
 
 Multi mode preserves score and deployment cost as separate objectives. It alternates a deployment-cost axis and a quality axis, shares every observation between the axes, and reduces each direction's eta when that direction stops. Its default recommendations use score mean minus one standard deviation and cost mean plus one standard deviation. These model-based coordinates concern the supplied dataset, not guaranteed future performance or recovery of the complete true frontier.
+
+## Cost-aware Pareto allocation
+
+Cost-aware UCB and qNEHVI use four warm questions per configuration by default,
+then choose unfinished configurations for batches of up to four questions.
+Both maintain observed quality and token-priced deployment cost separately
+from the new non-cached charges incurred by search.
+
+UCB cycles quality-cost weights and ranks optimistic weighted scores per
+predicted dollar. qNEHVI models each workflow role as a categorical feature and
+divides expected hypervolume improvement by predicted charge. Its GP trains on
+all observed configurations, while fully evaluated configurations define the
+incumbent frontier. It defaults to 64 Monte Carlo samples and a refit every
+eight adaptive batches, or when the selected configuration is exhausted.
+
+Both return empirical recommendation sets rather than Gittins' finite-dataset
+posterior recommendations. A budget-crossing batch remains in the cost ledger
+and evaluation records but is excluded from the recommendation. See
+[the selector reference](../api/selectors.md#cost-aware-pareto-selectors) for
+budget, cache, calibration and optional-dependency details.
 
 ## Search cost and deployment preferences
 

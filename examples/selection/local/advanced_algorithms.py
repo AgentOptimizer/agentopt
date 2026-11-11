@@ -1,7 +1,7 @@
 """Compare Gittins and selection baselines with live OpenAI calls.
 
 Install openai, python-dotenv and agentopt-py, and set OPENAI_API_KEY.
-Bayesian optimization additionally needs agentopt-py[bayesian].
+Bayesian optimization and cost-aware qNEHVI need agentopt-py[bayesian].
 """
 
 from dotenv import load_dotenv
@@ -113,6 +113,10 @@ def run_selection(method="auto", objective_mode="single", max_search_cost_usd=No
     elif method == "bayesian":
         options.update(batch_size=1, sample_fraction=evaluation_fraction,
                        max_search_cost_usd=max_search_cost_usd)
+    elif method in ("cost_aware_ucb", "cost_aware_scalarization_ucb", "cost_aware_qnehvi"):
+        options.update(warm_start_batch_size=2, batch_size=2,
+                       observation_budget_fraction=evaluation_fraction,
+                       max_search_cost_usd=max_search_cost_usd, seed=42)
     selector = ModelSelector(
         agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
         method=method, objective_mode=objective_mode, **options,
@@ -131,6 +135,9 @@ def run_selection(method="auto", objective_mode="single", max_search_cost_usd=No
         print(f"\nStatus: {status}")
         print(f"Completed evaluations: {snapshot.total_evaluations}")
         print(f"Search cost: {cost}")
+        if hasattr(snapshot, "recommendation_evaluations"):
+            print(f"Recommendation evidence: {snapshot.recommendation_evaluations} evaluations, "
+                  f"${snapshot.recommendation_search_cost_usd:.6f} search cost.")
         if objective_mode == "single":
             best = snapshot.get_best_combo()
             if best is None:
@@ -176,10 +183,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--method", choices=("auto", "gittins", "random", "ucb", "bayesian",
-                                             "random_configurations", "random_questions"), default="auto")
+                                             "random_configurations", "random_questions",
+                                             "cost_aware_ucb", "cost_aware_scalarization_ucb",
+                                             "cost_aware_qnehvi"), default="auto")
     parser.add_argument("--objective-mode", choices=("single", "multi"), default="single")
     parser.add_argument("--max-search-cost-usd", type=float,
-                        help="Optional soft cap on new evaluation charges, for Gittins, UCB, or Bayesian optimization")
+                        help="Optional soft cap on new evaluation charges, supported by adaptive selectors")
     parser.add_argument("--cost-scaling-factor", type=float, default=1e-4,
                         help="Single Gittins search-cost coefficient in score units per USD")
     parser.add_argument("--evaluation-fraction", type=float, default=0.5,
@@ -188,7 +197,8 @@ if __name__ == "__main__":
                         help="End single-objective Gittins automatically on its stopping advice")
     args = parser.parse_args()
     supported = {"single": {"auto", "gittins", "random", "random_configurations", "random_questions", "ucb", "bayesian"},
-                 "multi": {"auto", "gittins", "random_configurations", "random_questions"}}
+                 "multi": {"auto", "gittins", "random_configurations", "random_questions",
+                           "cost_aware_ucb", "cost_aware_scalarization_ucb", "cost_aware_qnehvi"}}
     if args.method not in supported[args.objective_mode]:
         parser.error(f"{args.method} does not support {args.objective_mode} mode")
     if args.method in ("random", "random_configurations", "random_questions") and args.max_search_cost_usd is not None:

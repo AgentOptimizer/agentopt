@@ -21,7 +21,7 @@ print(results.get_best_combo())
 | `agent` | Class accepting a model dictionary in `__init__` and implementing `run(input_data)`. |
 | `models` | Node names mapped to nonempty candidate lists. |
 | `dataset` | Nonempty sequence of `(input_data, expected_answer)` pairs. |
-| `eval_fn` | `(expected, actual) -> float`, higher is better. Gittins and random selectors validate against `score_bounds`. |
+| `eval_fn` | `(expected, actual) -> float`, higher is better. Gittins, random and cost-aware Pareto selectors validate against `score_bounds`. |
 | `method` | Algorithm name; default `"auto"` uses Gittins. |
 | `objective_mode` | `"single"` (default) or `"multi"`. Invalid method/mode combinations fail before tracking starts. |
 | `model_prices` | Custom prices in USD per million tokens: `{"model": {"input_price": x, "output_price": y}}`. |
@@ -36,10 +36,12 @@ print(results.get_best_combo())
 | `random` | Random complete configurations | — |
 | `ucb` | UCB-E over configuration–question observations | — |
 | `bayesian` | Categorical GP with Log Expected Improvement | — |
+| `cost_aware_ucb` | — | Scalarization UCB per estimated evaluation dollar |
+| `cost_aware_qnehvi` | — | Noisy hypervolume improvement per estimated evaluation dollar |
 | `random_configurations` | Random complete configurations | Random complete configurations |
 | `random_questions` | Shared random questions across all configurations | Shared random questions across all configurations |
 
-`random` is the single-mode alias for `random_configurations`. `matrix_ucb` is an alias for `ucb`. Bayesian optimization requires the optional `agentopt-py[bayesian]` dependencies; the other methods are available in the standard installation.
+`random` is the single-mode alias for `random_configurations`. `matrix_ucb` is an alias for `ucb`; `cost_aware_scalarization_ucb` is an alias for `cost_aware_ucb`. Bayesian optimization and cost-aware qNEHVI require the optional `agentopt-py[bayesian]` dependencies; the other methods are available in the standard installation.
 
 ## Live recommendations and user stopping
 
@@ -90,6 +92,7 @@ Progress and stopping checks occur at these boundaries:
 | Random questions | Each configuration evaluation within a shared-question sweep | Only complete sweeps contribute to recommendations. |
 | UCB | Each acquisition batch | Ranks observed configurations by their current empirical scalar means; these are partial-data estimates without calibrated uncertainty. |
 | Bayesian optimization | Each complete configuration, or completed parallel acquisition batch | Ranks fully evaluated configurations. |
+| Cost-aware UCB / qNEHVI | Each warm-start evaluation, then each adaptive batch | Empirical quality-cost frontier after the complete uniform warm start; excludes any batch that crosses the dollar cap. |
 
 A snapshot can contain observations but no eligible recommendation. Further
 evaluations may change a recommendation in either direction; the displayed
@@ -97,7 +100,7 @@ score is not a guarantee of improvement or future performance.
 
 Budgets are optional, and every run has a finite dataset. Use a fraction to
 choose the evaluation allowance in advance, a user stop to decide while watching
-results, or both. Gittins, UCB, and Bayesian optimization also accept an optional
+results, or both. Gittins, UCB, Bayesian optimization and cost-aware Pareto methods also accept an optional
 soft dollar cap. Random baselines report spending without using a dollar cap.
 
 ## Evaluation fractions and budgets
@@ -114,6 +117,7 @@ adaptive methods can allocate different questions to each configuration.
 | Random questions | `observation_budget_fraction=1.0` of K × N cells | Shared-question sweeps, K cells each | Unsupported; spending is reported |
 | UCB | `observation_budget_fraction=1.0` of K × N cells | Adaptive cell batches | Optional soft cap, checked between acquisition batches |
 | Bayesian optimization | `sample_fraction=0.25` of K configurations | Complete configurations; at least two when available | Optional soft cap, checked between configurations or parallel acquisition batches |
+| Cost-aware UCB / qNEHVI | `observation_budget_fraction=1.0` of K × N cells | Uniform warm start, then adaptive cell batches | Optional soft cap, checked between warm cells and adaptive batches |
 
 Cell fractions are rounded up to a whole cell. Random baselines start only
 complete units that fit, so a remainder can be unused: a `0.5` fraction means
@@ -121,6 +125,9 @@ approximately half the configurations for `random_configurations`, or half the
 questions shared across all configurations for `random_questions`. Gittins and
 random also accept `max_total_question_evaluations` as an absolute cell cap.
 Gittins' cap must fund its warm start; random's must fund one complete unit.
+Cost-aware Pareto selectors also accept an absolute cell cap and require it to
+fund the uniform warm start. Their final adaptive batch can be shortened to fit
+the remaining cell allowance.
 
 Single-objective Gittins additionally publishes `stop_recommended`. Advice does
 not end the run by default: `stop_on_recommendation=False` keeps selecting
@@ -142,6 +149,71 @@ objective = score - lambda_cost × norm(cost) - lambda_latency × norm(latency)
 Gittins fixes its min/max scales from warm-start observations; subsequent values can lie outside those initial ranges. Random selection uses common min/max scales from completed sampling units. UCB and Bayesian optimization use running min/max scales across observed samples and refresh the stored scalar objectives. A constant or unavailable scale contributes zero; a positive cost weight requires known prices.
 
 These deployment weights are separate from Gittins' **search-cost coefficient** `cost_scaling_factor`. The latter defaults to `1e-4` in single mode and multiplies raw USD evaluation costs inside the DP. It does not change the final deployment score. Multi mode rejects nonzero deployment lambda weights; use `results.choose(...)` instead.
+
+## Cost-aware Pareto selectors
+
+Use these methods when you want several observed quality-cost tradeoffs and
+want the allocation rule to account for different evaluation prices:
+
+```python
+from agentopt import ModelSelector
+
+selector = ModelSelector(
+    agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset,
+    method="cost_aware_ucb",  # or "cost_aware_qnehvi"
+    objective_mode="multi",
+    warm_start_batch_size=4, batch_size=4, seed=42,
+    observation_budget_fraction=1.0,
+    max_search_cost_usd=10.0,
+)
+results = selector.select_best(parallel=True, max_concurrent=4)
+for candidate in results.get_recommendations():
+    print(candidate.combo, candidate.accuracy, candidate.cost_usd)
+chosen = results.choose(max_cost_usd=0.01)
+print(chosen.combo if chosen else "No observed recommendation meets the limit")
+```
+
+Both methods sample each configuration's questions without replacement, using
+independent seeded orders. Scores are normalized with `score_bounds=(0, 1)`.
+The second acquisition coordinate is `R / (R + mean_deployment_cost_usd)`,
+where `R` defaults to the median positive configuration mean cost in the
+uniform warm start (1 USD if all costs are zero). Set `cost_reference_usd`
+to supply a positive fixed reference.
+
+- **Cost-aware UCB** cycles eleven quality-cost weights, including both axes.
+  It uses radius `0.5 * sqrt(log(1 + total_evaluations) / arm_observations)`,
+  clips optimistic coordinates at one, and divides the weighted score by
+  predicted batch charge.
+- **Cost-aware qNEHVI** fits a categorical GP for each coordinate. Each workflow
+  role contributes a feature representing that role's model choice. All
+  observed configurations train the surrogate; only fully evaluated
+  configurations form the incumbent set, allowing unfinished configurations
+  to be evaluated again. Acquisition is divided by predicted batch charge.
+  Defaults are `mc_samples=64`, `refit_every=8` adaptive batches and
+  `candidate_chunk_size=64` candidates per scoring chunk. Exhausting the
+  current configuration triggers a new acquisition. Install with
+  `pip install "agentopt-py[bayesian]"`.
+
+Prediction of evaluation charge uses each configuration's observed non-cached
+spend per evaluation; free estimates have a `1e-12` USD floor. Cached responses
+still retain token-priced deployment cost. Tracking and known nonnegative
+prices are required, including for custom models.
+
+The cell fraction is **not a fraction of exhaustive USD cost**: future costs
+are unknown in a live run. Supply an absolute `max_search_cost_usd` for a
+monetary cap. Actual costs are checked between warm cells and adaptive batches,
+so scheduled work can overshoot. All incurred charges and observations remain
+in the result, while recommendations use the last complete in-budget batch.
+If the dollar cap or user stop prevents a complete uniform warm start,
+recommendations are empty. User stops after warm-up retain the last completed
+in-budget recommendation.
+
+The returned `CostAwareSelectionResults` supports the existing live callback,
+`request_stop()`, `stop_event` and `choose(...)` interfaces. Recommendations
+use observed means and an empirical Pareto test; their zero standard-deviation
+fields indicate no recommendation uncertainty model. They do not claim
+confidence guarantees or complete frontier recovery. Nonzero `lambda_cost`
+or `lambda_latency` values require a single-objective method.
 
 ## Gittins: single and multi objective
 

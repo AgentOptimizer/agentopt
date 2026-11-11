@@ -46,6 +46,11 @@ On top of that one primitive, AgentOpt gives you three capabilities that share t
 
 AgentOpt uses Gittins selection by default to allocate evaluation effort using estimated quality, uncertainty, and evaluation cost, and the routing API lets you keep refining at runtime once you've shipped.
 
+For empirical quality–cost frontiers, multi-objective selection also supports
+`method="cost_aware_ucb"` and `method="cost_aware_qnehvi"`.
+See [cost-aware Pareto selectors](https://agentoptimizer.github.io/agentopt/api/selectors/#cost-aware-pareto-selectors)
+for evaluation budgets and examples.
+
 ## Use Cases
 
 ### Offline model selection — find the best fixed combination

@@ -4,6 +4,7 @@ from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResu
 from .matrix_ucb import MatrixUCBModelSelector
 from .gittins import GittinsModelSelector, GittinsRecommendation, GittinsSelectionResults
 from .random_search import RandomSearchModelSelector, RandomSelectionResults
+from .cost_aware import CostAwareUCBModelSelector, CostAwareQNEHVIModelSelector, CostAwareSelectionResults
 
 # Bayesian is optional (requires torch/botorch)
 try:
@@ -16,6 +17,9 @@ __all__ = [
     "MatrixUCBModelSelector",
     "RandomSearchModelSelector",
     "RandomSelectionResults",
+    "CostAwareUCBModelSelector",
+    "CostAwareQNEHVIModelSelector",
+    "CostAwareSelectionResults",
     "GittinsModelSelector",
     "GittinsRecommendation",
     "GittinsSelectionResults",

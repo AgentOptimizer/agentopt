@@ -71,6 +71,29 @@ mode, `get_best()` and `get_best_combo()` identify an eligible empirical winner;
 in multi mode, use `get_recommendations()` and `choose(...)`. Both random methods
 report actual search cost, but do not accept a dollar cap or issue stopping advice.
 
+### CostAwareSelectionResults
+
+Cost-aware UCB and qNEHVI expose `get_recommendations()` and `choose(...)`.
+Their recommendations are the empirical quality-cost Pareto set from the
+latest completed batch within the USD cap. Quality and cost are observed means;
+conservative fields equal those means, and zero std fields indicate that no
+recommendation uncertainty model was fitted. Multi mode marks no single best
+configuration.
+
+| Field | Meaning |
+|---|---|
+| `method` | `cost_aware_ucb` or `cost_aware_qnehvi`. |
+| `recommendation_evaluations` | Number of observations supporting the in-budget recommendation. |
+| `recommendation_search_cost_usd` | Actual non-cached spend at that recommendation checkpoint. |
+| `cost_reference_usd` | Fixed deployment-cost reference used by acquisition, or `None` before warm-start calibration. |
+
+`results`, `total_evaluations` and `selection_cost` include all completed work,
+including a batch that exceeded the cap. Recommendation counts and means can
+therefore differ from the full evaluation records. `search_cost_overshoot_usd`
+reports the excess charge. An incomplete warm start has no recommendations.
+These methods stop on a user request, cell/dollar budget, or exhaustion; they
+do not issue Gittins stopping advice.
+
 ### Single-objective example
 
 ```python

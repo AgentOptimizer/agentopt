@@ -85,6 +85,9 @@ from .model_selection import (
     MatrixUCBModelSelector,
     RandomSearchModelSelector,
     RandomSelectionResults,
+    CostAwareUCBModelSelector,
+    CostAwareQNEHVIModelSelector,
+    CostAwareSelectionResults,
     ModelResult,
     SelectionResults,
 )
@@ -104,10 +107,14 @@ _METHODS = {
     "bayesian": BayesianOptimizationModelSelector,
     "random_configurations": RandomSearchModelSelector,
     "random_questions": RandomSearchModelSelector,
+    "cost_aware_ucb": CostAwareUCBModelSelector,
+    "cost_aware_scalarization_ucb": CostAwareUCBModelSelector,
+    "cost_aware_qnehvi": CostAwareQNEHVIModelSelector,
 }
 _MODE_METHODS = {
     "single": ("auto", "gittins", "random", "random_configurations", "random_questions", "ucb", "matrix_ucb", "bayesian"),
-    "multi": ("auto", "gittins", "random_configurations", "random_questions"),
+    "multi": ("auto", "gittins", "random_configurations", "random_questions",
+              "cost_aware_ucb", "cost_aware_scalarization_ucb", "cost_aware_qnehvi"),
 }
 
 
@@ -122,6 +129,9 @@ def ModelSelector(
     ``random_questions`` (shared random questions across all configurations).
     Single mode also supports ``random`` as an alias for configurations,
     ``ucb``, and ``bayesian``.
+    Multi mode additionally supports ``cost_aware_ucb`` (scalarization UCB)
+    and ``cost_aware_qnehvi`` (noisy hypervolume improvement per dollar).
+    Both return empirical Pareto sets at the last completed in-budget batch.
 
     Gittins single uses ``cost_scaling_factor=1e-4`` to price search evaluations
     inside its stopping problem. The separate ``lambda_cost`` and
@@ -145,6 +155,8 @@ def ModelSelector(
     elif cls is RandomSearchModelSelector:
         kwargs["objective_mode"] = objective_mode
         kwargs["sampling"] = "questions" if method == "random_questions" else "configurations"
+    elif cls in (CostAwareUCBModelSelector, CostAwareQNEHVIModelSelector):
+        kwargs["objective_mode"] = objective_mode
     return cls(agent=agent, models=models, eval_fn=eval_fn, dataset=dataset, **kwargs)
 
 
@@ -163,6 +175,9 @@ __all__ = [
     "MatrixUCBModelSelector",
     "RandomSearchModelSelector",
     "RandomSelectionResults",
+    "CostAwareUCBModelSelector",
+    "CostAwareQNEHVIModelSelector",
+    "CostAwareSelectionResults",
     "BayesianOptimizationModelSelector",
     # Result types
     "DatapointResult",

@@ -28,6 +28,16 @@
 
 ---
 
+## Watch the demo
+
+[![AgentOpt demo: explore the Pareto frontier and choose a model assignment](docs/assets/video/agentopt-cover.png)](https://agentoptimizer.github.io/agentopt/demo/)
+
+[Watch the walkthrough](https://agentoptimizer.github.io/agentopt/demo/) · [Download the video](https://agentoptimizer.github.io/agentopt/assets/video/agentopt-demo.mp4)
+
+The HotpotQA segment visualizes a recorded CC-Gittins run using real evaluation records. Its presentation layout is designed for the video rather than captured from the current product interface.
+
+<sub>Video by Yueli He and Yucheng Pan. Thank you for creating this walkthrough.</sub>
+
 ## News
 [2026/04] Version 0.1.0 released.
 

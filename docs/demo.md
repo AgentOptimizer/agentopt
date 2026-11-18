@@ -6,7 +6,7 @@ hide:
 
 # AgentOpt in action
 
-See how AgentOpt evaluates model assignments and helps you choose a quality鈥揷ost trade-off for an agent workflow.
+See how AgentOpt evaluates model assignments and helps you choose a quality-cost trade-off for an agent workflow.
 
 <video controls playsinline preload="metadata" poster="../assets/video/agentopt-cover.png" style="width:100%; aspect-ratio:16/9; border-radius:12px; background:#070e12;" aria-label="AgentOpt walkthrough with a recorded HotpotQA CC-Gittins run">
   <source src="../assets/video/agentopt-demo.mp4" type="video/mp4">

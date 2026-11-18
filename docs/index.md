@@ -25,6 +25,7 @@ AgentOpt evaluates model combinations across your full agent pipeline, measures 
 <div class="ao-ctas" markdown>
 
 [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
+[Watch the demo](demo.md){ .md-button }
 [:fontawesome-brands-github: View on GitHub](https://github.com/AgentOptimizer/agentopt){ .md-button }
 
 </div>

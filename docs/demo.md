@@ -15,7 +15,7 @@ See how AgentOpt evaluates model assignments and helps you choose a quality-cost
 
 [Open or download the video](assets/video/agentopt-demo.mp4){ .md-button }
 
-**What you are seeing.** The HotpotQA segment visualizes a recorded CC-Gittins run. Its frontier and model assignments come from real evaluation records; the presentation layout is made for the video and is not a recording of the current product interface. Evaluation spend and per-query deployment cost are shown separately.
+**What you are seeing.** The HotpotQA segment visualizes a recorded CC-Gittins run. Its frontier and model assignments come from real evaluation records; the presentation layout is made for the video and is not a recording of the current product interface. Evaluation spend is cumulative search cost; deployment cost is the estimated cost of running a configuration. The revised video displays deployment cost in USD per 1,000 queries.
 
 <small>Video by Yueli He and Yucheng Pan. Thank you for creating this walkthrough.</small>
 

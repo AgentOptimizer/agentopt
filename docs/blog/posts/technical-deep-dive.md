@@ -25,6 +25,9 @@ But "it works" is not "it's optimal." What if the same accuracy costs 20x less w
 
 <!-- more -->
 
+!!! info "Earlier experiments and the current API"
+    This article describes earlier Arm Elimination and Bayesian experiments; the tables below retain their original results and are not CC-Gittins results. The current default is Gittins search. Set `objective_mode="multi"` to use CC-Gittins for an estimated quality–cost Pareto recommendation set, then choose a deployment preference with `results.choose(...)`. See the [current algorithm guide](../../concepts/algorithms.md) and [Quick Start](../../getting-started/quickstart.md).
+
 ## Server-Side vs User-Side: Who's Optimizing What?
 
 There's a lot of exciting work happening in LLM inference optimization. Systems like **Autellix**, **ThunderAgent**, and **Continuum** tackle it from the provider's side: batching requests, quantizing weights, routing traffic across GPU clusters, speculatively decoding tokens. This is server-side optimization. It makes the provider more efficient, and some of those savings trickle down to you through lower prices.
@@ -45,7 +48,7 @@ You can't maximize all three. A frontier model like Claude Opus gives you the be
 
 No server-side system can answer that for you. Only you know your quality requirements, your budget, and your latency SLA. A startup building a coding assistant might happily trade 5% accuracy for 10x cost savings. A medical AI can't afford to trade accuracy at all.
 
-This is why the user must own the objective function. AgentOpt lets you define exactly what "good" means for your use case through a simple `eval_fn`, and then finds the model combination that optimizes for it.
+This is why the user must own the objective function. AgentOpt lets you define exactly what "good" means for your use case through a simple `eval_fn`, and then searches model combinations against that objective. Multi-objective mode instead preserves quality and deployment cost as separate objectives and returns recommendations for different trade-offs.
 
 ## Model Selection Is the Foundation of Everything Else
 
@@ -55,7 +58,7 @@ Think about it: if you don't know which model to run, what do you cache? Which G
 
 Caching, routing, and scheduling all *assume* you've already decided which model to use. They're optimizations applied *on top of* a model choice. Model selection is the prerequisite they all depend on.
 
-And the impact is enormous. Here's what we found across three benchmarks, comparing the most expensive combination to the cheapest one that achieves similar accuracy:
+And the impact is enormous. Here's what we found across four benchmarks, comparing the most expensive combination to the cheapest one that achieves similar accuracy:
 
 | Benchmark | Expensive Combo | Acc | Cost | Budget Combo | Acc | Cost | Savings |
 |-----------|----------------|-----|------|-------------|-----|------|---------|
@@ -90,7 +93,7 @@ You'd never find this by picking "the best model" for each layer independently. 
 
 ## Reducing the Overhead: Bandits and Bayesian Optimization
 
-There's an obvious objection: if you have to evaluate full combinations, doesn't the search space explode? With M models and N layers, you have M^N combinations. 9 models across 2 layers = 81 combos. Each evaluated on 200 datapoints = 16,200 LLM calls. That's expensive.
+There's an obvious objection: if you have to evaluate full combinations, doesn't the search space explode? With M models and N layers, you have M^N combinations. 9 models across 2 layers = 81 combos. Each evaluated on 200 datapoints = 16,200 workflow evaluations. A workflow evaluation can make multiple LLM calls; caching can also reuse calls across evaluations. That's expensive.
 
 This is where search algorithms matter. And a good search algorithm is non-trivial.
 
@@ -124,7 +127,7 @@ Across our four benchmarks, Arm Elimination consistently achieves near-optimal a
 | GPQA | 74.75% | 74.10% | 24% |
 | BFCL | 70.00% | 69.37% | 12% |
 
-Nearly identical accuracy to exhaustive search, at roughly half the search cost. These algorithms don't just save budget. They find the right combo with statistical guarantees.
+Nearly identical accuracy to exhaustive search, at roughly half the search cost. These algorithms don't just save budget. The reported savings describe these experiments; they do not guarantee recovery of an optimal combination on a new benchmark.
 
 ## Empirical Validation
 

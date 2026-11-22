@@ -91,9 +91,13 @@ class LiveParetoPlot:
         self.axis = self.figure.add_axes((.085, .258, .45, .355), facecolor=BG)
         self.recommendation_axis = self.figure.add_axes((.59, .202, .37, .515), facecolor=PANEL)
         self.recommendation_axis.set_axis_off()
-        self.detail_text = self.figure.text(.04, .132, "", color=MUTED, fontsize=FONT_MEDIUM, fontfamily=self.font)
-        self.figure.text(.04, .082, "Spend = cumulative evaluation cost", color=MUTED, fontsize=FONT_MEDIUM, fontfamily=self.font)
-        self.figure.text(.04, .057, "Deployment cost = USD per 1,000 queries", color=MUTED, fontsize=FONT_MEDIUM, fontfamily=self.font)
+        self.detail_text = self.figure.text(.59, .170, "", va="top", color=MUTED,
+                                            fontsize=FONT_MEDIUM, fontfamily=self.font)
+        footer_y, button_height = .065, .059
+        self.figure.text(.085, footer_y + button_height / 2,
+                         "Spend = cumulative evaluation cost\nDeployment cost = USD per 1,000 queries",
+                         va="center", linespacing=1.25, color=MUTED, fontsize=FONT_MEDIUM,
+                         fontfamily=self.font)
         self.progress_axis = self.figure.add_axes((.14, .37, .34, .012), facecolor=EDGE)
         self.progress_axis.set_xlim(0, 1)
         self.progress_axis.set_ylim(0, 1)
@@ -110,9 +114,9 @@ class LiveParetoPlot:
         self._scroll_drag = None
         self._chart_drag = None
         self._chart_press = None
-        self.finish_button = self._make_button((.704, .045, .12, .059), "Finish",
+        self.finish_button = self._make_button((.704, footer_y, .12, button_height), "Finish",
                                                self.finish_search)
-        self.pause_button = self._make_button((.839, .045, .12, .059), "Pause",
+        self.pause_button = self._make_button((.839, footer_y, .12, button_height), "Pause",
                                               self.toggle_pause, primary=True)
         self.buttons = (self.finish_button, self.pause_button)
         self._zoomed = False
@@ -293,7 +297,7 @@ class LiveParetoPlot:
             detail = "Pause requested. Waiting for the current evaluation batch to complete."
         elif self._warming_up:
             detail = "Sampling each model combination before estimating the first frontier."
-        self.detail_text.set_text(detail)
+        self.detail_text.set_text("\n".join(wrap(detail, width=54)))
         disabled = self.finished or self.finish_requested
         for button in self.buttons:
             button.set_active(not disabled)

@@ -130,9 +130,16 @@ python examples/selection/benchmark_runner.py \
   --output results.json
 ```
 
-This command calls the selected model APIs. The window plots the current
-conservative score and cost estimates for Pareto recommendations. It also shows
-the initial sampling progress, completed evaluations, and search spending.
+This command calls the selected model APIs. The window shows completed
+evaluations as a percentage of all model combinations × benchmark questions,
+along with cumulative evaluation spend. The Pareto chart and recommendation
+cards show conservative estimates for quality and deployment cost in USD per
+1,000 queries. Each card includes its evaluated question count.
+
+Drag the chart with the left mouse button to pan, and use the mouse wheel over
+the chart to zoom. **Reset view** restores the chart bounds. Scroll or drag
+the scrollbar in the recommendations panel to browse longer lists.
+
 **Pause** holds the search after the current evaluation batch; **Continue**
 resumes it; **Finish** requests a final result after scheduled work completes.
 Closing the window also requests a finish. The saved JSON contains the final

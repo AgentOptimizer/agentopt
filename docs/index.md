@@ -16,7 +16,7 @@ Client-side agent optimization
 <span class="ao-eyebrow-rule"></span>
 </p>
 
-# Choosing the right model for your agents can save <span class="ao-accent">100x money and time</span>
+# Find the right models for your agents. <span class="ao-accent">Choose your quality–cost trade-off.</span>
 
 <p class="ao-sub">
 AgentOpt evaluates model combinations across your full agent pipeline, measures accuracy, cost, and latency, and recommends a configuration or a set of accuracy–cost tradeoffs.
@@ -39,7 +39,7 @@ AgentOpt evaluates model combinations across your full agent pipeline, measures 
 </div>
 <div class="ao-stat">
 <div class="ao-stat-num">Smart search</div>
-<div class="ao-stat-label">on best model combination</div>
+<div class="ao-stat-label">across model combinations</div>
 </div>
 <div class="ao-stat">
 <div class="ao-stat-num">0</div>
@@ -61,7 +61,9 @@ Your agent has multiple steps — planning, reasoning, tool use, synthesis. Each
 
 ## The Solution
 
-Give AgentOpt your agent and a small evaluation dataset (~100 samples). Gittins selection searches the model combination space and returns one recommended configuration by default. Set `objective_mode="multi"` to inspect accuracy/cost alternatives and choose a deployment preference.
+Give AgentOpt your workflow, evaluation inputs, reference answers, and a scoring function. It searches combinations of models assigned to each workflow role. The default single-objective mode recommends one configuration. Multi-objective mode uses CC-Gittins to return an estimated quality–cost Pareto set, so you can choose a configuration that fits your deployment budget.
+
+The example below uses multi-objective mode. Define `MyAgent`, `dataset`, and `eval_fn` as shown in the [Quick Start](getting-started/quickstart.md).
 
 ```python
 from agentopt import ModelSelector
@@ -74,24 +76,21 @@ selector = ModelSelector(
     },
     eval_fn=eval_fn,
     dataset=dataset,
+    objective_mode="multi",
 )
 
 results = selector.select_best(parallel=True)
-results.print_summary()
+recommendations = results.get_recommendations()
+
+# Example deployment budget: $0.50 per 1,000 queries.
+# The API accepts USD per query, so convert the display unit.
+chosen = results.choose(max_cost_usd=0.50 / 1000)
+if chosen is not None:
+    print(chosen.combo)  # A model assignment for each workflow role.
 ```
 
-<div class="output-block">
-<pre>
-    Model Selection Results
-    --------------------------------------------------------------------------
-    Rank  Model                                       Accuracy  Latency    Price
-    --------------------------------------------------------------------------
-<span class="highlight-row">&gt;&gt;&gt;  1  planner=gpt-4.1-nano + solver=gpt-4.1-nano   100.00%    0.85s  $0.000420</span>
-     2  planner=gpt-4o-mini + solver=gpt-4o-mini      100.00%    1.20s  $0.002372
-     3  planner=gpt-4o + solver=gpt-4o                 100.00%    2.70s  $0.014355
-    ...
-</pre>
-</div>
+The recommendation set contains different quality–cost trade-offs, not one universally best combination. A budget preference selects the highest conservative quality estimate among eligible recommendations; it can return `None` if none fit. Evaluation spend is the cost of searching, while deployment cost is the estimated cost of running a chosen workflow per query.
+
 
 ---
 
@@ -115,7 +114,7 @@ results.print_summary()
 
     ---
 
-    Gittins selection by default, with random, UCB, and Bayesian baselines. Allocate an evaluation budget across model configurations and questions.
+    Gittins search by default, with CC-Gittins for multi-objective quality–cost recommendations. Allocate evaluation effort across model combinations and questions. Random, UCB, and Bayesian alternatives are also available.
 
 -   :material-radar:{ .lg .middle } **Automatic Tracking**
 
@@ -127,7 +126,7 @@ results.print_summary()
 
     ---
 
-    Identical LLM calls are cached in-memory and on disk (SQLite). Re-running experiments is instant and free.
+    Matching LLM responses can be reused from memory or disk (SQLite), avoiding repeated provider calls. New requests can still incur charges, and scoring and search still take time.
 
 -   :material-speedometer:{ .lg .middle } **Parallel Evaluation**
 
@@ -148,8 +147,8 @@ graph LR
     B --> D["AgentOpt Interceptor"]
     D --> E["Track tokens, latency, cost"]
     D --> F["Cache responses"]
-    E --> G["Evaluate & Rank"]
-    G --> H["Winner or accuracy/cost recommendations"]
+    E --> G["Evaluate model combinations"]
+    G --> H["Single recommendation or estimated Pareto set"]
 ```
 
 AgentOpt patches `httpx` at the transport level — the same HTTP library used by every major LLM SDK. Your agent code stays untouched. AgentOpt silently records every LLM call, caches responses, and aggregates metrics per model combination.

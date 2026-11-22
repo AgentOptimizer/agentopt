@@ -1,11 +1,10 @@
 # Quick Start
 
-Set up model selection for a multi-step agent using your own evaluation examples.
+Search model combinations for a multi-step agent using your own evaluation benchmark: inputs, reference answers, and a scoring function.
 
 ## Overview
 
-AgentOpt evaluates candidate LLM combinations and recommends a configuration
-for your agent. Here's the idea:
+AgentOpt evaluates candidate LLM combinations. Single-objective mode recommends one configuration; multi-objective mode returns an estimated quality–cost Pareto set. Here's the idea:
 
 1. You define an **agent class** — it accepts a model config and runs on a datapoint
 2. You provide **candidate models** for each step of your agent
@@ -27,7 +26,7 @@ for your agent. Here's the idea:
 │        output = agent.run(input_data)                           │
 │        score  = eval_fn(expected, output)                       │
 │                                                                 │
-│  Then ranks all combinations by accuracy / cost / latency.      │
+│  Then recommends a configuration or quality–cost alternatives.      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,7 +103,7 @@ def eval_fn(expected, actual):
 
 The `eval_fn` is called on the output of `agent.run(input_data)` for each datapoint.
 
-## Step 4: Run Model Selection
+## Step 4: Search Model Combinations {#step-4-run-model-selection}
 
 ```python
 from agentopt import ModelSelector
@@ -133,7 +132,7 @@ With 3 candidates per step and 2 steps, that's 9 combinations. The default `Mode
 ## Step 5: Use the Results
 
 ```python
-# Get the winning combination
+# Get the recommendation from the single-objective example above
 best = results.get_best_combo()
 print(best)  # {"planner": "gpt-4o-mini", "solver": "gpt-4.1-nano"}
 
@@ -143,6 +142,28 @@ Path("results.json").write_text(results.model_dump_json(indent=2), encoding="utf
 if best is not None:
     results.export_config("optimized_config.yaml")
 ```
+
+### Optional: explore the Pareto recommendations
+
+To search quality and deployment cost as separate objectives, create the selector in Step 4 with `objective_mode="multi"` before running it. With the default `method="auto"`, this uses CC-Gittins. Then inspect the resulting recommendations and apply a deployment preference:
+
+```python
+recommendations = results.get_recommendations()
+for recommendation in recommendations:
+    print(recommendation.combo)
+
+budget_per_1k_queries = 0.50  # Example budget, in USD.
+chosen = results.choose(max_cost_usd=budget_per_1k_queries / 1000)
+if chosen is not None:
+    selected_models = chosen.combo
+    print(selected_models)
+else:
+    print("No recommended combination fits this budget.")
+```
+
+Multi-objective mode does not mark a unique winning combination. The budget rule chooses the highest conservative quality estimate within the cost limit among the current recommendations. Early stopping can leave the set empty, and future observations can change the estimates.
+
+The deployment limit above is **USD per query** in the API, converted from the displayed **USD per 1,000 queries**. It is separate from `max_search_cost_usd`, which limits new evaluation spending. See [Search cost and deployment preferences](../concepts/algorithms.md#search-cost-and-deployment-preferences).
 
 ## Reuse Cached Responses
 

@@ -182,15 +182,41 @@ def test_percentage_and_green_metrics_fit_fixed_canvas():
     renderer = plot.figure.canvas.get_renderer()
     panel_bounds = plot.recommendation_axis.get_window_extent(renderer)
     for artist in plot.recommendation_axis.texts:
-        bounds = artist.get_window_extent(renderer)
+        bounds = artist.get_tightbbox(renderer)
+        if bounds is None:
+            continue
         assert bounds.x0 >= panel_bounds.x0 and bounds.x1 <= panel_bounds.x1
         assert bounds.y0 >= panel_bounds.y0 and bounds.y1 <= panel_bounds.y1
     metrics = [t for t in plot.recommendation_axis.texts if t.get_color() == MINT]
     assert metrics and all("tested" in t.get_text() and "/ 1k" in t.get_text() for t in metrics)
-    for _ in range(12):
-        plot._on_scroll(SimpleNamespace(inaxes=plot.recommendation_axis, button="down"))
-    assert plot._legend_offset == 7
-    assert "36/200 tested" in next(t.get_text() for t in plot.recommendation_axis.texts if t.get_color() == MINT)
+    wheel = SimpleNamespace(inaxes=plot.recommendation_axis, button="down")
+    first_card = next(t for t in plot.recommendation_axis.texts if t.get_text() == "1")
+    original_y = first_card.get_position()[1]
+    plot._on_scroll(wheel)
+    first_card = next(t for t in plot.recommendation_axis.texts if t.get_text() == "1")
+    assert first_card.get_position()[1] == pytest.approx(original_y + .09)
+    for _ in range(35):
+        plot._on_scroll(wheel)
+    assert plot._legend_offset == plot._legend_scroll_limit
+    low, high = plot.scroll_thumb.get_ydata()
+    assert low == pytest.approx(0) and high < 1
+    assert any("36/200 tested" in t.get_text() for t in plot.recommendation_axis.texts)
+    recommendations[:] = recommendations[:2]
+    plot.update(snapshot)
+    plot._on_scroll(wheel)
+    assert plot._legend_offset == 0
+    assert plot.scroll_axis.get_visible()
+    assert list(plot.scroll_thumb.get_ydata()) == [0, 1]
+    assert {"1", "2"} <= {t.get_text() for t in plot.recommendation_axis.texts}
+    recommendations[:] = [
+        SimpleNamespace(model_name=str(i), combo={"planner": "Planner model", "solver": "Solver model"},
+                        conservative_accuracy=.4+i*.05, conservative_cost_usd=.001+i*.0001,
+                        observed_samples=8)
+        for i in range(4)
+    ]
+    plot.update(snapshot)
+    assert {"1", "2", "3", "4"} <= {t.get_text() for t in plot.recommendation_axis.texts}
+    assert list(plot.scroll_thumb.get_ydata()) == [0, 1]
     snapshot.is_final = True
     snapshot.stop_reason = "user_stopped"
     plot.update(snapshot)
@@ -206,3 +232,45 @@ def test_complete_run_reaches_full_coverage():
     assert plot.metric_values[0].get_text() == "100.00%"
     assert plot.evaluation_count.get_text() == "8 / 8"
     assert plot.status_text.get_text() == "Finished"
+
+
+def test_chart_number_reveals_matching_card_without_panning(monkeypatch):
+    from types import SimpleNamespace
+    from matplotlib.backend_bases import MouseEvent
+    from matplotlib.backend_tools import Cursors
+
+    plot = LiveParetoPlot(total_questions=200, total_combinations=8, show_window=False)
+    recommendations = [SimpleNamespace(
+        model_name=f"option {i}", combo={"planner": f"Model {i}", "solver": "Solver"},
+        conservative_accuracy=.4 + i*.03, conservative_cost_usd=.001 + i*.0002,
+        observed_samples=i+1) for i in range(8)]
+    snapshot = SimpleNamespace(stop_reason="running", total_evaluations=80, selection_cost=.5,
+                               is_final=False, get_recommendations=lambda: recommendations)
+    plot.update(snapshot)
+    plot.figure.canvas.draw()
+    initial_limits = (plot.axis.get_xlim(), plot.axis.get_ylim())
+    _, label, name = plot._chart_labels[-1]
+    bounds = label.get_window_extent()
+    x, y = (bounds.x0+bounds.x1)/2, (bounds.y0+bounds.y1)/2
+    cursors = []
+    monkeypatch.setattr(plot.figure.canvas, "set_cursor", cursors.append)
+    point_x, point_y = plot.axis.transData.transform(plot._chart_labels[-1][0])
+    for mouse_x, mouse_y, expected in ((point_x, point_y, Cursors.HAND),
+                                        (0, 0, Cursors.POINTER), (x, y, Cursors.HAND)):
+        event = MouseEvent("motion_notify_event", plot.figure.canvas, mouse_x, mouse_y)
+        plot.figure.canvas.callbacks.process(event.name, event)
+        assert cursors[-1] == expected
+    for action in ("button_press_event", "button_release_event"):
+        event = MouseEvent(action, plot.figure.canvas, x, y, button=1)
+        plot.figure.canvas.callbacks.process(action, event)
+    assert plot._selected_combination == name
+    assert plot._legend_offset > 0
+    assert plot._legend_offset == pytest.approx(plot._legend_scroll_limit)
+    assert initial_limits == (plot.axis.get_xlim(), plot.axis.get_ylim())
+    renderer = plot.figure.canvas.get_renderer()
+    metric = next(t for t in plot.recommendation_axis.texts if "8/200 tested" in t.get_text())
+    assert metric.get_tightbbox(renderer).height == metric.get_window_extent(renderer).height
+
+    recommendations.pop()
+    plot.update(snapshot)
+    assert plot._selected_combination is None

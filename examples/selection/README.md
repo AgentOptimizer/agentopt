@@ -22,8 +22,27 @@ python examples/selection/benchmark_runner.py \
 Set `OPENAI_API_KEY` first and use models available to your account; this makes
 real API calls. The sample is a format illustration, not evidence of model
 quality. Use `--help` to see the options, or add `--objective-mode multi` for
-accuracy/cost alternatives. A stop lets scheduled work finish before saving;
-there is no resumable search checkpoint.
+accuracy/cost alternatives. A stop lets scheduled work finish before saving.
+
+Gittins automatically saves successful cells to `results.json.checkpoint.sqlite3`
+(or `--checkpoint PATH`). Run the same command again to continue: saved cells
+are restored without invoking the agent or scorer, and spend includes both the
+previous run and new work. Closing the plot or clicking Finish keeps this file.
+Keep the dataset, models, seed and algorithm settings unchanged. A different
+setup is rejected before evaluation; use a new output/checkpoint path for a new
+experiment. `--no-checkpoint` disables saving and reuse. The `.lock` sidecar
+prevents two processes from using one checkpoint simultaneously; it is released
+when the process exits, including after a crash.
+
+An in-flight request whose result has not been saved may need to run again.
+The JSON report and PNG are exports, not restart files. Other algorithms do not
+yet support search continuation.
+
+For a custom workflow, pass `checkpoint_path="run.sqlite3"` and
+`checkpoint_id="my-workflow-and-scorer-v1"` to `ModelSelector(method="gittins", ...)`.
+Increment the ID when prompts, tools, evaluator logic or provider configuration
+change. Dataset entries and model specifications must be JSON-serializable.
+Both single- and multi-objective Gittins support continuation.
 
 The [user guide](../../docs/getting-started/your-benchmark.md) explains the dataset
 and scorer contract, custom agents, evaluation fractions, dollar limits, live

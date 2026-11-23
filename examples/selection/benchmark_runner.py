@@ -5,10 +5,12 @@ Set OPENAI_API_KEY, then run this file with --dataset and --models.
 The bundled benchmark_sample.jsonl illustrates the format; it is not a
 representative evaluation benchmark. Replace it and the scoring function for
 real use. Ctrl+C ends the run after the scheduled batch and saves its results;
-it does not create a resumable checkpoint.
+Gittins saves each completed cell and resumes from the same checkpoint on restart.
 """
 
 import argparse
+import hashlib
+import inspect
 import json
 import math
 import os
@@ -66,6 +68,9 @@ def failure_message(error, *, scoring=False):
         seen.add(id(error))
         error = error.__cause__ or error.__context__
     for cause in chain:
+        from agentopt.model_selection.checkpoint import CheckpointError, CheckpointInUseError
+        if isinstance(cause, (CheckpointError, CheckpointInUseError)):
+            return str(cause)
         status = getattr(cause, "status_code", None)
         if status == 401:
             return "Authentication failed. Check OPENAI_API_KEY and ensure the key is valid."
@@ -213,6 +218,10 @@ def make_parser():
     parser.add_argument("--seed", type=int, help="Seed for Gittins, random, or UCB; Bayesian has no seed option")
     parser.add_argument("--max-concurrent", type=int, default=4, help="Maximum concurrent evaluations (default 4)")
     parser.add_argument("--output", type=Path, default=Path("results.json"), help="Result JSON path (default results.json)")
+    parser.add_argument("--checkpoint", type=Path,
+                        help="Gittins checkpoint to create or resume (default: output path + .checkpoint.sqlite3)")
+    parser.add_argument("--no-checkpoint", action="store_true",
+                        help="Disable Gittins checkpoint saving and start a fresh run")
     parser.add_argument("--live-plot", action="store_true",
                         help="show the estimated Pareto frontier during a real multi-objective Gittins run")
     parser.add_argument("--plot-output", type=Path,
@@ -237,6 +246,10 @@ def selector_options(args):
         raise ValueError("--max-concurrent must be positive")
     if args.seed is not None and (args.seed < 0 or args.method == "bayesian"):
         raise ValueError("--seed must be nonnegative and applies only to Gittins, random, or UCB")
+    if args.checkpoint is not None and args.no_checkpoint:
+        raise ValueError("--checkpoint and --no-checkpoint cannot be combined")
+    if args.checkpoint is not None and args.method not in ("auto", "gittins"):
+        raise ValueError("--checkpoint currently supports Gittins only")
     options = {}
     if args.evaluation_fraction is not None:
         if not math.isfinite(args.evaluation_fraction) or not 0 < args.evaluation_fraction <= 1:
@@ -389,6 +402,19 @@ def main(argv=None):
         parser.error("This example requires the OpenAI SDK: pip install openai")
     from agentopt import ModelSelector
 
+    if args.method in ("auto", "gittins") and not args.no_checkpoint:
+        checkpoint = args.checkpoint or Path(str(args.output) + ".checkpoint.sqlite3")
+        reserved = {args.output.resolve(), args.dataset.resolve()}
+        if args.plot_output is not None:
+            reserved.add(args.plot_output.resolve())
+        if checkpoint.resolve() in reserved or Path(str(checkpoint) + ".lock").resolve() in reserved:
+            parser.error("--checkpoint must differ from dataset, result and image paths")
+        workflow = (inspect.getsource(AnswerAgent.__init__)
+                    + inspect.getsource(AnswerAgent.run) + inspect.getsource(eval_fn))
+        workflow += os.environ.get("OPENAI_BASE_URL", "")
+        options.update(checkpoint_path=checkpoint,
+                       checkpoint_id=hashlib.sha256(workflow.encode("utf-8")).hexdigest())
+        print(f"Checkpoint: {checkpoint} (saved cells are reused automatically)", flush=True)
     failures = FailureState()
     try:
         selector = ModelSelector(

@@ -16,9 +16,10 @@ from uuid import uuid4
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..model_price import compute_price
+from ..model_price import MODEL_PRICES, compute_price
 from .axis_gittins_dp import AxisGittinsBoundaryCache
-from .base import BaseModelSelector, ModelResult, SelectionResults
+from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
+from .checkpoint import EvaluationCheckpoint, fingerprint
 from .gittins_statistics import (
     GaussianPosterior, finite_dataset_moments, fit_warm_start, raw_pareto_front_indices,
 )
@@ -142,7 +143,20 @@ class GittinsModelSelector(BaseModelSelector):
     at numerical floors without an intervening observation to halt globally.
     Budget exhaustion and full completion can halt earlier. Evaluation or
     pricing failures abort the run, with the base selector stopping tracking.
+
+    Set ``checkpoint_path`` and a stable ``checkpoint_id`` (workflow/evaluator
+    version) to persist each successful cell and automatically resume on restart.
+    Dataset, ordered model specifications, seed, prices and algorithm settings
+    must match. Change checkpoint_id when prompts, tools or evaluator behavior
+    change. Inputs must be JSON-serializable. Finish stops the current run but
+    keeps the checkpoint; use a different path for a fresh run. An interrupted
+    request not yet saved may run again. Other algorithms do not support this.
     """
+
+    # Random baselines reuse the observation methods without this initializer.
+    # Persistence remains opt-in and supported only by Gittins itself.
+    checkpoint_path = None
+    _journal = None
 
     def __init__(self, agent=None, models=None, eval_fn=None, dataset=None, *,
                  objective_mode="single", batch_size=4, warm_start_batch_size=4,
@@ -155,7 +169,8 @@ class GittinsModelSelector(BaseModelSelector):
                  eta_initial=1.0, eta_decay=0.5, effective_cost_bin_ratio=2.0,
                  effective_cost_bin_anchor=1e-4, grid_size=129, stop_tolerance=1e-9,
                  seed=42, model_prices=None, tracker=None,
-                 lambda_cost=0.0, lambda_latency=0.0):
+                 lambda_cost=0.0, lambda_latency=0.0,
+                 checkpoint_path=None, checkpoint_id=None):
         try:
             import scipy  # noqa: F401
         except ImportError as error:
@@ -219,12 +234,46 @@ class GittinsModelSelector(BaseModelSelector):
             self.cell_cap = min(self.cell_cap, _integer(max_total_question_evaluations, "max_total_question_evaluations"))
         if self.cell_cap < n_arms * self.warm_size:
             raise ValueError("The cell budget cannot fund the mandatory uniform warm start")
+        # Explicit workflow identity covers prompts, evaluator versions, provider
+        # endpoints and other configuration outside the model/dataset arguments.
+        self._journal = None
+        self.restored_cells = 0
+        self.checkpoint_path = checkpoint_path
+        self._checkpoint_identity = None
+        if checkpoint_path is not None:
+            if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
+                raise ValueError("checkpoint_id is required: give a stable workflow/evaluator version")
+            settings = {key: value for key, value in vars(self).items()
+                        if key not in {"_journal", "restored_cells", "checkpoint_path", "_checkpoint_identity"}}
+            self._checkpoint_identity = fingerprint({
+                "format": 1, "algorithm": "gittins-v1", "workflow": checkpoint_id,
+                "dataset": [dataset[i] for i in range(len(dataset))],
+                "models": list(models.items()), "settings": settings,
+                "lambda_cost": lambda_cost, "lambda_latency": lambda_latency,
+                "prices": model_prices, "price_table": MODEL_PRICES,
+            })
         super().__init__(agent=agent, models=models, eval_fn=eval_fn, dataset=dataset,
                          model_prices=model_prices, tracker=tracker,
                          lambda_cost=lambda_cost, lambda_latency=lambda_latency)
 
     def _run_selection(self, parallel=False, max_concurrent=20):
-        return asyncio.run(self._select(parallel, _integer(max_concurrent, "max_concurrent")))
+        concurrency = _integer(max_concurrent, "max_concurrent")
+        if self.checkpoint_path is None:
+            return asyncio.run(self._select(parallel, concurrency))
+        with EvaluationCheckpoint(self.checkpoint_path, self._checkpoint_identity) as journal:
+            self._journal = journal
+            self.restored_cells = journal.saved_cells
+            try:
+                return asyncio.run(self._select(parallel, concurrency))
+            finally:
+                self._journal = None
+
+    def _publish_update(self, result, *, final=False):
+        # Do not animate the historical warm start or let callbacks stop its
+        # reconstruction. The first update contains all restored observations.
+        if self._journal is not None and self._journal.batch_index < self._journal.saved_batches and not final:
+            return result
+        return super()._publish_update(result, final=final)
 
     def _selection_cost_so_far(self):
         # Charged calls only, accumulated before tracker archival.
@@ -244,32 +293,26 @@ class GittinsModelSelector(BaseModelSelector):
             self._spent += price
 
     async def _pull(self, arm, question_ids, parallel, max_concurrent):
-        """Evaluate a batch with stable original dataset indices and unique run IDs."""
-        agent = self.agent(self._combos[arm])
+        """Persist each successful cell before advancing the adaptive batch."""
+        saved = self._journal.begin_batch(self._names[arm], question_ids) if self._journal else {}
+        # Constructing an agent can itself initialize clients; avoid it entirely
+        # when every cell in the batch already exists.
+        agent = self.agent(self._combos[arm]) if len(saved) < len(question_ids) else None
         label = f"{self._names[arm]}::gittins_{self._run_id}"
+
         async def evaluate(question):
+            if question in saved:
+                item = saved[question]
+                return DatapointResult.model_validate(item["datapoint"]), item["cost"], item["charge"]
             tasks = [self.dataset[question]]
             if parallel or self._is_async_run:
                 outcome = await self._evaluate_agent_async(agent, tasks, label, max_concurrent=1, dp_offset=question)
             else:
                 outcome = self._evaluate_agent(agent, tasks, label, dp_offset=question)
-            return question, outcome
-        if parallel:
-            semaphore = asyncio.Semaphore(max_concurrent)
-            async def limited(question):
-                async with semaphore:
-                    return await evaluate(question)
-            evaluated = await asyncio.gather(*(limited(q) for q in question_ids))
-        else:
-            evaluated = [await evaluate(q) for q in question_ids]
-        before = self._spent
-        self._update_spend()
-        self._evaluations += len(question_ids)
-        for question, (scores, latencies, dp_ids) in evaluated:
+            scores, latencies, dp_ids = outcome
             if len(scores) != 1:
                 raise RuntimeError(f"Evaluation failed for {self._names[arm]} at dataset index {question}")
-            costs = self._per_sample_costs(dp_ids)
-            cost = costs[0]
+            cost = self._per_sample_costs(dp_ids)[0]
             low, high = self.score_bounds
             if not math.isfinite(scores[0]) or not low <= scores[0] <= high:
                 raise ValueError("eval_fn score must be finite and within score_bounds")
@@ -281,14 +324,46 @@ class GittinsModelSelector(BaseModelSelector):
             if not dp.input_tokens and not dp.output_tokens:
                 raise ValueError("No LLM token usage was recorded; Gittins requires tracked evaluations")
             dp.datapoint_index = question
+            charge = 0.0
+            for record in self._tracker.get_records():
+                if record.data_id in dp_ids and not record.cached:
+                    price = compute_price({record.model: record.prompt_tokens}, {record.model: record.completion_tokens},
+                                          custom_prices=self._custom_prices)
+                    if price is None or not math.isfinite(price) or price < 0:
+                        raise ValueError("Cannot account for Gittins search cost; supply model_prices")
+                    charge += price
+            if self._journal:
+                self._journal.save_cell(question, {"datapoint": dp.model_dump(mode="json"),
+                                                   "cost": cost, "charge": charge})
+            return dp, cost, charge
+
+        if parallel:
+            semaphore = asyncio.Semaphore(max_concurrent)
+            async def limited(question):
+                async with semaphore:
+                    return await evaluate(question)
+            # Drain other successful tasks if one fails, so their completed cells
+            # are saved before the selector releases its checkpoint lock.
+            evaluated = await asyncio.gather(*(limited(q) for q in question_ids), return_exceptions=True)
+            for item in evaluated:
+                if isinstance(item, BaseException):
+                    raise item
+        else:
+            evaluated = [await evaluate(q) for q in question_ids]
+        before = self._spent
+        for dp, cost, charge in evaluated:
+            self._spent += charge
             self._datapoints[arm].append(dp)
-            self._scores[arm].append(scores[0])
+            self._scores[arm].append(dp.score)
             self._costs[arm].append(cost)
-            self._latencies[arm].append(latencies[0])
+            self._latencies[arm].append(dp.latency_seconds)
+        self._evaluations += len(question_ids)
         self._positions[arm] += len(question_ids)
         return self._spent - before
 
     def _budget_stop(self, count, predicted_charge=0.0):
+        if self._journal is not None and self._journal.batch_index < self._journal.saved_batches:
+            return None
         if self._should_stop():
             return "user_stopped"
         if self._evaluations + count > self.cell_cap:

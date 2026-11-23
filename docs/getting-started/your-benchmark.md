@@ -146,7 +146,9 @@ the recommendations panel to browse longer lists.
 resumes it; **Finish** requests a final result after scheduled work completes.
 Closing the window also requests a finish. The saved JSON contains the final
 selection results. These controls do not cancel calls already in flight, and
-the result file is not a resumable checkpoint. Add `--plot-output frontier.png`
+the JSON report is not a restart file. Gittins separately saves each successful
+cell to a SQLite checkpoint. Re-running the same command restores saved work;
+Finish and window close keep that checkpoint. Add `--plot-output frontier.png`
 to save the final figure as well.
 
 For an agent with multiple model roles, use the same view with your own
@@ -290,11 +292,45 @@ if results.get_best_combo() is not None:
     results.export_config("selected_models.yaml")
 ```
 
-**Stopping does not create a resumable checkpoint.** There is no pause/resume API
-for restoring the selector's search state. A new run starts selection again.
-[Disk caching](../concepts/caching.md), enabled locally at `.agentopt_cache` by
-default, can reuse saved responses for identical LLM requests. It does not restore
-the selection state or guarantee that every request in the new run is cached.
+### Continue after closing the window
+
+The benchmark runner automatically enables checkpoints for `auto`/`gittins`.
+Its default path is `<output>.checkpoint.sqlite3`; set `--checkpoint PATH` to
+choose another location. Run the same command again to continue. Both objective
+modes restore saved scores, token counts, latencies, spend and search decisions
+without calling the agent or scorer for those cells. The first progress update
+shows the restored state rather than replaying old progress on screen.
+
+For your own Python entry point, enable it explicitly:
+
+```python
+selector = ModelSelector(
+    agent=MyAgent, models=models, dataset=dataset, eval_fn=eval_fn,
+    method="gittins", objective_mode="multi", seed=42,
+    checkpoint_path="selection.sqlite3",
+    checkpoint_id="my-workflow-and-evaluator-v1",
+)
+results = selector.select_best()
+```
+
+The checkpoint checks dataset contents and order, ordered model specifications,
+seed, prices and algorithm settings. `checkpoint_id` identifies your workflow:
+change it when prompts, tools, evaluator code or provider settings change.
+Dataset entries and model specifications must be JSON-serializable. A mismatch
+fails before evaluation; use a new checkpoint path for a new experiment.
+The command-line example derives its workflow ID from its agent/scorer code
+and provider base URL. It will reject a changed workflow automatically.
+
+Each successful cell is saved immediately, including cells in an unfinished
+batch. An in-flight request whose result was not saved may run again after a
+crash. One checkpoint can be used by only one process at a time; its `.lock`
+sidecar releases automatically on exit. Keep the SQLite file to continue later.
+Finish saves the report and stops this run; it does not discard the checkpoint.
+Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
+disable saving and reuse. Other selection algorithms do not yet support this.
+
+[Disk caching](../concepts/caching.md) is separate: it reuses identical LLM
+responses, whereas a checkpoint restores evaluated cells and selection state.
 
 ## Choose an algorithm and change defaults
 

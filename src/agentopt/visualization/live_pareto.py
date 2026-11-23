@@ -91,7 +91,7 @@ class LiveParetoPlot:
         self.axis = self.figure.add_axes((.085, .258, .45, .355), facecolor=BG)
         self.recommendation_axis = self.figure.add_axes((.59, .202, .37, .515), facecolor=PANEL)
         self.recommendation_axis.set_axis_off()
-        self.detail_text = self.figure.text(.59, .170, "", va="top", color=MUTED,
+        self.detail_text = self.figure.text(.59, .192, "", va="top", color=MUTED,
                                             fontsize=FONT_MEDIUM, fontfamily=self.font)
         footer_y, button_height = .065, .059
         self.figure.text(.085, footer_y + button_height / 2,

@@ -9,6 +9,7 @@ freeze warm-start costs. Multi mode decays eta independently on direction stops.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import math
 import operator
 from uuid import uuid4
@@ -19,10 +20,15 @@ from pydantic import BaseModel, Field
 from ..model_price import MODEL_PRICES, compute_price
 from .axis_gittins_dp import AxisGittinsBoundaryCache
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
-from .checkpoint import EvaluationCheckpoint, fingerprint
+from .checkpoint import CheckpointError, EvaluationCheckpoint, fingerprint
 from .gittins_statistics import (
     GaussianPosterior, finite_dataset_moments, fit_warm_start, raw_pareto_front_indices,
 )
+
+
+class _RestoredBatchStopped(Exception):
+    def __init__(self, result):
+        self.result = result
 
 
 class GittinsRecommendation(BaseModel):
@@ -54,6 +60,7 @@ class GittinsSelectionResults(SelectionResults):
     """
 
     objective_mode: str
+    pending_batch_evaluations: int = 0
     recommendations: list[GittinsRecommendation] = Field(default_factory=list)
     stop_reason: str
     total_evaluations: int
@@ -241,6 +248,11 @@ class GittinsModelSelector(BaseModelSelector):
         self.checkpoint_path = checkpoint_path
         self._checkpoint_identity = None
         if checkpoint_path is not None:
+            # Own the input graph so edits to caller-owned containers cannot
+            # change what a checkpoint identity represents.
+            dataset = deepcopy([dataset[i] for i in range(len(dataset))])
+            models = deepcopy(models)
+            model_prices = deepcopy(model_prices)
             if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
                 raise ValueError("checkpoint_id is required: give a stable workflow/evaluator version")
             settings = {key: value for key, value in vars(self).items()
@@ -252,19 +264,37 @@ class GittinsModelSelector(BaseModelSelector):
                 "lambda_cost": lambda_cost, "lambda_latency": lambda_latency,
                 "prices": model_prices, "price_table": MODEL_PRICES,
             })
+            self._checkpoint_input_identity = fingerprint({"dataset": dataset, "models": list(models.items()), "prices": model_prices})
+            self._checkpoint_setting_keys = tuple(settings)
+            self._checkpoint_settings_identity = fingerprint(settings)
         super().__init__(agent=agent, models=models, eval_fn=eval_fn, dataset=dataset,
                          model_prices=model_prices, tracker=tracker,
                          lambda_cost=lambda_cost, lambda_latency=lambda_latency)
 
     def _run_selection(self, parallel=False, max_concurrent=20):
         concurrency = _integer(max_concurrent, "max_concurrent")
+        self._run_dataset = self.dataset
+        self._run_combos = self._all_combos()
+        if self.checkpoint_path is not None:
+            self._run_dataset = deepcopy([self.dataset[i] for i in range(len(self.dataset))])
+            models = deepcopy(self._models)
+            current = fingerprint({"dataset": self._run_dataset, "models": list(models.items()), "prices": self.model_prices})
+            current_settings = fingerprint({key: getattr(self, key) for key in self._checkpoint_setting_keys})
+            if current != self._checkpoint_input_identity or current_settings != self._checkpoint_settings_identity:
+                raise CheckpointError("Checkpoint inputs changed after selector construction; create a new selector for the changed dataset or models")
+            self._run_combos = deepcopy(self._all_combos())
         if self.checkpoint_path is None:
             return asyncio.run(self._select(parallel, concurrency))
         with EvaluationCheckpoint(self.checkpoint_path, self._checkpoint_identity) as journal:
+            journal.validate(names=[self._combo_name(combo) for combo in self._run_combos],
+                             questions=len(self._run_dataset), score_bounds=self.score_bounds,
+                             prices=self._custom_prices)
             self._journal = journal
             self.restored_cells = journal.saved_cells
             try:
                 return asyncio.run(self._select(parallel, concurrency))
+            except _RestoredBatchStopped as stopped:
+                return stopped.result
             finally:
                 self._journal = None
 
@@ -295,16 +325,18 @@ class GittinsModelSelector(BaseModelSelector):
     async def _pull(self, arm, question_ids, parallel, max_concurrent):
         """Persist each successful cell before advancing the adaptive batch."""
         saved = self._journal.begin_batch(self._names[arm], question_ids) if self._journal else {}
+        if self._journal and self._journal.batch_index <= self._journal.saved_batches and len(saved) < len(question_ids):
+            self._publish_partial_restore(arm, question_ids, saved)
         # Constructing an agent can itself initialize clients; avoid it entirely
         # when every cell in the batch already exists.
-        agent = self.agent(self._combos[arm]) if len(saved) < len(question_ids) else None
+        agent = self.agent(deepcopy(self._combos[arm]) if self._journal else self._combos[arm]) if len(saved) < len(question_ids) else None
         label = f"{self._names[arm]}::gittins_{self._run_id}"
 
         async def evaluate(question):
             if question in saved:
                 item = saved[question]
                 return DatapointResult.model_validate(item["datapoint"]), item["cost"], item["charge"]
-            tasks = [self.dataset[question]]
+            tasks = [deepcopy(self._run_dataset[question]) if self._journal else self._run_dataset[question]]
             if parallel or self._is_async_run:
                 outcome = await self._evaluate_agent_async(agent, tasks, label, max_concurrent=1, dp_offset=question)
             else:
@@ -361,6 +393,46 @@ class GittinsModelSelector(BaseModelSelector):
         self._positions[arm] += len(question_ids)
         return self._spent - before
 
+    def _publish_partial_restore(self, arm, question_ids, saved):
+        """Expose durable partial work before authorizing any missing requests."""
+        count = len(saved)
+        before_spent = self._spent
+        posterior = deepcopy(self._posteriors[arm]) if self._calibrated else None
+        scalar = deepcopy(self._scalar_posteriors[arm]) if self._calibrated else None
+        for question in question_ids:
+            if question not in saved:
+                continue
+            item = saved[question]
+            dp = DatapointResult.model_validate(item["datapoint"])
+            self._datapoints[arm].append(dp)
+            self._scores[arm].append(dp.score)
+            self._costs[arm].append(item["cost"])
+            self._latencies[arm].append(dp.latency_seconds)
+            self._spent += item["charge"]
+        self._evaluations += count
+        self._positions[arm] += count
+        if count and self._calibrated:
+            observations = self._calibration.observations(self._scores[arm][-count:], self._costs[arm][-count:])
+            self._posteriors[arm].update(observations.mean(axis=0), self._calibration.question_noise, count)
+            values = self._scalar_observations(arm)[-count:]
+            self._scalar_posteriors[arm].update(np.array([np.mean(values)]), np.array([self._scalar_noise]), count)
+        snapshot = self._results("restoring_batch", self._active_eta, calibrated=self._calibrated)
+        snapshot.pending_batch_evaluations = len(question_ids) - count
+        self._publish_update(snapshot)
+        if self._should_stop():
+            snapshot.stop_reason = "user_stopped"
+            raise _RestoredBatchStopped(snapshot)
+        # The algorithm will incorporate the entire batch once; this temporary
+        # view must not update its posterior twice when the missing cells finish.
+        if count:
+            for values in (self._datapoints, self._scores, self._costs, self._latencies):
+                del values[arm][-count:]
+        self._evaluations -= count
+        self._positions[arm] -= count
+        self._spent = before_spent
+        if self._calibrated:
+            self._posteriors[arm], self._scalar_posteriors[arm] = posterior, scalar
+
     def _budget_stop(self, count, predicted_charge=0.0):
         if self._journal is not None and self._journal.batch_index < self._journal.saved_batches:
             return None
@@ -410,12 +482,12 @@ class GittinsModelSelector(BaseModelSelector):
             values = self._scalar_observations(arm)
             mean, _ = finite_dataset_moments(
                 self._scalar_posteriors[arm], np.array([values.sum()]),
-                len(values), len(self.dataset), np.array([self._scalar_noise]),
+                len(values), len(self._run_dataset), np.array([self._scalar_noise]),
             )
             # The full-dataset posterior-mean process is an affine transform
             # of the latent mean process. Transform transition variances,
             # retaining the original monetary scale of evaluation costs.
-            scale = 1.0 + self._scalar_noise / (len(self.dataset) * self.prior_variance)
+            scale = 1.0 + self._scalar_noise / (len(self._run_dataset) * self.prior_variance)
             return float(mean[0]), self._initial_scalar_var * scale ** 2, self._scalar_noise * scale ** 2
         if direction == 0:
             scale = self._calibration.cost_reference_usd
@@ -424,11 +496,11 @@ class GittinsModelSelector(BaseModelSelector):
         return self._posteriors[arm].mean[0], self._initial_var[0], self._calibration.question_noise[0]
 
     async def _select(self, parallel, max_concurrent):
-        self._combos = self._all_combos()
+        self._combos = self._run_combos
         self._names = [self._combo_name(combo) for combo in self._combos]
         if len(set(self._names)) != len(self._names):
             raise ValueError("Gittins requires distinct combination labels")
-        n_arms, n_questions = len(self._combos), len(self.dataset)
+        n_arms, n_questions = len(self._combos), len(self._run_dataset)
         self._run_id = uuid4().hex
         self._scores = [[] for _ in range(n_arms)]
         self._costs = [[] for _ in range(n_arms)]
@@ -444,6 +516,7 @@ class GittinsModelSelector(BaseModelSelector):
         # Completed posteriors and observed tie-break statistics never change.
         self._completed_states = [{} for _ in range(dimensions)]
         eta = [1.0] if self.objective_mode == "single" else [self.eta_initial] * dimensions
+        self._active_eta, self._calibrated = eta, False
         warm_charges = np.zeros(n_arms)
         # Warm cells are sequential so actual dollar usage is checked after
         # each request even when their costs cannot yet be predicted.
@@ -453,7 +526,9 @@ class GittinsModelSelector(BaseModelSelector):
                 if reason:
                     return self._results("user_stopped" if reason == "user_stopped" else "warm_start_budget", eta, calibrated=False)
                 warm_charges[arm] += await self._pull(arm, [question], False, max_concurrent)
-                self._publish_update(self._results("warming_up", eta, calibrated=False))
+                at_warm_boundary = self._evaluations == n_arms * self.warm_size
+                if not (at_warm_boundary and self._journal and self._journal.saved_cells >= self._evaluations):
+                    self._publish_update(self._results("warming_up", eta, calibrated=False))
         self._calibration = fit_warm_start(self._scores, self._costs, score_bounds=self.score_bounds,
                                           prior_variance=self.prior_variance,
                                           score_noise_variance=self.score_noise_variance,
@@ -500,6 +575,7 @@ class GittinsModelSelector(BaseModelSelector):
         # the current direction's eta. G0 uses the same invalidation rule.
         direction_indices = [{} for _ in range(dimensions)]
         direction, floor_stops = 0, set()
+        self._active_eta, self._calibrated = eta, True
         if not single:
             self._publish_update(self._results("running", eta))
         while True:
@@ -596,17 +672,17 @@ class GittinsModelSelector(BaseModelSelector):
                     continue
                 observations = self._calibration.observations(self._scores[arm], self._costs[arm])
                 mean, variance = finite_dataset_moments(self._posteriors[arm], observations.sum(axis=0),
-                                                        len(observations), len(self.dataset), self._calibration.question_noise)
+                                                        len(observations), len(self._run_dataset), self._calibration.question_noise)
                 std = np.sqrt(variance)
                 accuracy, score_std = low + (high - low) * mean[0], (high - low) * std[0]
-                if len(observations) == len(self.dataset):
+                if len(observations) == len(self._run_dataset):
                     accuracy = float(np.mean(self._scores[arm]))
                     mean[1] = float(np.mean(self._costs[arm]))
                 objective = conservative_objective = None
                 if self.objective_mode == "single":
                     values = self._scalar_observations(arm)
                     scalar_mean, scalar_var = finite_dataset_moments(self._scalar_posteriors[arm], np.array([values.sum()]),
-                                                                    len(values), len(self.dataset), np.array([self._scalar_noise]))
+                                                                    len(values), len(self._run_dataset), np.array([self._scalar_noise]))
                     objective = float(low + (high - low) * scalar_mean[0])
                     conservative_objective = objective - self.beta * (high - low) * math.sqrt(scalar_var[0])
                 candidates.append(GittinsRecommendation(

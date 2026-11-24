@@ -382,11 +382,33 @@ def run_selection(selector, *, max_concurrent, output, failures=None, plot=None)
         signal.signal(signal.SIGINT, previous_handler)
 
 
+def validate_output_paths(args):
+    """Reject aliases before loading data, constructing clients or writing files."""
+    output = args.output
+    paths = {"dataset": args.dataset, "output": output,
+             "partial results": output.with_name(f"{output.stem}.partial{output.suffix or '.json'}")}
+    if args.plot_output is not None:
+        paths["plot output"] = args.plot_output
+    if args.method in ("auto", "gittins") and not args.no_checkpoint:
+        checkpoint = args.checkpoint or Path(str(output) + ".checkpoint.sqlite3")
+        paths["checkpoint"] = checkpoint
+        paths["checkpoint lock"] = Path(str(checkpoint) + ".lock")
+        for suffix in ("-journal", "-wal", "-shm"):
+            paths["checkpoint" + suffix] = Path(str(checkpoint) + suffix)
+            paths["checkpoint lock" + suffix] = Path(str(checkpoint) + ".lock" + suffix)
+    items = list(paths.items())
+    for i, (name, path) in enumerate(items):
+        for other_name, other in items[:i]:
+            if path.resolve() == other.resolve() or (path.exists() and other.exists() and path.samefile(other)):
+                raise ValueError(f"Path conflict: {name} and {other_name} must refer to different files")
+
+
 def main(argv=None):
     parser = make_parser()
     args = parser.parse_args(argv)
     try:
         options = selector_options(args)
+        validate_output_paths(args)
         dataset = load_dataset(args.dataset)
         if not args.output.parent.is_dir() or args.output.is_dir():
             raise ValueError("--output must name a file in an existing directory")
@@ -404,11 +426,6 @@ def main(argv=None):
 
     if args.method in ("auto", "gittins") and not args.no_checkpoint:
         checkpoint = args.checkpoint or Path(str(args.output) + ".checkpoint.sqlite3")
-        reserved = {args.output.resolve(), args.dataset.resolve()}
-        if args.plot_output is not None:
-            reserved.add(args.plot_output.resolve())
-        if checkpoint.resolve() in reserved or Path(str(checkpoint) + ".lock").resolve() in reserved:
-            parser.error("--checkpoint must differ from dataset, result and image paths")
         workflow = (inspect.getsource(AnswerAgent.__init__)
                     + inspect.getsource(AnswerAgent.run) + inspect.getsource(eval_fn))
         workflow += os.environ.get("OPENAI_BASE_URL", "")

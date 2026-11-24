@@ -6,6 +6,10 @@ for the entire run; the journal itself commits each successful cell separately.
 
 import hashlib
 import json
+import math
+from contextlib import contextmanager
+
+from .base import DatapointResult
 import sqlite3
 from pathlib import Path
 
@@ -34,8 +38,8 @@ class EvaluationCheckpoint:
         self.db = self.lock = None
 
     def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
             self.lock = sqlite3.connect(str(self.path) + ".lock", timeout=0, isolation_level=None)
             try:
                 self.lock.execute("BEGIN EXCLUSIVE")
@@ -53,8 +57,10 @@ class EvaluationCheckpoint:
             self.saved_batches = self.db.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
             self.batch_index = 0
             return self
-        except BaseException:
+        except BaseException as error:
             self.__exit__(None, None, None)
+            if isinstance(error, (sqlite3.Error, OSError)):
+                raise CheckpointError(f"Cannot open/read checkpoint '{self.path}'. Check the file and permissions; the checkpoint has not been replaced.") from error
             raise
 
     def __exit__(self, *_):
@@ -63,17 +69,76 @@ class EvaluationCheckpoint:
         if self.lock is not None:
             self.lock.close()
 
+    @contextmanager
+    def _operation(self, action):
+        try:
+            yield
+        except (sqlite3.Error, OSError) as error:
+            raise CheckpointError(
+                f"Cannot {action} checkpoint '{self.path}'. Existing saved cells are retained; "
+                "in-flight work not committed to disk may need to run again."
+            ) from error
+
+    def validate(self, *, names, questions, score_bounds, prices):
+        """Check the entire journal before any new evaluation is dispatched."""
+        from ..model_price import compute_price
+        with self._operation("read"):
+            batches = self.db.execute("SELECT id, arm, questions FROM batches ORDER BY id").fetchall()
+            rows = self.db.execute("SELECT batch, question, data FROM cells").fetchall()
+        try:
+            manifests = {}
+            for expected, (batch, arm, encoded) in enumerate(batches, 1):
+                ids = json.loads(encoded)
+                if batch != expected or arm not in names or not isinstance(ids, list) or not ids:
+                    raise ValueError("invalid batch identity")
+                if any(type(q) is not int or not 0 <= q < questions for q in ids) or len(set(ids)) != len(ids):
+                    raise ValueError("invalid batch question indices")
+                manifests[batch] = (arm, ids)
+            seen, counts = set(), {}
+            for batch, question, encoded in rows:
+                arm, ids = manifests[batch]
+                if type(question) is not int or question not in ids or (arm, question) in seen:
+                    raise ValueError("invalid or duplicate cell identity")
+                seen.add((arm, question))
+                counts[batch] = counts.get(batch, 0) + 1
+                item = json.loads(encoded)
+                raw = item["datapoint"]
+                dp = DatapointResult.model_validate(raw)
+                if type(raw["datapoint_index"]) is not int or dp.datapoint_index != question:
+                    raise ValueError("cell index does not match batch")
+                for value in (item["cost"], item["charge"], raw["score"], raw["latency_seconds"]):
+                    if type(value) not in (int, float) or not math.isfinite(value):
+                        raise ValueError("non-finite observation")
+                if item["cost"] < 0 or item["charge"] < 0 or dp.latency_seconds < 0 or not score_bounds[0] <= dp.score <= score_bounds[1]:
+                    raise ValueError("observation outside valid bounds")
+                if not dp.input_tokens and not dp.output_tokens:
+                    raise ValueError("missing token usage")
+                for field in ("input_tokens", "output_tokens"):
+                    if any(not isinstance(k, str) or type(v) is not int or v < 0 for k, v in raw[field].items()):
+                        raise ValueError("invalid token usage")
+                cost = compute_price(dp.input_tokens, dp.output_tokens, custom_prices=prices)
+                if cost is None or not math.isclose(item["cost"], cost, rel_tol=1e-9, abs_tol=1e-12):
+                    raise ValueError("cost does not match token usage")
+                if item["charge"] > item["cost"] + 1e-12:
+                    raise ValueError("charge exceeds recorded token cost")
+            if any(counts.get(batch, 0) != len(ids) for batch, (_, ids) in manifests.items() if batch < len(batches)):
+                raise ValueError("incomplete non-terminal batch")
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
+            raise CheckpointError(f"Invalid checkpoint contents in '{self.path}': {error}. The original file is retained; use a valid checkpoint or a new path.") from error
+
     def begin_batch(self, arm, questions):
-        self.batch_index += 1
-        encoded = json.dumps(questions)
-        row = self.db.execute("SELECT arm, questions FROM batches WHERE id=?", (self.batch_index,)).fetchone()
-        if row is None:
-            self.db.execute("INSERT INTO batches VALUES (?, ?, ?)", (self.batch_index, arm, encoded))
-        elif row != (arm, encoded):
-            raise CheckpointError("Checkpoint evaluation order differs; use a new checkpoint path")
-        return {question: json.loads(data) for question, data in self.db.execute(
-            "SELECT question, data FROM cells WHERE batch=?", (self.batch_index,))}
+        with self._operation("read/write"):
+            self.batch_index += 1
+            encoded = json.dumps(questions)
+            row = self.db.execute("SELECT arm, questions FROM batches WHERE id=?", (self.batch_index,)).fetchone()
+            if row is None:
+                self.db.execute("INSERT INTO batches VALUES (?, ?, ?)", (self.batch_index, arm, encoded))
+            elif row != (arm, encoded):
+                raise CheckpointError(f"Checkpoint evaluation order differs in '{self.path}'; use a new checkpoint path")
+            return {question: json.loads(data) for question, data in self.db.execute(
+                "SELECT question, data FROM cells WHERE batch=?", (self.batch_index,))}
 
     def save_cell(self, question, data):
-        self.db.execute("INSERT INTO cells VALUES (?, ?, ?)",
-                        (self.batch_index, question, json.dumps(data, allow_nan=False)))
+        with self._operation("write"):
+            self.db.execute("INSERT INTO cells VALUES (?, ?, ?)",
+                            (self.batch_index, question, json.dumps(data, allow_nan=False)))

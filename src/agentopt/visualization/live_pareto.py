@@ -53,7 +53,11 @@ class LiveParetoPlot:
         self._resume.set()
         self.paused = False
         self._pause_active = False
+        self._pending_batch_evaluations = 0
         self._closed = False
+        self._closed_canvas = None
+        self._card_regions = []
+        self._card_press = None
         self.finished = False
         self.finish_requested = False
         self._warming_up = True
@@ -178,6 +182,8 @@ class LiveParetoPlot:
             self._chart_drag = transform, origin, self.axis.get_xlim(), self.axis.get_ylim()
             self._chart_press = (event.x, event.y)
             self._update_chart_cursor(event)
+        elif event.inaxes is self.recommendation_axis:
+            self._card_press = self._card_at(event)
         elif event.inaxes is self.scroll_axis and self._legend_scroll_limit > 0:
             _, y = self.scroll_axis.transAxes.inverted().transform((event.x, event.y))
             low, high = self.scroll_thumb.get_ydata()
@@ -208,8 +214,13 @@ class LiveParetoPlot:
 
     def _end_drag(self, event):
         if event.button == 1:
-            press = self._chart_press
-            self._chart_press = self._chart_drag = self._scroll_drag = None
+            press, card = self._chart_press, self._card_press
+            self._chart_press = self._chart_drag = self._scroll_drag = self._card_press = None
+            if card is not None and card == self._card_at(event):
+                self._selected_combination = card
+                self._render_chart()
+                self._render_legend()
+                self._request_draw()
             if press is not None and event.inaxes is self.axis:
                 x, y = press
                 if (event.x-x)**2 + (event.y-y)**2 < 16:
@@ -220,26 +231,39 @@ class LiveParetoPlot:
         from matplotlib.backend_tools import Cursors
 
         hovering = (event.name != "figure_leave_event" and self._chart_drag is None
-                    and self._chart_combination_at(event) is not None)
+                    and (self._chart_combination_at(event) is not None or self._card_at(event) is not None))
         if hovering != self._chart_hovering:
             self.figure.canvas.set_cursor(Cursors.HAND if hovering else Cursors.POINTER)
             self._chart_hovering = hovering
 
+    def _card_at(self, event):
+        if event.inaxes is self.recommendation_axis:
+            for card, viewport, name in self._card_regions:
+                if viewport.contains(event)[0] and card.contains(event)[0]:
+                    return name
+        return None
+
     def _chart_combination_at(self, event):
         if event.inaxes is not self.axis:
             return None
-        closest = None
-        shortest = float("inf")
+        candidates = []
         for point, label, name in self._chart_labels:
             x, y = self.axis.transData.transform(point)
             if not self.axis.bbox.contains(x, y):
                 continue
-            distance = (event.x-x)**2 + (event.y-y)**2
             if label.contains(event)[0]:
                 return name
-            if distance <= (self.figure.dpi * 8 / 72)**2 and distance < shortest:
-                closest, shortest = name, distance
-        return closest
+            distance = (event.x-x)**2 + (event.y-y)**2
+            if distance <= (self.figure.dpi * 8 / 72)**2:
+                candidates.append((distance, name))
+        if not candidates:
+            return None
+        shortest = min(distance for distance, _ in candidates)
+        tied = [name for distance, name in candidates if abs(distance - shortest) < 1e-6]
+        # Repeat clicks on a coincident marker cycle through every combination.
+        if self._selected_combination in tied:
+            return tied[(tied.index(self._selected_combination) + 1) % len(tied)]
+        return tied[0]
 
     def _select_chart_combination(self, event):
         name = self._chart_combination_at(event)
@@ -276,7 +300,7 @@ class LiveParetoPlot:
         phase = ("Finished" if self.finished else "Finishing…" if self.finish_requested
                  else "Paused" if self._pause_active else "Pausing…" if self.paused
                  else "Initial sampling" if self._warming_up else "Searching")
-        status = (phase, self.total_cells, self._last_evaluations, self._last_spent, len(self._recommendations), self._stop_reason)
+        status = (phase, self.total_cells, self._last_evaluations, self._last_spent, len(self._recommendations), self._stop_reason, self._pending_batch_evaluations)
         if status == self._last_status:
             return
         self._last_status = status
@@ -298,6 +322,8 @@ class LiveParetoPlot:
             detail = "Pause requested. Waiting for the current evaluation batch to complete."
         elif self._warming_up:
             detail = "Sampling each model combination before estimating the first frontier."
+        if self._pending_batch_evaluations:
+            detail += f" Interrupted batch: {self._pending_batch_evaluations} evaluations pending."
         self.detail_text.set_text("\n".join(wrap(detail, width=54)))
         disabled = self.finished or self.finish_requested
         for button in self.buttons:
@@ -337,12 +363,16 @@ class LiveParetoPlot:
         scores = [r.conservative_accuracy for r in self._recommendations]
         ax.plot(costs, scores, color=MINT, linewidth=2, zorder=2)
         ax.scatter(costs, scores, color=BLUE, edgecolor=BG, linewidth=1.5, s=70, zorder=3)
+        label_offsets = {}
         for number, (cost, score, recommendation) in enumerate(zip(costs, scores, self._recommendations), 1):
             selected = recommendation.model_name == self._selected_combination
             if selected:
                 ax.scatter([cost], [score], facecolor=BLUE, edgecolor=MINT, linewidth=2,
                            s=115, zorder=4)
-            label = ax.annotate(str(number), (cost, score), xytext=(8, 8), textcoords="offset points",
+            overlap = label_offsets.get((cost, score), 0)
+            label_offsets[(cost, score)] = overlap + 1
+            label = ax.annotate(str(number), (cost, score),
+                                xytext=(8 + (overlap % 5) * 24, 8 + (overlap // 5) * 16), textcoords="offset points",
                                 fontsize=FONT_MEDIUM, color=MINT if selected else TEXT,
                                 weight="bold" if selected else "normal", fontfamily=self.font,
                                 annotation_clip=True)
@@ -372,6 +402,7 @@ class LiveParetoPlot:
         from matplotlib.patches import FancyBboxPatch, Rectangle
 
         ax = self.recommendation_axis
+        self._card_regions.clear()
         ax.clear()
         ax.set(xlim=(0, 1), ylim=(0, 1))
         ax.set_axis_off()
@@ -431,6 +462,7 @@ class LiveParetoPlot:
                     facecolor="#e4f3ed" if selected else "#f3f7f5",
                     edgecolor=MINT if selected else EDGE, linewidth=1.3 if selected else .7)
                 ax.add_patch(card)
+                self._card_regions.append((card, viewport, recommendation.model_name))
                 first_text = len(ax.texts)
                 rank_y = (bottom + top - .012) / 2
                 ax.text(.087, rank_y, str(index), ha="center", va="center",
@@ -476,8 +508,25 @@ class LiveParetoPlot:
         # Tk has already begun destroying the window. Use an off-screen canvas
         # for final snapshots/exports so no new Tk after_idle callback is queued.
         from matplotlib.backends.backend_agg import FigureCanvasAgg
+        self._closed_canvas = _event.canvas
         FigureCanvasAgg(self.figure)
         self.finish_search(None)
+
+    def _release_closed_window(self):
+        """Release Tk-owned image/variable objects on the UI thread, not by GC
+        during a later selection worker's allocation or explicit collection.
+        """
+        canvas = self._closed_canvas
+        if canvas is None:
+            return
+        if current_thread() is not main_thread():
+            raise RuntimeError("Window resources must be released on the main thread")
+        if hasattr(canvas, "_tkphoto"):
+            canvas._tkphoto = None
+            manager = canvas.manager
+            if manager is not None and hasattr(manager, "_window_dpi"):
+                manager._window_dpi = None
+        self._closed_canvas = None
 
     def finish_search(self, _event):
         if self.finished or self.finish_requested:
@@ -493,6 +542,7 @@ class LiveParetoPlot:
         was_warming_up = self._warming_up
         self._warming_up = snapshot.stop_reason == "warming_up"
         self._stop_reason = snapshot.stop_reason
+        self._pending_batch_evaluations = getattr(snapshot, "pending_batch_evaluations", 0)
         self._last_evaluations = snapshot.total_evaluations
         self._last_spent = "Unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.4f}"
         recommendations = sorted(snapshot.get_recommendations(),
@@ -594,8 +644,10 @@ class LiveParetoPlot:
             self.stop_event.set()
             self._resume.set()
             worker.join()
+            self._release_closed_window()
             raise
         worker.join()
+        self._release_closed_window()
         if "error" in outcome:
             raise outcome["error"]
         return outcome["results"]
@@ -604,3 +656,4 @@ class LiveParetoPlot:
         if not self._closed and self.show_window and self.plt.fignum_exists(self.figure.number):
             self.plt.ioff()
             self.plt.show()
+        self._release_closed_window()

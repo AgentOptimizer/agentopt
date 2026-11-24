@@ -153,7 +153,10 @@ class SessionMaster:
                 logger.debug("ignored exception in master.shutdown", exc_info=True)
         if self._thread is not None:
             self._thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-            self._thread = None
+            if self._thread.is_alive():
+                logger.warning("mitmproxy thread did not exit within the shutdown timeout")
+            else:
+                self._thread = None
 
     @property
     def port(self) -> int:
@@ -191,8 +194,28 @@ class SessionMaster:
             self._startup_exc = exc
             self._ready.set()  # unblock start()
         finally:
+            # Startup can fail before Master.run reaches done(). Its process-wide
+            # logging handler must never keep scheduling onto a closed loop.
+            if self._master is not None:
+                if errorcheck := self._master.addons.get("errorcheck"):
+                    errorcheck.finish()
+                self._master._legacy_log_events.uninstall()
+                if self._master._termlog_addon is not None:
+                    self._master._termlog_addon.uninstall()
             try:
                 if self._loop is not None and not self._loop.is_closed():
+                    # Master.run() can leave accept/connection tasks pending on
+                    # Windows. Drain cancellation before closing their loop.
+                    pending = asyncio.all_tasks(self._loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+                    self._loop.run_until_complete(self._loop.shutdown_default_executor(timeout=_SHUTDOWN_TIMEOUT_SECONDS))
                     self._loop.close()
             except Exception:
-                pass
+                logger.exception("Failed to clean up mitmproxy event loop")
+            finally:
+                self._master = None
+                asyncio.set_event_loop(None)

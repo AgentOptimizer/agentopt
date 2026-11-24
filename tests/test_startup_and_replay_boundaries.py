@@ -103,3 +103,95 @@ def test_unreachable_final_manifest_rejected_without_writes(tmp_path, legacy):
         restored.select_best()
     assert path.read_bytes() == before
     assert not tracker.records
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+@pytest.mark.parametrize("startup_error", [True, False])
+def test_root_handler_reconfiguration_preserves_startup_checks(monkeypatch, when, startup_error):
+    # Keep basicConfig(force=True) from closing pytest's own capture handlers.
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    sink = logging.NullHandler()
+    factory = logging.getLogRecordFactory()
+    running = mitm_runner.DumpMaster.running
+    tracker = LLMTracker(cache=False, cache_dir=None)
+    tracker.start()
+    try:
+        tracker._backend.open_session("A")
+
+        async def start_b(master):
+            await running(master)
+            if when == "during":
+                logging.basicConfig(force=True, handlers=[sink])
+            if startup_error:
+                logging.getLogger("embedded.proxy").error("injected B startup error")
+
+        monkeypatch.setattr(mitm_runner.DumpMaster, "running", start_b)
+        if when == "before":
+            logging.basicConfig(force=True, handlers=[sink])
+        if startup_error:
+            with pytest.raises(RuntimeError, match="failed to start"):
+                tracker._backend.open_session("B")
+        else:
+            _, port = tracker._backend.open_session("B")
+            assert port > 0
+    finally:
+        tracker.stop()
+    assert root.handlers == [sink]
+    assert logging.getLogRecordFactory() is factory
+
+
+def test_factory_replaced_during_startup_survives_cleanup_and_retry(monkeypatch):
+    running = mitm_runner.DumpMaster.running
+    host_factory = logging.getLogRecordFactory()
+
+    def replacement(*args, **kwargs):
+        return host_factory(*args, **kwargs)
+
+    async def reconfigure(master):
+        await running(master)
+        logging.setLogRecordFactory(replacement)
+        logging.error("error after factory replacement")
+
+    tracker = LLMTracker(cache=False, cache_dir=None)
+    tracker.start()
+    try:
+        with monkeypatch.context() as patcher:
+            patcher.setattr(mitm_runner.DumpMaster, "running", reconfigure)
+            with pytest.raises(RuntimeError, match="factory changed"):
+                tracker._backend.open_session()
+        assert logging.getLogRecordFactory() is replacement
+        _, port = tracker._backend.open_session()
+        assert port > 0 and logging.getLogRecordFactory() is replacement
+    finally:
+        logging.setLogRecordFactory(host_factory)
+        tracker.stop()
+
+
+@pytest.mark.parametrize(("budget", "reason"), [
+    ({"max_total_question_evaluations": 9}, "question_budget"),
+    ({"max_search_cost_usd": 0.0361}, "search_cost_budget"),
+])
+def test_replay_refuses_batch_outside_original_budget(tmp_path, budget, reason):
+    options = dict(count=8, checkpoint_id="budget")
+    reference = tmp_path / "reference.db"
+    full, _ = test_gittins.make_selector(checkpoint_path=reference, max_total_question_evaluations=10, **options)
+    assert full.select_best().total_evaluations == 10
+    with sqlite3.connect(reference) as db:
+        next_batch = db.execute("SELECT id, arm, questions FROM batches WHERE id=9").fetchone()
+
+    path = tmp_path / "limited.db"
+    limited, _ = test_gittins.make_selector(checkpoint_path=path, **budget, **options)
+    result = limited.select_best()
+    assert result.total_evaluations == 8 and result.stop_reason == reason
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO batches VALUES (?, ?, ?)", next_batch)
+        db.execute("UPDATE metadata SET identity=?", (limited._legacy_price_identity,))
+    before = path.read_bytes()
+
+    resumed, tracker = test_gittins.make_selector(checkpoint_path=path, **budget, **options)
+    updates = []
+    with pytest.raises(CheckpointError, match=reason):
+        resumed.select_best(on_update=updates.append)
+    assert not updates and not tracker.records
+    assert path.read_bytes() == before

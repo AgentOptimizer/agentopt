@@ -30,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, Optional
 
 from mitmproxy.options import Options
@@ -57,67 +56,73 @@ _STARTUP_TIMEOUT_SECONDS = 30.0
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
-class _StartupLogRouter(logging.Handler):
-    """Keep one root handler ahead of the embedded masters' legacy handlers."""
+class _StartupLogFactory:
+    """Observe startup errors before the host's mutable handlers dispatch them."""
 
-    def __init__(self):
-        super().__init__(logging.ERROR)
-        self._local = threading.local()
-        self._sessions = 0
-        self._sessions_lock = threading.Lock()
+    _lock = threading.Lock()
 
-    @contextmanager
-    def session(self):
-        collector = ErrorCheckHandler()
-        with self._sessions_lock:
-            if not self._sessions:
-                logging.getLogger().addHandler(self)
-            self._sessions += 1
-        self._local.collector = collector
-        try:
-            yield collector
-        finally:
-            del self._local.collector
-            with self._sessions_lock:
-                self._sessions -= 1
-                if not self._sessions:
-                    logging.getLogger().removeHandler(self)
+    def __init__(self, previous):
+        self.previous = previous
+        self.local = threading.local()
+        self.users = 0
 
-    def finish_startup(self):
-        # Keep the router installed until the master's legacy handler exits.
-        self._local.collector = None
-
-    def emit(self, record):
-        collector = getattr(self._local, "collector", None)
-        if collector is not None and record.thread == threading.get_ident():
+    def __call__(self, *args, **kwargs):
+        record = self.previous(*args, **kwargs)
+        collector = getattr(self.local, "collector", None)
+        if collector is not None and record.levelno >= logging.ERROR:
             collector.handle(record)
+        return record
 
+    @classmethod
+    def attach(cls, collector):
+        with cls._lock:
+            factory = logging.getLogRecordFactory()
+            if not isinstance(factory, cls):
+                factory = cls(factory)
+                logging.setLogRecordFactory(factory)
+            factory.local.collector = collector
+            factory.users += 1
+            return factory
 
-_startup_logs = _StartupLogRouter()
+    def detach(self):
+        with self._lock:
+            del self.local.collector
+            self.users -= 1
+            if not self.users and logging.getLogRecordFactory() is self:
+                logging.setLogRecordFactory(self.previous)
 
 
 class _SessionErrorCheck(ErrorCheck):
     name = "errorcheck"
 
-    def __init__(self, collector):
+    def __init__(self):
         self.on_startup_complete = None
         self.repeat_errors_on_stderr = False
-        self.logger = collector
+        self.logger = ErrorCheckHandler()
+        self._factory = _StartupLogFactory.attach(self.logger)
+
+    def close(self):
+        if self._factory is not None:
+            self._factory.detach()
+            self._factory = None
 
     def finish(self):
-        # Master.run calls this only after its final shutdown_if_errored check.
-        _startup_logs.finish_startup()
+        # An explicit replacement of the record factory can interrupt capture.
+        # Retry startup with the new factory instead of handing out an unchecked port.
+        if logging.getLogRecordFactory() is not self._factory:
+            raise RuntimeError("Log record factory changed during proxy startup; retry opening the session")
+        self.close()
         if self.on_startup_complete is not None:
             self.on_startup_complete()
 
 
 class DumpMaster(Master):
     """Embedded regular proxy with explicitly owned startup logging."""
-    def __init__(self, opts, *, loop, collector):
+    def __init__(self, opts, *, loop, errorcheck):
         try:
             super().__init__(opts, event_loop=loop, with_termlog=False)
             self.addons.add(*addons.default_addons())
-            self.addons.add(_SessionErrorCheck(collector))
+            self.addons.add(errorcheck)
         except BaseException:
             legacy = getattr(self, "_legacy_log_events", None)
             if legacy is not None:
@@ -245,11 +250,13 @@ class SessionMaster:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
-        with session_context(), _startup_logs.session() as collector:
-            self._run_isolated(collector)
+        with session_context():
+            self._run_isolated()
 
-    def _run_isolated(self, collector) -> None:
+    def _run_isolated(self) -> None:
+        errorcheck = None
         try:
+            errorcheck = _SessionErrorCheck()
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loop = loop
@@ -262,11 +269,11 @@ class SessionMaster:
                 # console log noise.
                 ssl_insecure=False,
             )
-            master = DumpMaster(opts, loop=loop, collector=collector)
+            master = DumpMaster(opts, loop=loop, errorcheck=errorcheck)
             self._master = master
             if self._cancelled.is_set():
                 return
-            master.addons.get("errorcheck").on_startup_complete = self._ready.set
+            errorcheck.on_startup_complete = self._ready.set
             master.addons.add(
                 _StartupHook(self._port_holder, master), self._addon,
             )
@@ -278,6 +285,8 @@ class SessionMaster:
             self._startup_exc = exc
             self._ready.set()  # unblock start()
         finally:
+            if errorcheck is not None:
+                errorcheck.close()
             # Startup can fail before Master.run reaches done(). Its process-wide
             # logging handler must never keep scheduling onto a closed loop.
             if self._master is not None:

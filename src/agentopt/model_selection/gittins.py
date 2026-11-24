@@ -317,7 +317,7 @@ class GittinsModelSelector(BaseModelSelector):
                 if journal.batch_index < journal.saved_batches:
                     raise CheckpointError(
                         f"Checkpoint evaluation order differs in '{journal.path}': "
-                        "selection ended before all saved batches could be replayed"
+                        f"selection ended ({result.stop_reason}) before all saved batches could be replayed"
                     )
                 return result
             except _RestoredBatchStopped as stopped:
@@ -462,9 +462,10 @@ class GittinsModelSelector(BaseModelSelector):
             self._posteriors[arm], self._scalar_posteriors[arm] = posterior, scalar
 
     def _budget_stop(self, count, predicted_charge=0.0):
-        if self._journal is not None and self._journal.batch_index < self._journal.saved_batches:
-            return None
-        if self._should_stop():
+        # Reconstruct the prefix before honoring a new stop request. The original
+        # scheduling budgets still apply to each batch, including a partial one.
+        restoring = self._journal is not None and self._journal.batch_index < self._journal.saved_batches
+        if not restoring and self._should_stop():
             return "user_stopped"
         if self._evaluations + count > self.cell_cap:
             return "question_budget"

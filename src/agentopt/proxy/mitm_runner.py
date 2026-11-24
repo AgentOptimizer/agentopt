@@ -56,40 +56,46 @@ _STARTUP_TIMEOUT_SECONDS = 30.0
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
-class _StartupLogFactory:
-    """Observe startup errors before the host's mutable handlers dispatch them."""
+class _StartupLogCapture:
+    """Observe completed records on their emitting thread during proxy startup."""
 
-    _lock = threading.Lock()
-
-    def __init__(self, previous):
-        self.previous = previous
+    def __init__(self):
         self.local = threading.local()
+        self.lock = threading.Lock()
         self.users = 0
 
-    def __call__(self, *args, **kwargs):
-        record = self.previous(*args, **kwargs)
-        collector = getattr(self.local, "collector", None)
-        if collector is not None and record.levelno >= logging.ERROR:
-            collector.handle(record)
-        return record
+    def attach(self, collector):
+        with self.lock:
+            if not self.users:
+                # Logger filters have run at this point, but handlers have not.
+                # Root-handler reconfiguration cannot interrupt this observation.
+                original = logging.Logger.callHandlers
 
-    @classmethod
-    def attach(cls, collector):
-        with cls._lock:
-            factory = logging.getLogRecordFactory()
-            if not isinstance(factory, cls):
-                factory = cls(factory)
-                logging.setLogRecordFactory(factory)
-            factory.local.collector = collector
-            factory.users += 1
-            return factory
+                def dispatch(logger, record):
+                    target = getattr(self.local, "collector", None)
+                    if target is not None and record.levelno >= logging.ERROR:
+                        target.handle(record)
+                    return original(logger, record)
+
+                self.original = original
+                self.dispatch = dispatch
+                logging.Logger.callHandlers = dispatch
+            self.local.collector = collector
+            self.users += 1
 
     def detach(self):
-        with self._lock:
+        with self.lock:
+            if getattr(self.local, "collector", None) is None:
+                return
             del self.local.collector
             self.users -= 1
-            if not self.users and logging.getLogRecordFactory() is self:
-                logging.setLogRecordFactory(self.previous)
+            if not self.users:
+                if logging.Logger.callHandlers is self.dispatch:
+                    logging.Logger.callHandlers = self.original
+                del self.original, self.dispatch
+
+
+_startup_capture = _StartupLogCapture()
 
 
 class _SessionErrorCheck(ErrorCheck):
@@ -99,18 +105,12 @@ class _SessionErrorCheck(ErrorCheck):
         self.on_startup_complete = None
         self.repeat_errors_on_stderr = False
         self.logger = ErrorCheckHandler()
-        self._factory = _StartupLogFactory.attach(self.logger)
+        _startup_capture.attach(self.logger)
 
     def close(self):
-        if self._factory is not None:
-            self._factory.detach()
-            self._factory = None
+        _startup_capture.detach()
 
     def finish(self):
-        # An explicit replacement of the record factory can interrupt capture.
-        # Retry startup with the new factory instead of handing out an unchecked port.
-        if logging.getLogRecordFactory() is not self._factory:
-            raise RuntimeError("Log record factory changed during proxy startup; retry opening the session")
         self.close()
         if self.on_startup_complete is not None:
             self.on_startup_complete()

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from fractions import Fraction
 import math
 import operator
 from uuid import uuid4
@@ -17,7 +18,7 @@ from uuid import uuid4
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..model_price import MODEL_PRICES, compute_price
+from ..model_price import MODEL_PRICES, get_model_price
 from .axis_gittins_dp import AxisGittinsBoundaryCache
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 from .checkpoint import CheckpointError, EvaluationCheckpoint, fingerprint
@@ -335,7 +336,16 @@ class GittinsModelSelector(BaseModelSelector):
 
     def _selection_cost_so_far(self):
         # Charged calls only, accumulated before tracker archival.
-        return self._spent
+        return float(self._spent)
+
+    def _record_charge(self, record):
+        rates = get_model_price(record.model, custom_prices=self._custom_prices)
+        if rates is None or any(not math.isfinite(rate) or rate < 0 for rate in rates):
+            raise ValueError(f"Cannot account for Gittins search cost for {record.model!r}; supply model_prices")
+        # Rates and budget limits are decimal USD. Preserve that value through
+        # aggregation and batch prediction; SDK results and v3 cells use floats.
+        input_rate, output_rate = (Fraction(str(rate)) for rate in rates)
+        return (input_rate * record.prompt_tokens + output_rate * record.completion_tokens) / 1_000_000
 
     def _update_spend(self):
         records = self._tracker.get_records()
@@ -344,11 +354,7 @@ class GittinsModelSelector(BaseModelSelector):
         for record in new_records:
             if record.cached:
                 continue
-            price = compute_price({record.model: record.prompt_tokens}, {record.model: record.completion_tokens},
-                                  custom_prices=self._custom_prices)
-            if price is None or not math.isfinite(price) or price < 0:
-                raise ValueError(f"Cannot account for Gittins search cost for {record.model!r}; supply model_prices")
-            self._spent += price
+            self._spent += self._record_charge(record)
 
     async def _pull(self, arm, question_ids, parallel, max_concurrent):
         """Persist each successful cell before advancing the adaptive batch."""
@@ -384,14 +390,8 @@ class GittinsModelSelector(BaseModelSelector):
             if not dp.input_tokens and not dp.output_tokens:
                 raise ValueError("No LLM token usage was recorded; Gittins requires tracked evaluations")
             dp.datapoint_index = question
-            charge = 0.0
-            for record in self._tracker.get_records():
-                if record.data_id in dp_ids and not record.cached:
-                    price = compute_price({record.model: record.prompt_tokens}, {record.model: record.completion_tokens},
-                                          custom_prices=self._custom_prices)
-                    if price is None or not math.isfinite(price) or price < 0:
-                        raise ValueError("Cannot account for Gittins search cost; supply model_prices")
-                    charge += price
+            charge = float(sum(self._record_charge(record) for record in self._tracker.get_records()
+                               if record.data_id in dp_ids and not record.cached))
             if self._journal:
                 self._journal.save_cell(question, {"datapoint": dp.model_dump(mode="json"),
                                                    "cost": cost, "charge": charge})
@@ -412,7 +412,7 @@ class GittinsModelSelector(BaseModelSelector):
             evaluated = [await evaluate(q) for q in question_ids]
         before = self._spent
         for dp, cost, charge in evaluated:
-            self._spent += charge
+            self._spent += Fraction(str(charge))
             self._datapoints[arm].append(dp)
             self._scores[arm].append(dp.score)
             self._costs[arm].append(cost)
@@ -436,7 +436,7 @@ class GittinsModelSelector(BaseModelSelector):
             self._scores[arm].append(dp.score)
             self._costs[arm].append(item["cost"])
             self._latencies[arm].append(dp.latency_seconds)
-            self._spent += item["charge"]
+            self._spent += Fraction(str(item["charge"]))
         self._evaluations += count
         self._positions[arm] += count
         if count and self._calibrated:
@@ -461,7 +461,7 @@ class GittinsModelSelector(BaseModelSelector):
         if self._calibrated:
             self._posteriors[arm], self._scalar_posteriors[arm] = posterior, scalar
 
-    def _budget_stop(self, count, predicted_charge=0.0):
+    def _budget_stop(self, count, predicted_charge=0):
         # Reconstruct the prefix before honoring a new stop request. The original
         # scheduling budgets still apply to each batch, including a partial one.
         restoring = self._journal is not None and self._journal.batch_index < self._journal.saved_batches
@@ -469,9 +469,10 @@ class GittinsModelSelector(BaseModelSelector):
             return "user_stopped"
         if self._evaluations + count > self.cell_cap:
             return "question_budget"
-        if self.max_spend is not None and (self._spent >= self.max_spend
-                                          or self._spent + predicted_charge > self.max_spend):
-            return "search_cost_budget"
+        if self.max_spend is not None:
+            limit = Fraction(str(self.max_spend))
+            if self._spent >= limit or self._spent + predicted_charge > limit:
+                return "search_cost_budget"
         return None
 
     def _direction_status(self, indices, completed, direction):
@@ -539,14 +540,14 @@ class GittinsModelSelector(BaseModelSelector):
         children = np.random.SeedSequence(self.seed).spawn(n_arms + 1)
         self._orders = [np.random.default_rng(child).permutation(n_questions).tolist() for child in children[1:]]
         self._record_cursor = len(self._tracker.get_records())
-        self._spent, self._evaluations = 0.0, 0
+        self._spent, self._evaluations = 0, 0
         self._stop_recommended = False
         dimensions = 1 if self.objective_mode == "single" else 2
         # Completed posteriors and observed tie-break statistics never change.
         self._completed_states = [{} for _ in range(dimensions)]
         eta = [1.0] if self.objective_mode == "single" else [self.eta_initial] * dimensions
         self._active_eta, self._calibrated = eta, False
-        warm_charges = np.zeros(n_arms)
+        warm_charges = [Fraction(0) for _ in range(n_arms)]
         # Warm cells are sequential so actual dollar usage is checked after
         # each request even when their costs cannot yet be predicted.
         for arm in range(n_arms):
@@ -594,7 +595,7 @@ class GittinsModelSelector(BaseModelSelector):
         if not single and self.cost_bin_ratio is not None:
             exponents = np.rint(np.log(base_penalties / self.cost_bin_anchor) / math.log(self.cost_bin_ratio))
             base_penalties = self.cost_bin_anchor * np.power(self.cost_bin_ratio, exponents)
-        charge_per_question = warm_charges / self.warm_size
+        charge_per_question = [charge / self.warm_size for charge in warm_charges]
         horizon = n_questions - self.warm_size if single else math.ceil((n_questions - self.warm_size) / self.batch_size)
         if single:
             eta = [1.0]
@@ -657,7 +658,7 @@ class GittinsModelSelector(BaseModelSelector):
                 continue
             start = int(self._positions[arm])
             questions = self._orders[arm][start:start + self.batch_size]
-            reason = self._budget_stop(len(questions), float(charge_per_question[arm] * len(questions)))
+            reason = self._budget_stop(len(questions), charge_per_question[arm] * len(questions))
             if reason:
                 break
             await self._pull(arm, questions, parallel, max_concurrent)
@@ -736,5 +737,5 @@ class GittinsModelSelector(BaseModelSelector):
                                        objective_mode=self.objective_mode, stop_reason=reason,
                                        stop_recommended=self._stop_recommended,
                                        total_evaluations=self._evaluations,
-                                       search_cost_overshoot_usd=max(0.0, self._spent - self.max_spend) if self.max_spend is not None else 0.0,
+                                       search_cost_overshoot_usd=max(0.0, float(self._spent) - self.max_spend) if self.max_spend is not None else 0.0,
                                        direction_eta=list(eta))

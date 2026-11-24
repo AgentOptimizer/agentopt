@@ -92,7 +92,7 @@ class RandomSearchModelSelector(GittinsModelSelector):
         self._datapoints = [[] for _ in range(n_arms)]
         self._positions = np.zeros(n_arms, dtype=int)
         self._record_cursor = len(self._tracker.get_records())
-        self._spent, self._evaluations = 0.0, 0
+        self._spent, self._evaluations = 0, 0
         eligible = np.zeros(n_arms, dtype=int)
         rng = np.random.default_rng(self.seed)
         units = rng.permutation(n_arms if self.sampling == "configurations" else n_questions)

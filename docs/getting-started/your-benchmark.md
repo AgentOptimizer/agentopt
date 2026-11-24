@@ -396,7 +396,9 @@ least one whole configuration or shared-question sweep. A tiny dollar limit can
 stop Gittins during warm start, before any recommendation is available.
 
 Dollar limits apply to new non-cached search charges and are **soft**: scheduled
-work can overshoot. Inspect `selection_cost` and `search_cost_overshoot_usd`.
+work can overshoot. Gittins compares recorded cell charges and its next batch
+estimate in decimal USD. A batch whose estimated cost exactly matches the
+remaining positive budget can start. Inspect `selection_cost` and `search_cost_overshoot_usd`.
 Random methods do not accept `max_search_cost_usd`. All methods can use user
 stopping with or without an evaluation allowance.
 

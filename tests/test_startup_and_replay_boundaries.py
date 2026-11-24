@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, current_thread
@@ -158,7 +159,7 @@ def test_factory_replaced_during_startup_survives_cleanup_and_retry(monkeypatch)
     try:
         with monkeypatch.context() as patcher:
             patcher.setattr(mitm_runner.DumpMaster, "running", reconfigure)
-            with pytest.raises(RuntimeError, match="factory changed"):
+            with pytest.raises(RuntimeError, match="failed to start"):
                 tracker._backend.open_session()
         assert logging.getLogRecordFactory() is replacement
         _, port = tracker._backend.open_session()
@@ -195,3 +196,67 @@ def test_replay_refuses_batch_outside_original_budget(tmp_path, budget, reason):
         resumed.select_best(on_update=updates.append)
     assert not updates and not tracker.records
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("emit_error", [False, True])
+def test_temporary_host_factory_only_dispatched_errors_block_startup(monkeypatch, emit_error):
+    host = logging.getLogRecordFactory()
+    running = mitm_runner.DumpMaster.running
+    set_factory = logging.setLogRecordFactory
+    factory_writes = []
+    original_dispatch = logging.Logger.callHandlers
+
+    def set_host_factory(factory):
+        factory_writes.append(factory)
+        set_factory(factory)
+
+    def temporary(*args, **kwargs):
+        return host(*args, **kwargs)
+
+    async def startup(master):
+        await running(master)
+        set_host_factory(temporary)
+        try:
+            rebuilt = logging.makeLogRecord({"levelno": logging.INFO, "msg": "host info"})
+            logging.getLogger("host").handle(rebuilt)
+            record = logging.makeLogRecord({"levelno": logging.ERROR, "msg": "startup failure"})
+            if emit_error:
+                logging.getLogger("host").handle(record)
+        finally:
+            set_host_factory(host)
+
+    monkeypatch.setattr(logging, "setLogRecordFactory", set_host_factory)
+    monkeypatch.setattr(mitm_runner.DumpMaster, "running", startup)
+    tracker = LLMTracker(cache=False, cache_dir=None)
+    tracker.start()
+    try:
+        if emit_error:
+            with pytest.raises(RuntimeError, match="failed to start"):
+                tracker._backend.open_session()
+        else:
+            _, port = tracker._backend.open_session()
+            assert port > 0
+    finally:
+        tracker.stop()
+        set_factory(host)
+    assert factory_writes == [temporary, host]
+    assert logging.Logger.callHandlers is original_dispatch
+
+
+@pytest.mark.parametrize(("limit", "expected"), [
+    (math.nextafter(.038, -math.inf), 8),
+    (.038, 10),
+    (math.nextafter(.038, math.inf), 10),
+])
+def test_exact_decimal_batch_budget_and_reopen(tmp_path, limit, expected):
+    options = dict(count=8, checkpoint_path=tmp_path / "budget.db", checkpoint_id="boundary",
+                   outcomes=dict.fromkeys(["cheap", "middle", "expensive", "dominated"], 0.5),
+                   max_search_cost_usd=limit)
+    selector, tracker = test_gittins.make_selector(**options)
+    result = selector.select_best()
+    assert result.total_evaluations == len(tracker.records) == expected
+    assert result.selection_cost == (.036 if expected == 8 else .038)
+    resumed, tracker = test_gittins.make_selector(**options)
+    restored = resumed.select_best()
+    assert restored.selection_cost == result.selection_cost
+    assert restored.total_evaluations == expected and not tracker.records

@@ -60,11 +60,18 @@ class _SessionErrorCheck(ErrorCheck):
     name = "errorcheck"
 
     def __init__(self):
+        self.on_startup_complete = None
         self.repeat_errors_on_stderr = False
         self.logger = ErrorCheckHandler()
         owner = threading.get_ident()
         self.logger.addFilter(lambda record: record.thread == owner)
         self.logger.install()
+
+    def finish(self):
+        # Master.run calls this only after its final shutdown_if_errored check.
+        super().finish()
+        if self.on_startup_complete is not None:
+            self.on_startup_complete()
 
 
 class DumpMaster(Master):
@@ -78,7 +85,7 @@ class DumpMaster(Master):
             self.addons.add(errorcheck)
         except BaseException:
             if errorcheck is not None:
-                errorcheck.finish()
+                errorcheck.logger.uninstall()
             legacy = getattr(self, "_legacy_log_events", None)
             if legacy is not None:
                 legacy.uninstall()
@@ -93,8 +100,7 @@ class _StartupHook:
     ``Proxyserver.listen_addrs`` is populated.
     """
 
-    def __init__(self, ready: threading.Event, port_holder: list, master: DumpMaster) -> None:
-        self._ready = ready
+    def __init__(self, port_holder: list, master: DumpMaster) -> None:
         self._master = master
         self._port_holder = port_holder
 
@@ -107,7 +113,6 @@ class _StartupHook:
         addrs = self._master.addons.get("proxyserver").listen_addrs()
         if addrs:
             self._port_holder.append(addrs[0][1])
-        self._ready.set()
 
 
 class SessionMaster:
@@ -228,8 +233,9 @@ class SessionMaster:
             self._master = master
             if self._cancelled.is_set():
                 return
+            master.addons.get("errorcheck").on_startup_complete = self._ready.set
             master.addons.add(
-                _StartupHook(self._ready, self._port_holder, master), self._addon,
+                _StartupHook(self._port_holder, master), self._addon,
             )
 
             # Drives the loop until shutdown() flips should_exit.
@@ -245,7 +251,7 @@ class SessionMaster:
                 errorcheck = self._master.addons.get("errorcheck")
                 cleanups = [self._master._legacy_log_events.uninstall]
                 if errorcheck is not None:
-                    cleanups.append(errorcheck.finish)
+                    cleanups.append(errorcheck.logger.uninstall)
                 if self._master._termlog_addon is not None:
                     cleanups.append(self._master._termlog_addon.uninstall)
                 for cleanup in cleanups:

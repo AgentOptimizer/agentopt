@@ -26,6 +26,14 @@ from .gittins_statistics import (
 )
 
 
+def _ordered_prices(prices):
+    if prices is None:
+        return None
+    # Both lookup levels use names, while dataset and model-spec mappings can
+    # be observed in insertion order by user code.
+    return {model: dict(sorted(rates.items())) for model, rates in sorted(prices.items())}
+
+
 class _RestoredBatchStopped(Exception):
     def __init__(self, result):
         self.result = result
@@ -257,14 +265,17 @@ class GittinsModelSelector(BaseModelSelector):
                 raise ValueError("checkpoint_id is required: give a stable workflow/evaluator version")
             settings = {key: value for key, value in vars(self).items()
                         if key not in {"_journal", "restored_cells", "checkpoint_path", "_checkpoint_identity"}}
-            self._checkpoint_identity = fingerprint({
+            identity_inputs = {
                 "format": 1, "algorithm": "gittins-v1", "workflow": checkpoint_id,
                 "dataset": [dataset[i] for i in range(len(dataset))],
                 "models": list(models.items()), "settings": settings,
                 "lambda_cost": float(lambda_cost), "lambda_latency": float(lambda_latency),
                 "prices": model_prices, "price_table": MODEL_PRICES,
-            })
-            self._checkpoint_input_identity = fingerprint({"dataset": dataset, "models": list(models.items()), "prices": model_prices})
+            }
+            self._legacy_price_identity = fingerprint(identity_inputs)
+            identity_inputs["prices"] = _ordered_prices(model_prices)
+            self._checkpoint_identity = fingerprint(identity_inputs)
+            self._checkpoint_input_identity = fingerprint({"dataset": dataset, "models": list(models.items()), "prices": _ordered_prices(model_prices)})
             self._checkpoint_setting_keys = tuple(settings)
             self._checkpoint_settings_identity = fingerprint(settings)
         super().__init__(agent=agent, models=models, eval_fn=eval_fn, dataset=dataset,
@@ -287,17 +298,19 @@ class GittinsModelSelector(BaseModelSelector):
         if self.checkpoint_path is not None:
             self._run_dataset = deepcopy([self.dataset[i] for i in range(len(self.dataset))])
             models = deepcopy(self._models)
-            current = fingerprint({"dataset": self._run_dataset, "models": list(models.items()), "prices": self.model_prices})
+            current = fingerprint({"dataset": self._run_dataset, "models": list(models.items()), "prices": _ordered_prices(self.model_prices)})
             current_settings = fingerprint({key: getattr(self, key) for key in self._checkpoint_setting_keys})
             if current != self._checkpoint_input_identity or current_settings != self._checkpoint_settings_identity:
                 raise CheckpointError("Checkpoint inputs changed after selector construction; create a new selector for the changed dataset or models")
             self._run_combos = deepcopy(self._all_combos())
         if self.checkpoint_path is None:
             return asyncio.run(self._select(parallel, concurrency))
-        with EvaluationCheckpoint(self.checkpoint_path, self._checkpoint_identity) as journal:
+        with EvaluationCheckpoint(self.checkpoint_path, self._checkpoint_identity,
+                                  legacy_identity=self._legacy_price_identity) as journal:
             journal.validate(names=[self._combo_name(combo) for combo in self._run_combos],
                              questions=len(self._run_dataset), score_bounds=self.score_bounds,
                              prices=self._custom_prices)
+            journal.normalize_identity()
             self._journal = journal
             self.restored_cells = journal.saved_cells
             try:

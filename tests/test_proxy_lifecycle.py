@@ -59,7 +59,6 @@ def test_failed_start_uninstalls_its_logging_handler(monkeypatch):
 
 
 def test_startup_hook_uses_own_master_when_global_context_changes(monkeypatch):
-    from threading import Event
     from types import SimpleNamespace
     from mitmproxy import ctx
     from agentopt.proxy.mitm_runner import _StartupHook
@@ -67,9 +66,8 @@ def test_startup_hook_uses_own_master_when_global_context_changes(monkeypatch):
         return SimpleNamespace(addons=SimpleNamespace(get=lambda name:
             SimpleNamespace(listen_addrs=lambda: [("127.0.0.1", port)])))
     owner, other = master(12345), master(23456)
-    ready, ports = Event(), []
-    hook = _StartupHook(ready, ports, owner)
+    ports = []
+    hook = _StartupHook(ports, owner)
     monkeypatch.setattr(ctx, "master", other, raising=False)
     hook.running()
-    assert ready.is_set()
     assert ports == [12345]

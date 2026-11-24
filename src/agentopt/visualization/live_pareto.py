@@ -409,7 +409,6 @@ class LiveParetoPlot:
                                 weight="bold" if selected else "normal", fontfamily=self.font,
                                 annotation_clip=True)
             self._chart_labels.append(((cost, score), label, recommendation.model_name))
-        self._layout_chart_labels()
         ax.grid(color=EDGE, linewidth=.6, alpha=.7)
         ax.set_axisbelow(True)
         for side in ("top", "right"):
@@ -425,6 +424,10 @@ class LiveParetoPlot:
             label.set_fontfamily(self.font)
         for axis in (ax.xaxis, ax.yaxis):
             axis.get_offset_text().set(fontfamily=self.font, fontsize=FONT_MEDIUM, color=MUTED)
+
+        # Tick setup above resolves the lazy autoscale limits before we use transData.
+        ax.get_xlim()
+        self._layout_chart_labels()
 
     def _render_legend(self, *, reveal_selection=False):
         from matplotlib.patches import FancyBboxPatch, Rectangle
@@ -627,6 +630,8 @@ class LiveParetoPlot:
             raise RuntimeError("LiveParetoPlot.run must be called on the main thread")
         if getattr(selector, "objective_mode", None) != "multi":
             raise ValueError("Live Pareto plotting requires a multi-objective Gittins selector")
+        if self.output is not None:
+            self.output = self.output.resolve()
         checkpoint = getattr(selector, "checkpoint_path", None)
         if self.output is not None and checkpoint is not None:
             from ..model_selection.checkpoint import checkpoint_paths, require_distinct_paths

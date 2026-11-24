@@ -336,6 +336,10 @@ existing file. Format-1 and format-2 checkpoints cannot safely recover the origi
 Python input types and dictionary insertion order and are rejected without replacement; preserve them for
 inspection and use a new checkpoint path. Missing identity or schema records
 are treated as invalid state, never as a new experiment.
+Custom model prices are matched by model and rate name. When reopening a v3
+checkpoint written before price-order normalization, use its original pricing
+configuration once. A successful validation updates the stored identity so
+later runs can reorder the same price entries.
 Finish saves the report and stops this run; it does not discard the checkpoint.
 Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
 disable saving and reuse. Other selection algorithms do not yet support this.

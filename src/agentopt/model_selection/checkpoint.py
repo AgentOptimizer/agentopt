@@ -61,10 +61,12 @@ def fingerprint(payload):
 
 
 class EvaluationCheckpoint:
-    def __init__(self, path, identity):
+    def __init__(self, path, identity, *, legacy_identity=None):
         self.paths = checkpoint_paths(path)
         self.path = self.paths["checkpoint"]
         self.identity = identity
+        self.legacy_identity = legacy_identity
+        self._needs_normalization = False
         self.db = self.lock = None
 
     def __enter__(self):
@@ -99,7 +101,8 @@ class EvaluationCheckpoint:
             identity = self.db.execute("SELECT identity FROM metadata WHERE id=1").fetchone()
             if identity is None:
                 raise CheckpointError(f"Missing checkpoint identity in '{self.path}'; original retained")
-            if identity[0] != self.identity:
+            self._needs_normalization = identity[0] != self.identity and identity[0] == self.legacy_identity
+            if identity[0] != self.identity and not self._needs_normalization:
                 raise CheckpointError("Checkpoint setup differs: check dataset, models, seed, workflow and algorithm settings; use a new checkpoint path for a new run")
             self.db.execute("PRAGMA synchronous = FULL")
             self.saved_cells = self.db.execute("SELECT COUNT(*) FROM cells").fetchone()[0]
@@ -111,6 +114,13 @@ class EvaluationCheckpoint:
             if isinstance(error, (sqlite3.Error, OSError)):
                 raise CheckpointError(f"Cannot open/read checkpoint '{self.path}'. Check the file and permissions; the checkpoint has not been replaced.") from error
             raise
+
+    def normalize_identity(self):
+        # Upgrade a verified v3 file only after validating the whole journal.
+        if self._needs_normalization:
+            with self._operation("update"):
+                self.db.execute("UPDATE metadata SET identity=? WHERE id=1", (self.identity,))
+            self._needs_normalization = False
 
     def __exit__(self, *_):
         if self.db is not None:

@@ -60,7 +60,7 @@ def test_hardlinked_checkpoint_rejected(tmp_path):
 def test_fingerprint_preserves_observable_python_types():
     assert fingerprint((1, 2)) != fingerprint([1, 2])
     assert fingerprint({1: "a"}) != fingerprint({"1": "a"})
-    assert fingerprint({"b": 2, "a": 1}) == fingerprint({"a": 1, "b": 2})
+    assert fingerprint({"b": 2, "a": 1}) != fingerprint({"a": 1, "b": 2})
     assert fingerprint(True) != fingerprint(1)
 
 

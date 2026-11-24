@@ -22,15 +22,34 @@ class CheckpointInUseError(RuntimeError):
     """Another process currently owns the checkpoint."""
 
 
+def checkpoint_paths(path):
+    database = Path(path).resolve()
+    lock = Path(str(database) + ".lock")
+    paths = {"checkpoint": database, "checkpoint lock": lock}
+    for role, base in list(paths.items()):
+        for suffix in ("-journal", "-wal", "-shm"):
+            paths[role + suffix] = Path(str(base) + suffix)
+    return paths
+
+
+def require_distinct_paths(paths):
+    seen = []
+    for role, path in paths.items():
+        for other_role, other in seen:
+            if path.resolve() == other.resolve() or (path.exists() and other.exists() and path.samefile(other)):
+                raise ValueError(f"Path conflict: {role} and {other_role} must refer to different files")
+        seen.append((role, path))
+
+
 def fingerprint(payload):
     try:
         def typed(value):
-            if isinstance(value, tuple):
+            if type(value) is tuple:
                 return ["tuple", [typed(x) for x in value]]
-            if isinstance(value, list):
+            if type(value) is list:
                 return ["list", [typed(x) for x in value]]
-            if isinstance(value, dict):
-                return ["dict", sorted([[typed(k), typed(v)] for k, v in value.items()], key=lambda pair: json.dumps(pair[0]))]
+            if type(value) is dict:
+                return ["dict", [[typed(k), typed(v)] for k, v in value.items()]]
             if type(value) not in (str, int, float, bool, type(None)):
                 raise TypeError("unsupported checkpoint value")
             return [type(value).__name__, value]
@@ -43,7 +62,8 @@ def fingerprint(payload):
 
 class EvaluationCheckpoint:
     def __init__(self, path, identity):
-        self.path = Path(path).resolve()
+        self.paths = checkpoint_paths(path)
+        self.path = self.paths["checkpoint"]
         self.identity = identity
         self.db = self.lock = None
 
@@ -52,7 +72,7 @@ class EvaluationCheckpoint:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             if self.path.exists() and self.path.stat().st_nlink > 1:
                 raise CheckpointError("Checkpoint hard links are not supported; use a single-link file")
-            self.lock = sqlite3.connect(str(self.path) + ".lock", timeout=0, isolation_level=None)
+            self.lock = sqlite3.connect(self.paths["checkpoint lock"], timeout=0, isolation_level=None)
             try:
                 self.lock.execute("BEGIN EXCLUSIVE")
             except sqlite3.OperationalError as error:
@@ -68,13 +88,13 @@ class EvaluationCheckpoint:
                     self.db.execute("INSERT INTO metadata VALUES (1, ?)", (self.identity,))
                     self.db.execute("CREATE TABLE batches (id INTEGER PRIMARY KEY, arm TEXT NOT NULL, questions TEXT NOT NULL)")
                     self.db.execute("CREATE TABLE cells (batch INTEGER NOT NULL, question INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (batch, question))")
-                    self.db.execute("PRAGMA user_version = 2")
+                    self.db.execute("PRAGMA user_version = 3")
                     self.db.execute("COMMIT")
                 except BaseException:
                     self.db.execute("ROLLBACK")
                     raise
             tables = {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if not {"metadata", "batches", "cells"} <= tables or self.db.execute("PRAGMA user_version").fetchone()[0] != 2:
+            if not {"metadata", "batches", "cells"} <= tables or self.db.execute("PRAGMA user_version").fetchone()[0] != 3:
                 raise CheckpointError(f"Invalid or legacy checkpoint schema in '{self.path}'; original retained. Use a new path.")
             identity = self.db.execute("SELECT identity FROM metadata WHERE id=1").fetchone()
             if identity is None:

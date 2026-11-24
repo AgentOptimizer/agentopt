@@ -261,7 +261,7 @@ class GittinsModelSelector(BaseModelSelector):
                 "format": 1, "algorithm": "gittins-v1", "workflow": checkpoint_id,
                 "dataset": [dataset[i] for i in range(len(dataset))],
                 "models": list(models.items()), "settings": settings,
-                "lambda_cost": lambda_cost, "lambda_latency": lambda_latency,
+                "lambda_cost": float(lambda_cost), "lambda_latency": float(lambda_latency),
                 "prices": model_prices, "price_table": MODEL_PRICES,
             })
             self._checkpoint_input_identity = fingerprint({"dataset": dataset, "models": list(models.items()), "prices": model_prices})
@@ -276,7 +276,7 @@ class GittinsModelSelector(BaseModelSelector):
 
     def __setattr__(self, name, value):
         frozen = self.__dict__.get("_frozen_checkpoint_settings", {})
-        if name in frozen and value != frozen[name]:
+        if name in frozen and (type(value) is not type(frozen[name]) or value != frozen[name]):
             raise CheckpointError(f"Checkpoint setting '{name}' is immutable; create a new selector for changed settings")
         super().__setattr__(name, value)
 

@@ -331,9 +331,9 @@ crash. One checkpoint can be used by only one process at a time; its `.lock`
 sidecar releases automatically on exit. Symlinks resolve to the same canonical
 path; hard-linked checkpoint files are rejected. Keep the SQLite file to continue later.
 
-Checkpoint format 2 validates identity and required tables before modifying an
-existing file. Legacy format-1 checkpoints cannot safely recover the original
-Python input types and are rejected without replacement; preserve them for
+Checkpoint format 3 validates identity and required tables before modifying an
+existing file. Format-1 and format-2 checkpoints cannot safely recover the original
+Python input types and dictionary insertion order and are rejected without replacement; preserve them for
 inspection and use a new checkpoint path. Missing identity or schema records
 are treated as invalid state, never as a new experiment.
 Finish saves the report and stops this run; it does not discard the checkpoint.

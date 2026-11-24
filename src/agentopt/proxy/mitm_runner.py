@@ -13,7 +13,7 @@ Lifecycle::
 
 Embedded API surface we depend on (mitmproxy 12.x — pin in pyproject.toml):
 
-* ``mitmproxy.tools.dump.DumpMaster(options, loop=None, with_termlog=True, with_dumper=True)``
+* mitmproxy Master, default_addons and the ErrorCheck startup hook.
 * ``Master.run()`` — coroutine that drives the event loop until ``shutdown()``.
 * ``Master.shutdown()`` — sync, thread-safe.  Internally schedules
   ``should_exit.set`` via ``call_soon_threadsafe``.
@@ -33,7 +33,9 @@ import threading
 from typing import TYPE_CHECKING, Optional
 
 from mitmproxy.options import Options
-from mitmproxy.tools.dump import DumpMaster
+from mitmproxy import addons
+from mitmproxy.master import Master
+from mitmproxy.addons.errorcheck import ErrorCheck, ErrorCheckHandler
 
 from ._mitm_context import session_context
 from .cache import ResponseCache
@@ -52,6 +54,35 @@ logger = logging.getLogger(__name__)
 _STARTUP_TIMEOUT_SECONDS = 30.0
 # Time to wait for the master's loop to exit on stop().
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
+
+
+class _SessionErrorCheck(ErrorCheck):
+    name = "errorcheck"
+
+    def __init__(self):
+        self.repeat_errors_on_stderr = False
+        self.logger = ErrorCheckHandler()
+        owner = threading.get_ident()
+        self.logger.addFilter(lambda record: record.thread == owner)
+        self.logger.install()
+
+
+class DumpMaster(Master):
+    """Embedded regular proxy with explicitly owned startup logging."""
+    def __init__(self, opts, *, loop):
+        errorcheck = None
+        try:
+            super().__init__(opts, event_loop=loop, with_termlog=False)
+            self.addons.add(*addons.default_addons())
+            errorcheck = _SessionErrorCheck()
+            self.addons.add(errorcheck)
+        except BaseException:
+            if errorcheck is not None:
+                errorcheck.finish()
+            legacy = getattr(self, "_legacy_log_events", None)
+            if legacy is not None:
+                legacy.uninstall()
+            raise
 
 
 class _StartupHook:
@@ -104,6 +135,7 @@ class SessionMaster:
         self._master: Optional[DumpMaster] = None
         self._port: Optional[int] = None
 
+        self._cancelled = threading.Event()
         self._ready = threading.Event()
         self._port_holder: list = []
         self._startup_exc: Optional[BaseException] = None
@@ -130,6 +162,7 @@ class SessionMaster:
         self._thread.start()
 
         if not self._ready.wait(timeout=_STARTUP_TIMEOUT_SECONDS):
+            self._cancelled.set()
             raise RuntimeError(
                 f"mitmproxy session master for {self._session.session_id} "
                 f"did not start within {_STARTUP_TIMEOUT_SECONDS}s"
@@ -149,15 +182,17 @@ class SessionMaster:
 
     def stop(self) -> None:
         """Signal the master to exit and join the thread."""
-        if self._master is not None:
+        self._cancelled.set()
+        master = self._master
+        if master is not None:
             try:
-                self._master.shutdown()
+                master.shutdown()
             except Exception:
                 logger.debug("ignored exception in master.shutdown", exc_info=True)
         if self._thread is not None:
             self._thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
             if self._thread.is_alive():
-                logger.warning("mitmproxy thread did not exit within the shutdown timeout")
+                raise RuntimeError("Proxy thread did not exit within the shutdown timeout; retry stop()")
             else:
                 self._thread = None
 
@@ -189,14 +224,17 @@ class SessionMaster:
                 # console log noise.
                 ssl_insecure=False,
             )
-            master = DumpMaster(opts, loop=loop, with_termlog=False, with_dumper=False,)
+            master = DumpMaster(opts, loop=loop)
             self._master = master
+            if self._cancelled.is_set():
+                return
             master.addons.add(
                 _StartupHook(self._ready, self._port_holder, master), self._addon,
             )
 
             # Drives the loop until shutdown() flips should_exit.
-            loop.run_until_complete(master.run())
+            if not self._cancelled.is_set():
+                loop.run_until_complete(master.run())
         except BaseException as exc:
             self._startup_exc = exc
             self._ready.set()  # unblock start()

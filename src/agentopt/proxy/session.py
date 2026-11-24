@@ -105,6 +105,10 @@ class SessionManager:
                 records.extend(session.records)
         return records
 
+    def clear_ended(self):
+        with self._lock:
+            self._ended.clear()
+
     def force_end_all(self) -> None:
         """Move every active session to the ended list.
 

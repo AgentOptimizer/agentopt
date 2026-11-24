@@ -204,6 +204,7 @@ class LiveParetoPlot:
             self.axis.set_xlim(xlim[0]-dx, xlim[1]-dx)
             self.axis.set_ylim(ylim[0]-dy, ylim[1]-dy)
             self._zoomed = True
+            self._layout_chart_labels()
             self._request_draw()
         elif self._scroll_drag is not None and self._legend_scroll_limit > 0:
             _, y = self.scroll_axis.transAxes.inverted().transform((event.x, event.y))
@@ -253,7 +254,7 @@ class LiveParetoPlot:
             x, y = self.axis.transData.transform(point)
             if not self.axis.bbox.contains(x, y):
                 continue
-            if label.contains(event)[0]:
+            if label.get_visible() and label.contains(event)[0]:
                 return name
             distance = (event.x-x)**2 + (event.y-y)**2
             if distance <= (self.figure.dpi * 8 / 72)**2:
@@ -292,11 +293,38 @@ class LiveParetoPlot:
             self.axis.set_ylim(event.ydata + (bottom-event.ydata)*factor,
                                event.ydata + (top-event.ydata)*factor)
             self._zoomed = True
+            self._layout_chart_labels()
             self._request_draw()
             return
         if self._legend_scroll_limit and event.inaxes in (self.recommendation_axis, self.scroll_axis):
             step = 1 if event.button == "down" else -1
             self._scroll_to(self._legend_offset + .09 * step)
+
+    def _layout_chart_labels(self):
+        """Assign visible numbers to distinct screen slots nearest their point."""
+        labels = self._chart_labels
+        if not labels:
+            return
+        bbox = self.axis.bbox
+        scale = self.figure.dpi / 72
+        width = max(18, 8 * len(str(len(labels))) + 6) * scale
+        height = (FONT_MEDIUM + 6) * scale
+        slots = [(bbox.x0 + 4 + col * width, bbox.y0 + 4 + row * height)
+                 for col in range(int((bbox.width - 8) / width))
+                 for row in range(int((bbox.height - 8) / height))]
+        points = [self.axis.transData.transform(point) for point, _, _ in labels]
+        # Leave room for direct point selection, including cycling through ties.
+        anchors = set(map(tuple, points))
+        slots = [(x, y) for x, y in slots if not any(
+            x - 3 <= px <= x + width and y - 3 <= py <= y + height for px, py in anchors)]
+        for (px, py), (_, artist, _) in zip(points, labels):
+            visible = bool(slots) and bbox.contains(px, py)
+            artist.set_visible(visible)
+            if visible:
+                idx = min(range(len(slots)), key=lambda i:
+                          (slots[i][0] - px - 8 * scale)**2 + (slots[i][1] - py - 8 * scale)**2)
+                x, y = slots.pop(idx)
+                artist.set_position(((x - px) / scale, (y - py) / scale))
 
     def _render_status(self):
         phase = ("Finished" if self.finished else "Finishing…" if self.finish_requested
@@ -370,38 +398,18 @@ class LiveParetoPlot:
         if self._zoomed:
             ax.set_xlim(view[0])
             ax.set_ylim(view[1])
-        from collections import Counter
-        groups = Counter(zip(costs, scores))
-        label_offsets = {}
         for number, (cost, score, recommendation) in enumerate(zip(costs, scores, self._recommendations), 1):
             selected = recommendation.model_name == self._selected_combination
             if selected:
                 ax.scatter([cost], [score], facecolor=BLUE, edgecolor=MINT, linewidth=2,
                            s=115, zorder=4)
-            overlap = label_offsets.get((cost, score), 0)
-            label_offsets[(cost, score)] = overlap + 1
-            # Lay out each tied group in screen space, then keep the entire
-            # grid inside the axes so displayed numbers and hit regions agree.
-            scale = self.figure.dpi / 72
-            columns = min(5, groups[(cost, score)])
-            rows = (groups[(cost, score)] + columns - 1) // columns
-            width, height = columns * 26 * scale, rows * 19 * scale
-            px, py = ax.transData.transform((cost, score))
-            left = max(ax.bbox.x0 + 4, min(px + 8 * scale, ax.bbox.x1 - width - 4))
-            bottom = max(ax.bbox.y0 + 4, min(py + 8 * scale, ax.bbox.y1 - height - 4))
-            offset = ((left - px) / scale + (overlap % columns) * 26,
-                      (bottom - py) / scale + (overlap // columns) * 19)
             label = ax.annotate(str(number), (cost, score),
-                                xytext=offset, textcoords="offset points", ha="left", va="bottom",
+                                xytext=(0, 0), textcoords="offset points", ha="left", va="bottom",
                                 fontsize=FONT_MEDIUM, color=MINT if selected else TEXT,
                                 weight="bold" if selected else "normal", fontfamily=self.font,
                                 annotation_clip=True)
             self._chart_labels.append(((cost, score), label, recommendation.model_name))
-        ax.set_ylim(min(-.03, min(scores)-.08), max(1.03, max(scores)+.08))
-        ax.margins(x=.14)
-        if self._zoomed:
-            ax.set_xlim(view[0])
-            ax.set_ylim(view[1])
+        self._layout_chart_labels()
         ax.grid(color=EDGE, linewidth=.6, alpha=.7)
         ax.set_axisbelow(True)
         for side in ("top", "right"):
@@ -619,6 +627,10 @@ class LiveParetoPlot:
             raise RuntimeError("LiveParetoPlot.run must be called on the main thread")
         if getattr(selector, "objective_mode", None) != "multi":
             raise ValueError("Live Pareto plotting requires a multi-objective Gittins selector")
+        checkpoint = getattr(selector, "checkpoint_path", None)
+        if self.output is not None and checkpoint is not None:
+            from ..model_selection.checkpoint import checkpoint_paths, require_distinct_paths
+            require_distinct_paths({"plot output": self.output, **checkpoint_paths(checkpoint)})
         self.total_questions = len(selector.dataset)
         self.total_cells = len(selector._all_combos()) * self.total_questions
         self._render_status()

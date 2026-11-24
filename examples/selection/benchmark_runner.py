@@ -384,6 +384,7 @@ def run_selection(selector, *, max_concurrent, output, failures=None, plot=None)
 
 def validate_output_paths(args):
     """Reject aliases before loading data, constructing clients or writing files."""
+    from agentopt.model_selection.checkpoint import checkpoint_paths, require_distinct_paths
     output = args.output
     paths = {"dataset": args.dataset, "output": output,
              "partial results": output.with_name(f"{output.stem}.partial{output.suffix or '.json'}")}
@@ -393,16 +394,8 @@ def validate_output_paths(args):
         paths["plot output"] = args.plot_output
     if args.method in ("auto", "gittins") and not args.no_checkpoint:
         checkpoint = args.checkpoint or Path(str(output) + ".checkpoint.sqlite3")
-        paths["checkpoint"] = checkpoint
-        paths["checkpoint lock"] = Path(str(checkpoint) + ".lock")
-        for suffix in ("-journal", "-wal", "-shm"):
-            paths["checkpoint" + suffix] = Path(str(checkpoint) + suffix)
-            paths["checkpoint lock" + suffix] = Path(str(checkpoint) + ".lock" + suffix)
-    items = list(paths.items())
-    for i, (name, path) in enumerate(items):
-        for other_name, other in items[:i]:
-            if path.resolve() == other.resolve() or (path.exists() and other.exists() and path.samefile(other)):
-                raise ValueError(f"Path conflict: {name} and {other_name} must refer to different files")
+        paths.update(checkpoint_paths(checkpoint))
+    require_distinct_paths(paths)
 
 
 def main(argv=None):

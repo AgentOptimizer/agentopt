@@ -313,8 +313,15 @@ class GittinsModelSelector(BaseModelSelector):
             self._journal = journal
             self.restored_cells = journal.saved_cells
             try:
-                return asyncio.run(self._select(parallel, concurrency))
+                result = asyncio.run(self._select(parallel, concurrency))
+                if journal.batch_index < journal.saved_batches:
+                    raise CheckpointError(
+                        f"Checkpoint evaluation order differs in '{journal.path}': "
+                        "selection ended before all saved batches could be replayed"
+                    )
+                return result
             except _RestoredBatchStopped as stopped:
+                # Partial restores are only published on the last saved batch.
                 return stopped.result
             finally:
                 self._journal = None

@@ -184,6 +184,9 @@ class EvaluationCheckpoint:
         except (ValueError, TypeError, KeyError, AttributeError) as error:
             raise CheckpointError(f"Invalid checkpoint contents in '{self.path}': {error}. The original file is retained; use a valid checkpoint or a new path.") from error
 
+        if self._needs_normalization and not batches:
+            self._normalize_identity()
+
     def begin_batch(self, arm, questions):
         with self._operation("read/write"):
             self.batch_index += 1
@@ -191,7 +194,7 @@ class EvaluationCheckpoint:
             row = self.db.execute("SELECT arm, questions FROM batches WHERE id=?", (self.batch_index,)).fetchone()
             if row is not None and row != (arm, encoded):
                 raise CheckpointError(f"Checkpoint evaluation order differs in '{self.path}'; use a new checkpoint path")
-            if self._needs_normalization and self.batch_index >= self.saved_batches:
+            if self._needs_normalization and self.batch_index == self.saved_batches:
                 self._normalize_identity()
             if row is None:
                 self.db.execute("INSERT INTO batches VALUES (?, ?, ?)", (self.batch_index, arm, encoded))

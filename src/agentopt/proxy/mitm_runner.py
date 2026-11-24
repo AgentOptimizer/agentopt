@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Optional
 
 from mitmproxy.options import Options
@@ -56,36 +57,68 @@ _STARTUP_TIMEOUT_SECONDS = 30.0
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
+class _StartupLogRouter(logging.Handler):
+    """Keep one root handler ahead of the embedded masters' legacy handlers."""
+
+    def __init__(self):
+        super().__init__(logging.ERROR)
+        self._local = threading.local()
+        self._sessions = 0
+        self._sessions_lock = threading.Lock()
+
+    @contextmanager
+    def session(self):
+        collector = ErrorCheckHandler()
+        with self._sessions_lock:
+            if not self._sessions:
+                logging.getLogger().addHandler(self)
+            self._sessions += 1
+        self._local.collector = collector
+        try:
+            yield collector
+        finally:
+            del self._local.collector
+            with self._sessions_lock:
+                self._sessions -= 1
+                if not self._sessions:
+                    logging.getLogger().removeHandler(self)
+
+    def finish_startup(self):
+        # Keep the router installed until the master's legacy handler exits.
+        self._local.collector = None
+
+    def emit(self, record):
+        collector = getattr(self._local, "collector", None)
+        if collector is not None and record.thread == threading.get_ident():
+            collector.handle(record)
+
+
+_startup_logs = _StartupLogRouter()
+
+
 class _SessionErrorCheck(ErrorCheck):
     name = "errorcheck"
 
-    def __init__(self):
+    def __init__(self, collector):
         self.on_startup_complete = None
         self.repeat_errors_on_stderr = False
-        self.logger = ErrorCheckHandler()
-        owner = threading.get_ident()
-        self.logger.addFilter(lambda record: record.thread == owner)
-        self.logger.install()
+        self.logger = collector
 
     def finish(self):
         # Master.run calls this only after its final shutdown_if_errored check.
-        super().finish()
+        _startup_logs.finish_startup()
         if self.on_startup_complete is not None:
             self.on_startup_complete()
 
 
 class DumpMaster(Master):
     """Embedded regular proxy with explicitly owned startup logging."""
-    def __init__(self, opts, *, loop):
-        errorcheck = None
+    def __init__(self, opts, *, loop, collector):
         try:
             super().__init__(opts, event_loop=loop, with_termlog=False)
             self.addons.add(*addons.default_addons())
-            errorcheck = _SessionErrorCheck()
-            self.addons.add(errorcheck)
+            self.addons.add(_SessionErrorCheck(collector))
         except BaseException:
-            if errorcheck is not None:
-                errorcheck.logger.uninstall()
             legacy = getattr(self, "_legacy_log_events", None)
             if legacy is not None:
                 legacy.uninstall()
@@ -212,10 +245,10 @@ class SessionMaster:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
-        with session_context():
-            self._run_isolated()
+        with session_context(), _startup_logs.session() as collector:
+            self._run_isolated(collector)
 
-    def _run_isolated(self) -> None:
+    def _run_isolated(self, collector) -> None:
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -229,7 +262,7 @@ class SessionMaster:
                 # console log noise.
                 ssl_insecure=False,
             )
-            master = DumpMaster(opts, loop=loop)
+            master = DumpMaster(opts, loop=loop, collector=collector)
             self._master = master
             if self._cancelled.is_set():
                 return
@@ -248,10 +281,7 @@ class SessionMaster:
             # Startup can fail before Master.run reaches done(). Its process-wide
             # logging handler must never keep scheduling onto a closed loop.
             if self._master is not None:
-                errorcheck = self._master.addons.get("errorcheck")
                 cleanups = [self._master._legacy_log_events.uninstall]
-                if errorcheck is not None:
-                    cleanups.append(errorcheck.logger.uninstall)
                 if self._master._termlog_addon is not None:
                     cleanups.append(self._master._termlog_addon.uninstall)
                 for cleanup in cleanups:

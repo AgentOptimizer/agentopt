@@ -53,6 +53,7 @@ class LiveParetoPlot:
         self._resume.set()
         self.paused = False
         self._pause_active = False
+        self._closed = False
         self.finished = False
         self.finish_requested = False
         self._warming_up = True
@@ -129,7 +130,7 @@ class LiveParetoPlot:
         self.figure.canvas.mpl_connect("motion_notify_event", self._drag)
         self.figure.canvas.mpl_connect("button_release_event", self._end_drag)
         self.figure.canvas.mpl_connect("figure_leave_event", self._update_chart_cursor)
-        self.figure.canvas.mpl_connect("close_event", self.finish_search)
+        self.figure.canvas.mpl_connect("close_event", self._on_close)
         self._render_chart()
         self._render_legend()
         self._render_status()
@@ -142,7 +143,7 @@ class LiveParetoPlot:
                 window.setFixedSize(window.size())
             plt.ion()
             plt.show(block=False)
-        self.figure.canvas.draw_idle()
+        self._request_draw()
 
     def _make_button(self, bounds, label, callback, *, primary=False):
         from matplotlib.patches import FancyBboxPatch
@@ -166,7 +167,7 @@ class LiveParetoPlot:
     def _scroll_to(self, offset):
         self._legend_offset = max(0.0, min(offset, self._legend_scroll_limit))
         self._render_legend()
-        self.figure.canvas.draw_idle()
+        self._request_draw()
 
     def _start_drag(self, event):
         if event.button != 1:
@@ -195,7 +196,7 @@ class LiveParetoPlot:
             self.axis.set_xlim(xlim[0]-dx, xlim[1]-dx)
             self.axis.set_ylim(ylim[0]-dy, ylim[1]-dy)
             self._zoomed = True
-            self.figure.canvas.draw_idle()
+            self._request_draw()
         elif self._scroll_drag is not None and self._legend_scroll_limit > 0:
             _, y = self.scroll_axis.transAxes.inverted().transform((event.x, event.y))
             low, high = self.scroll_thumb.get_ydata()
@@ -246,12 +247,12 @@ class LiveParetoPlot:
             self._selected_combination = name
             self._render_chart()
             self._render_legend(reveal_selection=True)
-            self.figure.canvas.draw_idle()
+            self._request_draw()
 
     def _reset_chart(self, _event):
         self._zoomed = False
         self._render_chart()
-        self.figure.canvas.draw_idle()
+        self._request_draw()
 
     def _on_scroll(self, event):
         if event.inaxes is self.axis and self._recommendations:
@@ -265,7 +266,7 @@ class LiveParetoPlot:
             self.axis.set_ylim(event.ydata + (bottom-event.ydata)*factor,
                                event.ydata + (top-event.ydata)*factor)
             self._zoomed = True
-            self.figure.canvas.draw_idle()
+            self._request_draw()
             return
         if self._legend_scroll_limit and event.inaxes in (self.recommendation_axis, self.scroll_axis):
             step = 1 if event.button == "down" else -1
@@ -462,7 +463,21 @@ class LiveParetoPlot:
             self._pause_active = False
             self._resume.set()
         self._render_status()
-        self.figure.canvas.draw_idle()
+        self._request_draw()
+
+    def _request_draw(self):
+        if not self._closed:
+            self.figure.canvas.draw_idle()
+
+    def _on_close(self, _event):
+        if self._closed:
+            return
+        self._closed = True
+        # Tk has already begun destroying the window. Use an off-screen canvas
+        # for final snapshots/exports so no new Tk after_idle callback is queued.
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        FigureCanvasAgg(self.figure)
+        self.finish_search(None)
 
     def finish_search(self, _event):
         if self.finished or self.finish_requested:
@@ -472,7 +487,7 @@ class LiveParetoPlot:
         self._resume.set()
         self.stop_event.set()
         self._render_status()
-        self.figure.canvas.draw_idle()
+        self._request_draw()
 
     def update(self, snapshot):
         was_warming_up = self._warming_up
@@ -495,7 +510,7 @@ class LiveParetoPlot:
         if redraw_legend:
             self._render_legend()
         self._render_status()
-        self.figure.canvas.draw_idle()
+        self._request_draw()
         if self.finished and self.output is not None:
             self.output.parent.mkdir(parents=True, exist_ok=True)
             # Export through an off-screen canvas. A closed/minimized Tk window
@@ -513,12 +528,15 @@ class LiveParetoPlot:
                 self.figure.set_canvas(window_canvas)
 
     def pump_events(self):
-        if self.show_window and self.plt.fignum_exists(self.figure.number):
+        if not self._closed and self.show_window and self.plt.fignum_exists(self.figure.number):
             self.figure.canvas.flush_events()
+            # flush_events can deliver close_event and destroy the Tk widgets.
+            if self._closed:
+                return
             previous = self._last_status
             self._render_status()
             if previous != self._last_status:
-                self.figure.canvas.draw_idle()
+                self._request_draw()
 
     def run(self, selector, *, parallel=True, max_concurrent=4, on_update=None):
         """Run selection in a worker; render snapshots on Matplotlib's main thread.
@@ -583,6 +601,6 @@ class LiveParetoPlot:
         return outcome["results"]
 
     def wait_for_close(self):
-        if self.show_window and self.plt.fignum_exists(self.figure.number):
+        if not self._closed and self.show_window and self.plt.fignum_exists(self.figure.number):
             self.plt.ioff()
             self.plt.show()

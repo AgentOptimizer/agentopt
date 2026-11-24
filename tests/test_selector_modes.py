@@ -23,7 +23,7 @@ def test_auto_uses_gittins_without_an_extra(mode):
     assert selector.cost_scaling_factor == 1e-4
     assert selector.beta == (0.0 if mode == "single" else 1.0)
     tracker.stop()
-    metadata=tomllib.loads((Path(__file__).parents[1]/"pyproject.toml").read_text())
+    metadata=tomllib.loads((Path(__file__).parents[1]/"pyproject.toml").read_text(encoding="utf-8"))
     assert any(requirement.startswith("scipy") for requirement in metadata["project"]["dependencies"])
 
 

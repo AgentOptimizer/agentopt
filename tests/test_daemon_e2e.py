@@ -491,7 +491,7 @@ class FixedRouter(Router):
 
     def _config_kwargs(self):
         return {"target": self.target}
-"""
+""", encoding="utf-8"
     )
 
     daemon_url = daemon_factory(["--policy-module", str(user_module)])

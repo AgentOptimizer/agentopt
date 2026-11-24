@@ -32,7 +32,6 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Optional
 
-from mitmproxy import ctx
 from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 
@@ -62,15 +61,18 @@ class _StartupHook:
     ``Proxyserver.listen_addrs`` is populated.
     """
 
-    def __init__(self, ready: threading.Event, port_holder: list) -> None:
+    def __init__(self, ready: threading.Event, port_holder: list, master: DumpMaster) -> None:
         self._ready = ready
+        self._master = master
         self._port_holder = port_holder
 
     def running(self) -> None:
         # ``listen_addrs`` is a method that returns ``list[Address]``
         # where Address is ``(host, port)``.  We pass exactly one mode
         # so the list has exactly one entry.
-        addrs = ctx.master.addons.get("proxyserver").listen_addrs()
+        # ctx.master is process-global and may belong to another concurrent
+        # session. Capture the owner explicitly so ports cannot cross sessions.
+        addrs = self._master.addons.get("proxyserver").listen_addrs()
         if addrs:
             self._port_holder.append(addrs[0][1])
         self._ready.set()
@@ -184,7 +186,7 @@ class SessionMaster:
             )
             master = DumpMaster(opts, loop=loop, with_termlog=False, with_dumper=False,)
             master.addons.add(
-                _StartupHook(self._ready, self._port_holder), self._addon,
+                _StartupHook(self._ready, self._port_holder, master), self._addon,
             )
             self._master = master
 

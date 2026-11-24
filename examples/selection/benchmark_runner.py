@@ -388,6 +388,8 @@ def validate_output_paths(args):
     paths = {"dataset": args.dataset, "output": output,
              "partial results": output.with_name(f"{output.stem}.partial{output.suffix or '.json'}")}
     if args.plot_output is not None:
+        if not args.plot_output.suffix:
+            args.plot_output = args.plot_output.with_suffix(".png")
         paths["plot output"] = args.plot_output
     if args.method in ("auto", "gittins") and not args.no_checkpoint:
         checkpoint = args.checkpoint or Path(str(output) + ".checkpoint.sqlite3")

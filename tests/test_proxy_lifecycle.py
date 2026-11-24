@@ -69,7 +69,7 @@ def test_startup_hook_uses_own_master_when_global_context_changes(monkeypatch):
     owner, other = master(12345), master(23456)
     ready, ports = Event(), []
     hook = _StartupHook(ready, ports, owner)
-    monkeypatch.setattr(ctx, "master", other)
+    monkeypatch.setattr(ctx, "master", other, raising=False)
     hook.running()
     assert ready.is_set()
     assert ports == [12345]

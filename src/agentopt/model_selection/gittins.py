@@ -270,6 +270,15 @@ class GittinsModelSelector(BaseModelSelector):
         super().__init__(agent=agent, models=models, eval_fn=eval_fn, dataset=dataset,
                          model_prices=model_prices, tracker=tracker,
                          lambda_cost=lambda_cost, lambda_latency=lambda_latency)
+        if checkpoint_path is not None:
+            self._frozen_checkpoint_settings = deepcopy({key: getattr(self, key)
+                for key in (*self._checkpoint_setting_keys, "lambda_cost", "lambda_latency")})
+
+    def __setattr__(self, name, value):
+        frozen = self.__dict__.get("_frozen_checkpoint_settings", {})
+        if name in frozen and value != frozen[name]:
+            raise CheckpointError(f"Checkpoint setting '{name}' is immutable; create a new selector for changed settings")
+        super().__setattr__(name, value)
 
     def _run_selection(self, parallel=False, max_concurrent=20):
         concurrency = _integer(max_concurrent, "max_concurrent")

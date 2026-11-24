@@ -316,7 +316,11 @@ results = selector.select_best()
 The checkpoint checks dataset contents and order, ordered model specifications,
 seed, prices and algorithm settings. `checkpoint_id` identifies your workflow:
 change it when prompts, tools, evaluator code or provider settings change.
-Dataset entries and model specifications must be JSON-serializable. A mismatch
+Dataset entries and model specifications must contain plain Python JSON values
+or tuples. The checkpoint identity distinguishes tuples from lists, as well as
+key and scalar types. With checkpoints enabled, algorithm settings (including
+cost/latency weights) cannot be changed on the selector after construction.
+Create a new selector and checkpoint path to change them. A mismatch
 fails before evaluation; use a new checkpoint path for a new experiment.
 The command-line example derives its workflow ID from its agent/scorer code
 and provider base URL. It will reject a changed workflow automatically.
@@ -324,7 +328,14 @@ and provider base URL. It will reject a changed workflow automatically.
 Each successful cell is saved immediately, including cells in an unfinished
 batch. An in-flight request whose result was not saved may run again after a
 crash. One checkpoint can be used by only one process at a time; its `.lock`
-sidecar releases automatically on exit. Keep the SQLite file to continue later.
+sidecar releases automatically on exit. Symlinks resolve to the same canonical
+path; hard-linked checkpoint files are rejected. Keep the SQLite file to continue later.
+
+Checkpoint format 2 validates identity and required tables before modifying an
+existing file. Legacy format-1 checkpoints cannot safely recover the original
+Python input types and are rejected without replacement; preserve them for
+inspection and use a new checkpoint path. Missing identity or schema records
+are treated as invalid state, never as a new experiment.
 Finish saves the report and stops this run; it does not discard the checkpoint.
 Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
 disable saving and reuse. Other selection algorithms do not yet support this.

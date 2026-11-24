@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Optional
 from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 
+from ._mitm_context import session_context
 from .cache import ResponseCache
 from .mitm_addon import AgentoptAddon
 from .providers import ProviderRegistry
@@ -171,6 +172,10 @@ class SessionMaster:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
+        with session_context():
+            self._run_isolated()
+
+    def _run_isolated(self) -> None:
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -185,10 +190,10 @@ class SessionMaster:
                 ssl_insecure=False,
             )
             master = DumpMaster(opts, loop=loop, with_termlog=False, with_dumper=False,)
+            self._master = master
             master.addons.add(
                 _StartupHook(self._ready, self._port_holder, master), self._addon,
             )
-            self._master = master
 
             # Drives the loop until shutdown() flips should_exit.
             loop.run_until_complete(master.run())
@@ -199,11 +204,17 @@ class SessionMaster:
             # Startup can fail before Master.run reaches done(). Its process-wide
             # logging handler must never keep scheduling onto a closed loop.
             if self._master is not None:
-                if errorcheck := self._master.addons.get("errorcheck"):
-                    errorcheck.finish()
-                self._master._legacy_log_events.uninstall()
+                errorcheck = self._master.addons.get("errorcheck")
+                cleanups = [self._master._legacy_log_events.uninstall]
+                if errorcheck is not None:
+                    cleanups.append(errorcheck.finish)
                 if self._master._termlog_addon is not None:
-                    self._master._termlog_addon.uninstall()
+                    cleanups.append(self._master._termlog_addon.uninstall)
+                for cleanup in cleanups:
+                    try:
+                        cleanup()
+                    except Exception:
+                        logger.exception("Failed to remove a mitmproxy logging handler")
             try:
                 if self._loop is not None and not self._loop.is_closed():
                     # Master.run() can leave accept/connection tasks pending on

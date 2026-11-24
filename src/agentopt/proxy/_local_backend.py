@@ -59,40 +59,55 @@ class LocalBackend(_Backend):
         self._recorder = Recorder(self._session_manager)
         # session_id -> SessionMaster
         self._masters: Dict[str, SessionMaster] = {}
-        self._masters_lock = threading.Lock()
+        self._masters_lock = threading.RLock()
+        self._lifecycle = threading.Condition(self._masters_lock)
+        self._starting = 0
+        self._stopping = False
 
     # -- lifecycle ----------------------------------------------------
 
     def start(self) -> None:
         """Install httpx + subprocess redirects.  Masters spin up per-track()."""
-        if self._active:
-            return
-        install_redirect()
-        install_subprocess_redirect()
-        self._active = True
+        with self._lifecycle:
+            while self._stopping:
+                self._lifecycle.wait()
+            if self._active:
+                return
+            install_redirect()
+            install_subprocess_redirect()
+            self._active = True
 
     def stop(self) -> None:
-        """Tear down all live SessionMasters, restore httpx + subprocess, flush cache."""
-        if not self._active:
-            return
-        uninstall_subprocess_redirect()
-        uninstall_redirect()
-        # Stop any masters that survived (track() should have closed them,
-        # but in test/error paths they may linger).
-        with self._masters_lock:
+        """Stop accepting sessions and drain all already-started registrations."""
+        with self._lifecycle:
+            while self._stopping:
+                self._lifecycle.wait()
+            if not self._active:
+                return
+            self._stopping = True
+            self._active = False
+            self._lifecycle.notify_all()
+            while self._starting:
+                self._lifecycle.wait()
             masters = list(self._masters.values())
             self._masters.clear()
-        for m in masters:
-            try:
-                m.stop()
-            except Exception:
-                logger.debug("ignored exception in SessionMaster.stop", exc_info=True)
-        self._session_manager.force_end_all()
-        with self._lock:
-            self._records.extend(self._session_manager.get_all_records())
-        if self._response_cache is not None:
-            self._response_cache.close()
-        self._active = False
+        try:
+            for master in masters:
+                try:
+                    master.stop()
+                except Exception:
+                    logger.exception("Failed to stop a session master")
+            self._session_manager.force_end_all()
+            # SessionManager already retains ended records. Copying them to
+            # _records would make every subsequent public query count twice.
+            if self._response_cache is not None:
+                self._response_cache.close()
+        finally:
+            uninstall_subprocess_redirect()
+            uninstall_redirect()
+            with self._lifecycle:
+                self._stopping = False
+                self._lifecycle.notify_all()
 
     # -- session management ------------------------------------------
 
@@ -113,32 +128,44 @@ class LocalBackend(_Backend):
         applies it to every subprocess request; the in-process
         ``LocalHandler`` is constructed by :meth:`track`, not here.
         """
-        assert self._active, "call backend.start() first"
-        session = self._session_manager.create_session(
-            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
-        )
-        master = SessionMaster(
-            session=session,
-            registry=self._registry,
-            recorder=self._recorder,
-            cache=self._response_cache,
-            router=router,
-        )
+        with self._lifecycle:
+            if not self._active:
+                raise RuntimeError("call backend.start() before opening a session")
+            self._starting += 1
+        session = master = None
         try:
+            session = self._session_manager.create_session(
+                data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+            )
+            master = SessionMaster(
+                session=session,
+                registry=self._registry,
+                recorder=self._recorder,
+                cache=self._response_cache,
+                router=router,
+            )
             port = master.start()
-            with self._masters_lock:
+            with self._lifecycle:
+                if not self._active:
+                    raise RuntimeError("tracker stopped while the session was starting")
                 self._masters[session.session_id] = master
         except Exception:
             try:
-                master.stop()
+                if master is not None:
+                    master.stop()
             except Exception:
                 logger.exception(
                     "Failed to stop SessionMaster after startup failure for session %s",
-                    session.session_id,
+                    session.session_id if session is not None else "not-created",
                 )
             finally:
-                self._session_manager.end_session(session.session_id)
+                if session is not None:
+                    self._session_manager.end_session(session.session_id)
             raise
+        finally:
+            with self._lifecycle:
+                self._starting -= 1
+                self._lifecycle.notify_all()
         return session, port
 
     def close_session(self, session_id: str) -> None:

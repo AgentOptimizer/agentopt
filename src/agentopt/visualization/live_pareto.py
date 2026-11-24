@@ -47,6 +47,8 @@ class LiveParetoPlot:
         self.total_questions = total_questions
         self.warm_total = warm_total
         self.output = Path(output) if output else None
+        if self.output is not None and not self.output.suffix:
+            self.output = self.output.with_suffix(".png")
         self.show_window = show_window
         self.stop_event = stop_event if stop_event is not None else Event()
         self._resume = Event()
@@ -363,6 +365,13 @@ class LiveParetoPlot:
         scores = [r.conservative_accuracy for r in self._recommendations]
         ax.plot(costs, scores, color=MINT, linewidth=2, zorder=2)
         ax.scatter(costs, scores, color=BLUE, edgecolor=BG, linewidth=1.5, s=70, zorder=3)
+        ax.set_ylim(min(-.03, min(scores)-.08), max(1.03, max(scores)+.08))
+        ax.margins(x=.14)
+        if self._zoomed:
+            ax.set_xlim(view[0])
+            ax.set_ylim(view[1])
+        from collections import Counter
+        groups = Counter(zip(costs, scores))
         label_offsets = {}
         for number, (cost, score, recommendation) in enumerate(zip(costs, scores, self._recommendations), 1):
             selected = recommendation.model_name == self._selected_combination
@@ -371,8 +380,19 @@ class LiveParetoPlot:
                            s=115, zorder=4)
             overlap = label_offsets.get((cost, score), 0)
             label_offsets[(cost, score)] = overlap + 1
+            # Lay out each tied group in screen space, then keep the entire
+            # grid inside the axes so displayed numbers and hit regions agree.
+            scale = self.figure.dpi / 72
+            columns = min(5, groups[(cost, score)])
+            rows = (groups[(cost, score)] + columns - 1) // columns
+            width, height = columns * 26 * scale, rows * 19 * scale
+            px, py = ax.transData.transform((cost, score))
+            left = max(ax.bbox.x0 + 4, min(px + 8 * scale, ax.bbox.x1 - width - 4))
+            bottom = max(ax.bbox.y0 + 4, min(py + 8 * scale, ax.bbox.y1 - height - 4))
+            offset = ((left - px) / scale + (overlap % columns) * 26,
+                      (bottom - py) / scale + (overlap // columns) * 19)
             label = ax.annotate(str(number), (cost, score),
-                                xytext=(8 + (overlap % 5) * 24, 8 + (overlap // 5) * 16), textcoords="offset points",
+                                xytext=offset, textcoords="offset points", ha="left", va="bottom",
                                 fontsize=FONT_MEDIUM, color=MINT if selected else TEXT,
                                 weight="bold" if selected else "normal", fontfamily=self.font,
                                 annotation_clip=True)

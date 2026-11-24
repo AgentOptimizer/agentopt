@@ -24,7 +24,17 @@ class CheckpointInUseError(RuntimeError):
 
 def fingerprint(payload):
     try:
-        encoded = json.dumps(payload, sort_keys=True, allow_nan=False,
+        def typed(value):
+            if isinstance(value, tuple):
+                return ["tuple", [typed(x) for x in value]]
+            if isinstance(value, list):
+                return ["list", [typed(x) for x in value]]
+            if isinstance(value, dict):
+                return ["dict", sorted([[typed(k), typed(v)] for k, v in value.items()], key=lambda pair: json.dumps(pair[0]))]
+            if type(value) not in (str, int, float, bool, type(None)):
+                raise TypeError("unsupported checkpoint value")
+            return [type(value).__name__, value]
+        encoded = json.dumps(typed(payload), sort_keys=True, allow_nan=False,
                              separators=(",", ":")).encode("utf-8")
     except (TypeError, ValueError) as error:
         raise ValueError("Checkpoint inputs must be JSON-serializable; use plain dataset and model specifications") from error
@@ -33,26 +43,45 @@ def fingerprint(payload):
 
 class EvaluationCheckpoint:
     def __init__(self, path, identity):
-        self.path = Path(path)
+        self.path = Path(path).resolve()
         self.identity = identity
         self.db = self.lock = None
 
     def __enter__(self):
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
+            if self.path.exists() and self.path.stat().st_nlink > 1:
+                raise CheckpointError("Checkpoint hard links are not supported; use a single-link file")
             self.lock = sqlite3.connect(str(self.path) + ".lock", timeout=0, isolation_level=None)
             try:
                 self.lock.execute("BEGIN EXCLUSIVE")
             except sqlite3.OperationalError as error:
                 raise CheckpointInUseError("This checkpoint is already in use by another run") from error
+            existed = self.path.exists()
             self.db = sqlite3.connect(self.path, isolation_level=None)
-            self.db.execute("PRAGMA synchronous = FULL")
-            self.db.execute("CREATE TABLE IF NOT EXISTS metadata (id INTEGER PRIMARY KEY, identity TEXT NOT NULL)")
-            self.db.execute("INSERT OR IGNORE INTO metadata VALUES (1, ?)", (self.identity,))
-            if self.db.execute("SELECT identity FROM metadata WHERE id=1").fetchone()[0] != self.identity:
+            if self.path.stat().st_nlink > 1:
+                raise CheckpointError("Checkpoint hard links are not supported")
+            if not existed:
+                self.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.db.execute("CREATE TABLE metadata (id INTEGER PRIMARY KEY, identity TEXT NOT NULL)")
+                    self.db.execute("INSERT INTO metadata VALUES (1, ?)", (self.identity,))
+                    self.db.execute("CREATE TABLE batches (id INTEGER PRIMARY KEY, arm TEXT NOT NULL, questions TEXT NOT NULL)")
+                    self.db.execute("CREATE TABLE cells (batch INTEGER NOT NULL, question INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (batch, question))")
+                    self.db.execute("PRAGMA user_version = 2")
+                    self.db.execute("COMMIT")
+                except BaseException:
+                    self.db.execute("ROLLBACK")
+                    raise
+            tables = {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"metadata", "batches", "cells"} <= tables or self.db.execute("PRAGMA user_version").fetchone()[0] != 2:
+                raise CheckpointError(f"Invalid or legacy checkpoint schema in '{self.path}'; original retained. Use a new path.")
+            identity = self.db.execute("SELECT identity FROM metadata WHERE id=1").fetchone()
+            if identity is None:
+                raise CheckpointError(f"Missing checkpoint identity in '{self.path}'; original retained")
+            if identity[0] != self.identity:
                 raise CheckpointError("Checkpoint setup differs: check dataset, models, seed, workflow and algorithm settings; use a new checkpoint path for a new run")
-            self.db.execute("CREATE TABLE IF NOT EXISTS batches (id INTEGER PRIMARY KEY, arm TEXT NOT NULL, questions TEXT NOT NULL)")
-            self.db.execute("CREATE TABLE IF NOT EXISTS cells (batch INTEGER NOT NULL, question INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (batch, question))")
+            self.db.execute("PRAGMA synchronous = FULL")
             self.saved_cells = self.db.execute("SELECT COUNT(*) FROM cells").fetchone()[0]
             self.saved_batches = self.db.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
             self.batch_index = 0

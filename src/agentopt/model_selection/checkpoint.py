@@ -115,12 +115,11 @@ class EvaluationCheckpoint:
                 raise CheckpointError(f"Cannot open/read checkpoint '{self.path}'. Check the file and permissions; the checkpoint has not been replaced.") from error
             raise
 
-    def normalize_identity(self):
-        # Upgrade a verified v3 file only after validating the whole journal.
-        if self._needs_normalization:
-            with self._operation("update"):
-                self.db.execute("UPDATE metadata SET identity=? WHERE id=1", (self.identity,))
-            self._needs_normalization = False
+    def _normalize_identity(self):
+        # Called after static validation and deterministic replay of all saved manifests.
+        with self._operation("update"):
+            self.db.execute("UPDATE metadata SET identity=? WHERE id=1", (self.identity,))
+        self._needs_normalization = False
 
     def __exit__(self, *_):
         if self.db is not None:
@@ -190,10 +189,12 @@ class EvaluationCheckpoint:
             self.batch_index += 1
             encoded = json.dumps(questions)
             row = self.db.execute("SELECT arm, questions FROM batches WHERE id=?", (self.batch_index,)).fetchone()
+            if row is not None and row != (arm, encoded):
+                raise CheckpointError(f"Checkpoint evaluation order differs in '{self.path}'; use a new checkpoint path")
+            if self._needs_normalization and self.batch_index >= self.saved_batches:
+                self._normalize_identity()
             if row is None:
                 self.db.execute("INSERT INTO batches VALUES (?, ?, ?)", (self.batch_index, arm, encoded))
-            elif row != (arm, encoded):
-                raise CheckpointError(f"Checkpoint evaluation order differs in '{self.path}'; use a new checkpoint path")
             return {question: json.loads(data) for question, data in self.db.execute(
                 "SELECT question, data FROM cells WHERE batch=?", (self.batch_index,))}
 

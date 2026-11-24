@@ -57,6 +57,7 @@ class LocalBackend(_Backend):
         self._recorder = Recorder(self._session_manager)
         # session_id -> SessionMaster
         self._masters: Dict[str, SessionMaster] = {}
+        self._unpublished: set[str] = set()
         self._masters_lock = threading.RLock()
         self._lifecycle = threading.Condition(self._masters_lock)
         self._starting = 0
@@ -160,13 +161,14 @@ class LocalBackend(_Backend):
             except Exception:
                 with self._masters_lock:
                     self._masters[session.session_id] = master
+                    self._unpublished.add(session.session_id)
                 logger.exception(
                     "Failed to stop SessionMaster after startup failure for session %s",
                     session.session_id if session is not None else "not-created",
                 )
-            finally:
+            else:
                 if session is not None:
-                    self._session_manager.end_session(session.session_id)
+                    self._session_manager.end_session(session.session_id, discard_empty=True)
             raise
         finally:
             with self._lifecycle:
@@ -181,7 +183,8 @@ class LocalBackend(_Backend):
             if master is not None:
                 master.stop()
                 del self._masters[session_id]
-            self._session_manager.end_session(session_id)
+            self._session_manager.end_session(session_id, discard_empty=session_id in self._unpublished)
+            self._unpublished.discard(session_id)
 
     def close(self):
         self.stop()

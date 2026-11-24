@@ -49,6 +49,7 @@ class LiveParetoPlot:
         self.output = Path(output) if output else None
         if self.output is not None and not self.output.suffix:
             self.output = self.output.with_suffix(".png")
+        self._output_format = self.output.suffix[1:].lower() if self.output is not None else None
         self.show_window = show_window
         self.stop_event = stop_event if stop_event is not None else Event()
         self._resume = Event()
@@ -603,7 +604,7 @@ class LiveParetoPlot:
             try:
                 FigureCanvasAgg(self.figure)
                 self.figure.set_size_inches(11.8, 7.2, forward=False)
-                self.figure.savefig(self.output, dpi=160, facecolor=BG)
+                self.figure.savefig(self.output, format=self._output_format, dpi=160, facecolor=BG)
             finally:
                 self.figure.set_size_inches(size, forward=False)
                 self.figure.set_canvas(window_canvas)

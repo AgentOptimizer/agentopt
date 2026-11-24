@@ -60,15 +60,18 @@ class SessionManager:
             self._active[session_id] = session
         return session
 
-    def end_session(self, session_id: str) -> Optional[SessionInfo]:
+    def end_session(self, session_id: str, *, discard_empty: bool = False) -> Optional[SessionInfo]:
         """Remove *session_id* from the active set and archive it.
+
+        An unpublished session whose producer has stopped may be discarded
+        when empty. Published sessions stay archived for late records.
 
         Returns the ended ``SessionInfo`` (with its accumulated records),
         or ``None`` if the session was not found.
         """
         with self._lock:
             session = self._active.pop(session_id, None)
-            if session is not None:
+            if session is not None and (not discard_empty or session.records):
                 self._ended[session_id] = session
         return session
 
@@ -86,8 +89,8 @@ class SessionManager:
         """
         with self._lock:
             session = self._active.get(session_id) or self._ended.get(session_id)
-        if session is not None:
-            session.add_record(record)
+            if session is not None:
+                session.add_record(record)
 
     def get_all_records(self) -> List[CallRecord]:
         """Return every record from every session — active or ended.

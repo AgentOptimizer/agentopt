@@ -310,7 +310,6 @@ class GittinsModelSelector(BaseModelSelector):
             journal.validate(names=[self._combo_name(combo) for combo in self._run_combos],
                              questions=len(self._run_dataset), score_bounds=self.score_bounds,
                              prices=self._custom_prices)
-            journal.normalize_identity()
             self._journal = journal
             self.restored_cells = journal.saved_cells
             try:

@@ -24,6 +24,8 @@
 
 ---
 
+[测试分支 · 用 8 个数据集离线检查运行界面（PowerShell 中文指南）](examples/selection/OFFLINE_REPLAY.md)
+
 ## News
 [2026/04] Version 0.1.0 released.
 

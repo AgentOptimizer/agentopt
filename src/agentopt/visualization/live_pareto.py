@@ -455,12 +455,40 @@ class LiveParetoPlot:
                 ax.text(.5, y, line, ha="center", va="center", color=color,
                         fontsize=FONT_MEDIUM, fontfamily=self.font, transform=ax.transAxes)
             return
+        from matplotlib.text import Text
+
+        text_left = .135
+        role_font_size = 10
+        available_width = (.95 - text_left) * ax.bbox.width
+        measure = Text(fontfamily=self.font, fontsize=role_font_size)
+        measure.set_figure(self.figure)
+
+        def role_lines_for(label):
+            lines = []
+            while label:
+                measure.set_text(label)
+                if measure.get_window_extent().width <= available_width:
+                    lines.append(label)
+                    break
+                low, high = 1, len(label)
+                while low < high:
+                    mid = (low + high + 1) // 2
+                    measure.set_text(label[:mid])
+                    if measure.get_window_extent().width <= available_width:
+                        low = mid
+                    else:
+                        high = mid - 1
+                split = label.rfind(" ", 0, low + 1)
+                end = split if split > 0 else low
+                lines.append(label[:end])
+                label = label[end:].lstrip()
+            return lines
+
         cards = []
         for recommendation in self._recommendations:
             role_lines = []
             for role, model in recommendation.combo.items():
-                role_lines.extend(wrap(f"{role.title()}: {model}", width=39,
-                                       subsequent_indent="    ", break_on_hyphens=False))
+                role_lines.extend(role_lines_for(f"{role.replace('_', ' ').title()}: {model}"))
             cards.append((recommendation, role_lines, .098 + .048 * len(role_lines)))
 
         viewport_top, viewport_bottom = .86, .084
@@ -500,8 +528,8 @@ class LiveParetoPlot:
                 ax.text(.087, rank_y, str(index), ha="center", va="center",
                         color=BLUE, weight="bold", fontsize=12, fontfamily=self.font)
                 for line_index, line in enumerate(role_lines):
-                    ax.text(.135, top-.039-.048*line_index, line, va="top", color=TEXT,
-                            fontsize=10, fontfamily=self.font)
+                    ax.text(text_left, top-.039-.048*line_index, line, va="top", color=TEXT,
+                            fontsize=role_font_size, fontfamily=self.font)
                 ax.text(.135, bottom+.026,
                         f"Quality {recommendation.conservative_accuracy:.3f}  ·  ${recommendation.conservative_cost_usd*1000:.3f} / 1k  ·  {recommendation.observed_samples}/{self.total_questions} tested",
                         color=MINT, fontsize=10, fontfamily=self.font)

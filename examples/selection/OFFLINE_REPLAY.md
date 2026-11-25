@@ -1,10 +1,10 @@
-# 用 8 个数据集离线检查运行界面
+# Test the live UI with offline replay
 
-本指南适用于 `package-internal-test` 分支。回放从已保存的矩阵读取每个格子的分数和费用，全程无需模型 API key。首次下载仓库和安装 Python 依赖需要联网。
+The `package-internal-test` branch can replay eight datasets. Each evaluation reads the recorded score and cost for one workflow configuration on one question. Setup requires an internet connection to download the repositories and install dependencies. The replay runs offline without a model API key.
 
-## 准备环境
+## Set up the test branch
 
-已有 AgentOpt 仓库时，在仓库根目录的 **PowerShell** 中运行：
+If you already have an AgentOpt checkout, open **PowerShell** in the repository root and update the test branch.
 
 ```powershell
 git fetch origin
@@ -12,9 +12,9 @@ git switch package-internal-test
 git pull --ff-only origin package-internal-test
 ```
 
-首次下载可直接运行 `git clone --branch package-internal-test https://github.com/AgentOptimizer/agentopt.git`，然后 `cd agentopt`。
+For a fresh checkout, run `git clone --branch package-internal-test https://github.com/AgentOptimizer/agentopt.git`, then `cd agentopt`.
 
-回放默认从同级目录 `../agentopt-research/data` 读取矩阵。以下命令准备数据和支持绘图的 Python 环境（示例使用 Python 3.12）：
+The replay looks for the matrices in `../agentopt-research/data`. Run the following commands to prepare the data and install AgentOpt with plotting support. The example uses Python 3.12.
 
 ```powershell
 if (!(Test-Path ..\agentopt-research)) {
@@ -27,9 +27,9 @@ if (!(Test-Path .\.venv\Scripts\python.exe)) {
 .\.venv\Scripts\python.exe -m pip install -e ".[plot]"
 ```
 
-## 打开界面和切换数据集
+## Open the UI and switch datasets
 
-在同一个 PowerShell 窗口粘贴整段，先打开 BIRD 的四角色界面。参数 `Limit` 表示累计评测格子数，按批次停止。SCOPE 示例固定抽取 12 个已有配置，QA 示例使用完整的 100 个配置。
+Paste the block below into the same PowerShell window to open BIRD's four-role workflow. The SCOPE demos use a reproducible sample of 12 recorded configurations per dataset. HotpotQA and MathQA use all 100 configurations. The optional `Limit` counts evaluated cells across runs. The replay stops at a batch boundary.
 
 ```powershell
 function Show-Replay([string]$Dataset, [int]$Limit = 0) {
@@ -48,7 +48,7 @@ function Show-Replay([string]$Dataset, [int]$Limit = 0) {
 Show-Replay bird_mini_dev
 ```
 
-关闭图形窗口后，任选一行切换数据集：
+Close the plot window, then run any one of these commands to switch datasets.
 
 ```powershell
 Show-Replay bird_dev
@@ -60,10 +60,10 @@ Show-Replay hotpotqa
 Show-Replay mathqa
 ```
 
-## 检查界面和续跑
+## Check the cards, controls, and checkpoint
 
-1. 在 BIRD 窗口等待推荐出现。点击左图的编号，查看右侧对应卡片的高亮，以及四个角色各自选用的模型。
-2. 点击 **Pause**，等状态变成已暂停，检查进度和费用是否稳定。点击 **Continue** 后，观察下一批评测是否更新。
-3. 点击 **Finish**，记下已评测格子数。终端显示 `Saved results to` 后关窗。运行 `Show-Replay bird_mini_dev 200`，从相同断点续跑到累计约 200 格。结束时，终端的 `restored` 和 `newly evaluated` 分别给出复用和新增的格子数。
+1. In the BIRD window, wait for recommendations to appear. Click a numbered point on the chart. Check that the matching card is highlighted and shows the model selected for each of the four roles.
+2. Click **Pause**. Once the status shows **Paused**, check that the evaluated cell count and evaluation spend stay steady. Click **Continue** and watch both update as the next batch completes.
+3. Click **Finish** and note the final evaluated cell count. Once the terminal prints `Saved results to`, close the window. Run `Show-Replay bird_mini_dev 200` to resume from the checkpoint and stop at about 200 total cells. At the end, check that `restored` matches the count you noted and `newly evaluated` counts only the additional cells.
 
-每个数据集的 JSON、图表和 SQLite 断点均保存在 `$env:LOCALAPPDATA\AgentOpt\ui-check\<数据集>`。新开 PowerShell 时重新定义上面的函数即可使用已有断点。
+Each dataset's result JSON, chart, and SQLite checkpoint are saved under `$env:LOCALAPPDATA\AgentOpt\ui-check\<dataset>`. In a new PowerShell session, define `Show-Replay` again from the repository root to reuse the checkpoint.

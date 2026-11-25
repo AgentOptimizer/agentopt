@@ -18,7 +18,7 @@ from uuid import uuid4
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..model_price import MODEL_PRICES, get_model_price
+from ..model_price import MODEL_PRICES, compute_price, get_model_price
 from .axis_gittins_dp import AxisGittinsBoundaryCache
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 from .checkpoint import CheckpointError, EvaluationCheckpoint, fingerprint
@@ -338,14 +338,31 @@ class GittinsModelSelector(BaseModelSelector):
         # Charged calls only, accumulated before tracker archival.
         return float(self._spent)
 
-    def _record_charge(self, record):
-        rates = get_model_price(record.model, custom_prices=self._custom_prices)
+    def _token_charge(self, model, input_tokens, output_tokens):
+        rates = get_model_price(model, custom_prices=self._custom_prices)
         if rates is None or any(not math.isfinite(rate) or rate < 0 for rate in rates):
-            raise ValueError(f"Cannot account for Gittins search cost for {record.model!r}; supply model_prices")
+            raise ValueError(f"Cannot account for Gittins search cost for {model!r}; supply model_prices")
         # Rates and budget limits are decimal USD. Preserve that value through
         # aggregation and batch prediction; SDK results and v3 cells use floats.
         input_rate, output_rate = (Fraction(str(rate)) for rate in rates)
-        return (input_rate * record.prompt_tokens + output_rate * record.completion_tokens) / 1_000_000
+        return (input_rate * input_tokens + output_rate * output_tokens) / 1_000_000
+
+    def _record_charge(self, record):
+        return self._token_charge(record.model, record.prompt_tokens, record.completion_tokens)
+
+    def _restored_cell(self, item):
+        dp = DatapointResult.model_validate(item["datapoint"])
+        cost, charge = item["cost"], item["charge"]
+        if charge and charge == cost:
+            # Old v3 writers used binary floats to multiply token counts by
+            # rates. Reprice fully charged cells only on an exact match to the
+            # old calculation. Discounts and mixed-cache charges stay recorded.
+            legacy = compute_price(dp.input_tokens, dp.output_tokens, custom_prices=self._custom_prices)
+            if charge == legacy:
+                charge = float(sum(self._token_charge(model, dp.input_tokens.get(model, 0),
+                                                      dp.output_tokens.get(model, 0))
+                                   for model in dp.input_tokens.keys() | dp.output_tokens.keys()))
+        return dp, cost, charge
 
     def _update_spend(self):
         records = self._tracker.get_records()
@@ -368,8 +385,7 @@ class GittinsModelSelector(BaseModelSelector):
 
         async def evaluate(question):
             if question in saved:
-                item = saved[question]
-                return DatapointResult.model_validate(item["datapoint"]), item["cost"], item["charge"]
+                return self._restored_cell(saved[question])
             tasks = [deepcopy(self._run_dataset[question]) if self._journal else self._run_dataset[question]]
             if parallel or self._is_async_run:
                 outcome = await self._evaluate_agent_async(agent, tasks, label, max_concurrent=1, dp_offset=question)
@@ -430,13 +446,12 @@ class GittinsModelSelector(BaseModelSelector):
         for question in question_ids:
             if question not in saved:
                 continue
-            item = saved[question]
-            dp = DatapointResult.model_validate(item["datapoint"])
+            dp, cost, charge = self._restored_cell(saved[question])
             self._datapoints[arm].append(dp)
             self._scores[arm].append(dp.score)
-            self._costs[arm].append(item["cost"])
+            self._costs[arm].append(cost)
             self._latencies[arm].append(dp.latency_seconds)
-            self._spent += Fraction(str(item["charge"]))
+            self._spent += Fraction(str(charge))
         self._evaluations += count
         self._positions[arm] += count
         if count and self._calibrated:

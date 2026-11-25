@@ -71,14 +71,32 @@ class _StartupLogCapture:
                 # Root-handler reconfiguration cannot interrupt this observation.
                 original = logging.Logger.callHandlers
 
-                def dispatch(logger, record):
+                original_handle = logging.Handler.handle
+
+                def observe(record):
                     target = getattr(self.local, "collector", None)
                     if target is not None and record.levelno >= logging.ERROR:
-                        target.handle(record)
+                        if not any(previous is record for previous in target.has_errored):
+                            target.handle(record)
+
+                def dispatch(logger, record):
+                    observe(record)
                     return original(logger, record)
+
+                def handle(handler, record):
+                    accepted = original_handle(handler, record)
+                    # A logger can retain the original callHandlers method. In
+                    # that case observe the record actually delivered by its
+                    # handler, including a replacement returned by a filter.
+                    if accepted and handler is not getattr(self.local, "collector", None):
+                        observe(accepted if isinstance(accepted, logging.LogRecord) else record)
+                    return accepted
 
                 self.original = original
                 self.dispatch = dispatch
+                self.original_handle = original_handle
+                self.handle = handle
+                logging.Handler.handle = handle
                 logging.Logger.callHandlers = dispatch
             self.local.collector = collector
             self.users += 1
@@ -92,7 +110,9 @@ class _StartupLogCapture:
             if not self.users:
                 if logging.Logger.callHandlers is self.dispatch:
                     logging.Logger.callHandlers = self.original
-                del self.original, self.dispatch
+                if logging.Handler.handle is self.handle:
+                    logging.Handler.handle = self.original_handle
+                del self.original, self.dispatch, self.original_handle, self.handle
 
 
 _startup_capture = _StartupLogCapture()

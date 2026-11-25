@@ -260,3 +260,75 @@ def test_exact_decimal_batch_budget_and_reopen(tmp_path, limit, expected):
     restored = resumed.select_best()
     assert restored.selection_cost == result.selection_cost
     assert restored.total_evaluations == expected and not tracker.records
+
+
+def test_legacy_float_charges_resume_at_exact_token_budget(tmp_path, monkeypatch):
+    import json
+
+    factory = test_gittins.ModelSelector
+
+    def with_legacy_prices(**kwargs):
+        for rates in kwargs["model_prices"].values():
+            rates["input_price"] = 0.01
+        return factory(**kwargs)
+
+    monkeypatch.setattr(test_gittins, "ModelSelector", with_legacy_prices)
+    tokens = dict(cheap=1, middle=3, expensive=10, dominated=4)
+    path = tmp_path / "legacy.db"
+    options = dict(count=8, checkpoint_path=path, checkpoint_id="decimal-v3",
+                   tokens=tokens, outcomes=dict.fromkeys(tokens, .5),
+                   max_search_cost_usd=3.8e-7)
+    fresh, _ = test_gittins.make_selector(**options)
+    reference = fresh.select_best()
+    assert reference.total_evaluations == 10
+    with sqlite3.connect(path) as db:
+        rows = db.execute("SELECT rowid, data FROM cells").fetchall()
+        for rowid, data in rows:
+            cell = json.loads(data)
+            # One uncached call per cell. The pre-1cc writer evaluated both
+            # charge and deployment cost with the same binary float operations.
+            cell["charge"] = cell["cost"]
+            db.execute("UPDATE cells SET data=? WHERE rowid=?", (json.dumps(cell), rowid))
+    before = path.read_bytes()
+    reopened, tracker = test_gittins.make_selector(**options)
+    result = reopened.select_best()
+    assert not tracker.records and result.total_evaluations == 10
+    assert result.selection_cost == reference.selection_cost == 3.8e-7
+    assert result.recommendations == reference.recommendations
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("level", [logging.INFO, logging.ERROR])
+def test_prebound_dispatch_of_non_propagating_logger(monkeypatch, level):
+    class AddonLogger(logging.Logger):
+        callHandlers = logging.Logger.callHandlers
+
+    seen = []
+
+    class Sink(logging.Handler):
+        def emit(self, record):
+            seen.append(record.levelno)
+
+    addon = AddonLogger("host.addon")
+    addon.propagate = False
+    addon.addHandler(Sink())
+    original_handle = logging.Handler.handle
+    running = mitm_runner.DumpMaster.running
+
+    async def startup(master):
+        await running(master)
+        addon.log(level, "addon startup")
+
+    monkeypatch.setattr(mitm_runner.DumpMaster, "running", startup)
+    tracker = LLMTracker(cache=False, cache_dir=None)
+    tracker.start()
+    try:
+        if level == logging.ERROR:
+            with pytest.raises(RuntimeError, match="failed to start"):
+                tracker._backend.open_session()
+        else:
+            _, port = tracker._backend.open_session()
+            assert port > 0
+    finally:
+        tracker.stop()
+    assert seen == [level] and logging.Handler.handle is original_handle

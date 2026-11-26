@@ -69,6 +69,9 @@ def failure_message(error, *, scoring=False):
         error = error.__cause__ or error.__context__
     for cause in chain:
         from agentopt.model_selection.checkpoint import CheckpointError, CheckpointInUseError
+        from agentopt.proxy.usage import UsageExtractionError
+        if isinstance(cause, UsageExtractionError):
+            return "Token usage is unavailable. Check provider usage reporting before resuming the benchmark."
         if isinstance(cause, (CheckpointError, CheckpointInUseError)):
             return str(cause)
         status = getattr(cause, "status_code", None)
@@ -182,7 +185,7 @@ def report_failure(message, *, output, snapshot=None):
 def load_dataset(path):
     """Load nonempty string input/expected pairs, identifying invalid line numbers."""
     dataset = []
-    with Path(path).open(encoding="utf-8") as source:
+    with Path(path).open(encoding="utf-8-sig") as source:
         for line_number, line in enumerate(source, 1):
             if not line.strip():
                 continue
@@ -304,22 +307,21 @@ def show_progress(snapshot, *, total_questions):
         else:
             print("No recommendation available yet.", flush=True)
     else:
-        best = snapshot.get_best_combo()
+        best = snapshot.get_best()
         if best is None:
             print("No recommendation available yet.", flush=True)
         elif hasattr(snapshot, "get_recommendations"):
-            candidate = next(r for r in snapshot.get_recommendations() if r.combo == best)
+            candidate = next(r for r in snapshot.get_recommendations() if r.model_name == best.model_name)
             print("Current recommendation (conservative score and USD/question):", flush=True)
-            print(f"  {best} | score={candidate.conservative_accuracy:.4f} | "
+            print(f"  {candidate.combo} | score={candidate.conservative_accuracy:.4f} | "
                   f"cost=${candidate.conservative_cost_usd:.6f} | "
                   f"evaluated={candidate.observed_samples}/{total_questions}", flush=True)
         else:
-            candidate = snapshot.get_best()
-            price = candidate.price
+            price = best.price
             cost_text = "unavailable" if price is None else f"${price:.6f}"
             print("Current recommendation (observed score and USD/question):", flush=True)
-            print(f"  {best} | score={candidate.accuracy:.4f} | cost={cost_text} | "
-                  f"evaluated={len(candidate.datapoint_results)}/{total_questions}", flush=True)
+            print(f"  {snapshot.get_best_combo()} | score={best.accuracy:.4f} | cost={cost_text} | "
+                  f"evaluated={len(best.datapoint_results)}/{total_questions}", flush=True)
     if snapshot.stop_recommended and not snapshot.is_final:
         print("Stopping advice: Gittins suggests that further evaluation may not be worth its cost.", flush=True)
         print("The search can continue unless automatic stopping is enabled or a stop is requested.", flush=True)

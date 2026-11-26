@@ -42,6 +42,7 @@ class ModelResult(BaseModel):
     """Result of evaluating a single model combination."""
 
     model_name: str
+    combo: Optional[Dict[str, str]] = None
     accuracy: float
     latency_seconds: float
     input_tokens: Dict[str, int] = Field(default_factory=dict)
@@ -130,16 +131,22 @@ class SelectionResults(BaseModel):
     def get_best_combo(self) -> Optional[Dict[str, str]]:
         """Get the best model combination as a dict of node_name -> model_name.
 
-        Parses the combo_name format ``"node1=model1 + node2=model2"``.
+        Older saved results may contain only a display label.
         """
         best = self.get_best()
         if best is None:
             return None
+        if best.combo is not None:
+            return dict(best.combo)
         combo = {}
+        previous_node = None
         for part in best.model_name.split(" + "):
             if "=" in part:
                 node, model = part.split("=", 1)
                 combo[node] = model
+                previous_node = node
+            elif previous_node is not None:
+                combo[previous_node] += " + " + part
             else:
                 combo[part] = part
         return combo
@@ -222,7 +229,7 @@ class SelectionResults(BaseModel):
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for result in self.results:
-                row = result.model_dump()
+                row = result.model_dump(include=set(fieldnames))
                 row["input_tokens"] = json.dumps(row["input_tokens"])
                 row["output_tokens"] = json.dumps(row["output_tokens"])
                 p = result.price
@@ -1161,9 +1168,10 @@ class BaseModelSelector(ABC):
     # Result helpers
     # ------------------------------------------------------------------
 
-    def _make_result(self, **kwargs: Any) -> ModelResult:
+    def _make_result(self, *, combo: Optional[Dict[str, ModelCandidate]] = None, **kwargs: Any) -> ModelResult:
         """Create a :class:`ModelResult` with instance-level custom prices."""
-        result = ModelResult(**kwargs)
+        labels = None if combo is None else {node: self._candidate_label(model) for node, model in combo.items()}
+        result = ModelResult(combo=labels, **kwargs)
         result._custom_prices = self._custom_prices
         return result
 
@@ -1176,6 +1184,7 @@ class BaseModelSelector(ABC):
         costs: Optional[List[Optional[float]]] = None,
         attribute: str = "combination",
         is_best: bool = False,
+        combo: Optional[Dict[str, ModelCandidate]] = None,
     ) -> ModelResult:
         """Build a :class:`ModelResult` and absorb the samples into the normalizer.
 
@@ -1199,6 +1208,7 @@ class BaseModelSelector(ABC):
             self._absorb_observations(latencies, costs)
         combined = self._mean_objective(scores, latencies, costs)
         return self._make_result(
+            combo=combo,
             model_name=combo_name,
             accuracy=accuracy,
             latency_seconds=avg_latency,
@@ -1357,6 +1367,8 @@ class BaseModelSelector(ABC):
         for record in self._tracker.get_records()[self._selection_record_offset:]:
             if record.cached:
                 continue
+            if getattr(record, "usage_unavailable", False):
+                return None
             input_tokens[record.model] = input_tokens.get(record.model, 0) + record.prompt_tokens
             output_tokens[record.model] = output_tokens.get(record.model, 0) + record.completion_tokens
         return compute_price(input_tokens, output_tokens, custom_prices=self._custom_prices)

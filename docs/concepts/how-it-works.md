@@ -72,7 +72,7 @@ AgentOpt caches at the HTTP level:
 
 | Property | Detail |
 |:---------|:-------|
-| **Cache key** | SHA-256 of request body (model + messages + params), excluding `stream` |
+| **Cache key** | SHA-256 of the full URL, routed request body (including response format), and selected provider and content-negotiation headers |
 | **In-memory** | Thread-safe dict, always active |
 | **On disk** | Optional SQLite database, flushed by background thread |
 

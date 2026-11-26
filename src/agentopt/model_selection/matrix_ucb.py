@@ -126,7 +126,7 @@ def _build_selection_results(
         if scores:
             all_results.append(
                 selector._build_combo_result(
-                    combo_name, scores, latencies, dp_ids, costs=costs,
+                    combo_name, scores, latencies, dp_ids, costs=costs, combo=combo,
                 )
             )
 

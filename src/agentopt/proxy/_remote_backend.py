@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from agentopt.routing.base import Router
 
 from ._backend import _Backend
+from .usage import UsageExtractionError
 from .interceptor import (
     ActiveSession,
     CallHandler,
@@ -492,6 +493,8 @@ class RemoteBackend(_Backend):
             f"{self._gateway_url}/usage",
             params=self._query_params(data_id, combo_id, agent_id),
         )
+        if resp.status_code == 422:
+            raise UsageExtractionError(resp.json()["error"])
         resp.raise_for_status()
         return {k: (int(v[0]), int(v[1])) for k, v in resp.json().items()}
 

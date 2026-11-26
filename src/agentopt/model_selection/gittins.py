@@ -79,6 +79,16 @@ class GittinsSelectionResults(SelectionResults):
     def get_recommendations(self) -> list[GittinsRecommendation]:
         return list(self.recommendations)
 
+    def get_best_combo(self) -> dict[str, str] | None:
+        # Archived Gittins and random runs already carry the structured
+        # mapping on their recommendation, even with an ambiguous label.
+        best = self.get_best()
+        if best is not None:
+            for candidate in self.recommendations:
+                if candidate.model_name == best.model_name:
+                    return dict(candidate.combo)
+        return super().get_best_combo()
+
     def choose(self, *, max_cost_usd=None, min_score=None, cost_weight=None):
         """Choose a deployment candidate using conservative score/cost.
 

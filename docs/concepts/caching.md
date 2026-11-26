@@ -15,13 +15,16 @@ graph LR
 
 | Property | Detail |
 |:---------|:-------|
-| **Cache key** | SHA-256 of the request path and body (model + messages + params), excluding `stream` |
+| **Cache key** | SHA-256 of the full URL, routed request body (including response format), and selected provider and content-negotiation headers |
 | **In-memory** | Thread-safe dict — always active when caching is on |
 | **On disk** | Optional SQLite database (`cache.db`), flushed every 10 seconds by a background thread |
 
 Cached responses retain their original token usage and latency measurement.
 Selection results use these to estimate deployment cost and latency, while
 `selection_cost` excludes cache hits because they incur no new provider charge.
+After upgrading from path-only cache keys, the first request for each entry
+contacts the provider again and may incur a charge. Successful calls with
+unmeasurable token usage are recorded and omitted from the response cache.
 
 ## Why It Matters
 

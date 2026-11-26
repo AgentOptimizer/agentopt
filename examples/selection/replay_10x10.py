@@ -23,6 +23,7 @@ from threading import Event
 from types import SimpleNamespace
 
 from agentopt.model_selection.gittins import GittinsModelSelector
+from agentopt.model_selection.checkpoint import checkpoint_paths, require_distinct_paths
 from agentopt.visualization.live_pareto import LiveParetoPlot
 from benchmark_runner import save_json, show_progress
 
@@ -37,9 +38,9 @@ LEDGER_PRICE_PER_MILLION = 10**-6
 
 
 def read_matrix(path: Path):
-    with path.open(newline="", encoding="utf-8") as handle:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.reader(handle))
-    if not rows or rows[0][0] != "model_name":
+    if not rows or not rows[0] or rows[0][0] != "model_name":
         raise ValueError(f"Expected model_name header: {path}")
     questions = rows[0][1:]
     if questions != [f"question_{i}" for i in range(len(questions))]:
@@ -66,7 +67,7 @@ def load_benchmark(data_root: Path, benchmark: str, max_configs=None):
         raise ValueError("Scores must be in [0, 1]; costs must be nonnegative")
 
     if benchmark in SCOPE:
-        records = json.loads((directory / "configs.json").read_text(encoding="utf-8"))
+        records = json.loads((directory / "configs.json").read_text(encoding="utf-8-sig"))
         assignments = {row["model_name"]: row["config"] for row in records}
         if len(assignments) != len(records) or assignments.keys() != scores.keys() or not scores or not score_questions:
             raise ValueError("SCOPE configuration IDs must match the matrix rows")
@@ -110,6 +111,7 @@ class MatrixTracker:
 
     def __init__(self):
         self.records = []
+        self._by_data_id = {}
         self.active = contextvars.ContextVar("matrix_replay_evaluation")
 
     def start(self):
@@ -128,23 +130,27 @@ class MatrixTracker:
 
     def record_cell(self, cost_usd):
         data_id, combo_id = self.active.get()
-        self.records.append(SimpleNamespace(
+        record = SimpleNamespace(
             model=LEDGER_MODEL,
             prompt_tokens=round(cost_usd * LEDGER_UNITS_PER_USD),
             completion_tokens=0,
             data_id=data_id,
             combo_id=combo_id,
             cached=False,
-        ))
+        )
+        self.records.append(record)
+        self._by_data_id.setdefault(data_id, []).append(record)
 
     def get_records(self):
         return list(self.records)
 
     def get_usage(self, data_id=None, combo_id=None):
-        units = sum(record.prompt_tokens for record in self.records
-                    if (data_id is None or record.data_id == data_id)
-                    and (combo_id is None or record.combo_id == combo_id))
-        return {LEDGER_MODEL: (units, 0)} if units else {}
+        records = self.records if data_id is None else self._by_data_id.get(data_id, [])
+        if combo_id is not None:
+            records = [record for record in records if record.combo_id == combo_id]
+        if not records:
+            return {}
+        return {LEDGER_MODEL: (sum(record.prompt_tokens for record in records), 0)}
 
     def get_cached_latency(self, data_id):
         return 0.0
@@ -212,12 +218,21 @@ def main():
     output = args.output or Path(f"{stem}-replay.json")
     checkpoint = args.checkpoint or output.with_suffix(output.suffix + ".checkpoint.sqlite3")
     plot_output = args.plot_output or Path(f"{args.benchmark}-pareto.png")
-    if checkpoint.resolve() in {output.resolve(), plot_output.resolve()}:
-        parser.error("--checkpoint must differ from result and image paths")
     fingerprint = hashlib.sha256()
     files = ["accuracy_matrix.csv", "cost_matrix_usd.csv"]
     if assignments is not None:
         files.append("configs.json")
+    paths = {name: directory / name for name in files}
+    paths.update(checkpoint_paths(checkpoint))
+    paths["result"] = output
+    if args.plot_output is not None or args.live_plot:
+        if not plot_output.suffix:
+            plot_output = plot_output.with_suffix(".png")
+        paths["plot"] = plot_output
+    try:
+        require_distinct_paths(paths)
+    except ValueError as error:
+        parser.error(str(error))
     for name in files:
         fingerprint.update(hashlib.sha256((directory / name).read_bytes()).digest())
     identity = json.dumps({"version": 1, "benchmark": args.benchmark, "matrix": fingerprint.hexdigest(),

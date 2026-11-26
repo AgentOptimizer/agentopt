@@ -701,8 +701,8 @@ class LiveParetoPlot:
                 except Empty:
                     self.pump_events()
                     continue
-                if on_update is not None:
-                    on_update(snapshot)
+                if on_update is not None and on_update(snapshot) is False and not snapshot.is_final:
+                    self.finish_search(None)
                 self.update(snapshot)
                 self.pump_events()
                 rendered.set()

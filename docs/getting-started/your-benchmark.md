@@ -323,8 +323,13 @@ Dataset entries and model specifications must contain plain Python JSON values
 or tuples. The checkpoint identity distinguishes tuples from lists, as well as
 key and scalar types. With checkpoints enabled, algorithm settings (including
 cost/latency weights) cannot be changed on the selector after construction.
-Create a new selector and checkpoint path to change them. A mismatch
-fails before evaluation; use a new checkpoint path for a new experiment.
+To extend a run, create a new selector with the same checkpoint path and
+raise the total spending limit (`max_search_cost_usd`), the effective cell
+limit (`max_total_question_evaluations` or `observation_budget_fraction`), or
+both. For example, raising the cell limit from 400 to 500 allows up to 100
+additional cells after 400 have been saved. Previous charges count toward
+the new spending limit. Keep the other settings and limits the same. Lowering
+either limit or changing the experiment requires a new checkpoint path.
 The command-line example derives its workflow ID from its agent/scorer code
 and provider base URL. It will reject a changed workflow automatically.
 
@@ -334,15 +339,8 @@ crash. One checkpoint can be used by only one process at a time; its `.lock`
 sidecar releases automatically on exit. Symlinks resolve to the same canonical
 path; hard-linked checkpoint files are rejected. Keep the SQLite file to continue later.
 
-Checkpoint format 3 validates identity and required tables before modifying an
-existing file. Format-1 and format-2 checkpoints cannot safely recover the original
-Python input types and dictionary insertion order and are rejected without replacement; preserve them for
-inspection and use a new checkpoint path. Missing identity or schema records
-are treated as invalid state, never as a new experiment.
-Custom model prices are matched by model and rate name. When reopening a v3
-checkpoint written before price-order normalization, use its original pricing
-configuration once. A successful validation updates the stored identity so
-later runs can reorder the same price entries.
+Format 4 records both total limits. For an older checkpoint, start a new run
+with a fresh checkpoint path.
 Finish saves the report and stops this run; it does not discard the checkpoint.
 Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
 disable saving and reuse. Other selection algorithms do not yet support this.

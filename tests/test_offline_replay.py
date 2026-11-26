@@ -44,6 +44,27 @@ def run_replay(replay, monkeypatch, tmp_path, *args):
     replay.main()
 
 
+@pytest.mark.parametrize("option,initial,extended", [
+    ("--max-total-question-evaluations", "16", "24"),
+    ("--max-search-cost-usd", "0.128", "0.192"),
+])
+def test_budget_extension_matches_uninterrupted_replay(replay, workflow, tmp_path, monkeypatch, capsys,
+                                                       option, initial, extended):
+    def result(*options):
+        run_replay(replay, monkeypatch, tmp_path, *options)
+        return json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+
+    partial = result(option, initial)
+    assert partial["total_evaluations"] == 16
+    capsys.readouterr()
+    resumed = result(option, extended)
+    assert "16 restored, 8 newly evaluated" in capsys.readouterr().out
+    baseline = result("--checkpoint", tmp_path / "independent.db")
+    assert resumed["total_evaluations"] == baseline["total_evaluations"] == 24
+    assert resumed["selection_cost"] == baseline["selection_cost"] == pytest.approx(.192)
+    assert resumed["recommendations"] == baseline["recommendations"]
+
+
 def test_frontier_survives_stop_and_resume(replay, workflow, tmp_path, monkeypatch, capsys):
     run_replay(replay, monkeypatch, tmp_path, "--stop-after", "16")
     partial = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))

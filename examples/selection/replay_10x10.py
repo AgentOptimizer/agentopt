@@ -183,6 +183,10 @@ def main():
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--stop-after", type=int, default=None,
                         help="optional automatic stop after this many completed cells")
+    parser.add_argument("--max-total-question-evaluations", type=int,
+                        help="total cell limit, including restored cells")
+    parser.add_argument("--max-search-cost-usd", type=float,
+                        help="soft total spending limit in replay USD, including restored spend")
     parser.add_argument("--delay-seconds", type=float, default=0.1,
                         help="simulated API time per cell (default: 0.1 second)")
     parser.add_argument("--max-concurrent", type=int, default=4,
@@ -261,6 +265,8 @@ def main():
         eval_fn=lambda expected, actual: actual,
         objective_mode="multi",
         warm_start_batch_size=4,
+        max_total_question_evaluations=args.max_total_question_evaluations,
+        max_search_cost_usd=args.max_search_cost_usd,
         batch_size=4,
         grid_size=args.grid_size,
         tracker=tracker,

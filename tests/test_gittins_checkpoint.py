@@ -77,13 +77,65 @@ def test_completed_checkpoint_does_not_construct_agent(tmp_path):
     assert tracker.records == []
 
 
+def test_budget_increases_are_cumulative_and_monotone(tmp_path):
+    path = tmp_path / "extend.db"
+    calls = []
+
+    def outcome(model, score):
+        def run(question):
+            calls.append((model, question))
+            return score
+        return run
+
+    outcomes = {m: outcome(m, s) for m, s in
+                {"cheap": .6, "middle": .8, "expensive": .9, "dominated": .5}.items()}
+
+    def make(**limits):
+        return make_selector(checkpoint_path=path, checkpoint_id="same-workflow", outcomes=outcomes, **limits)
+
+    first, _ = make(max_search_cost_usd=.001, observation_budget_fraction=.5)
+    partial = first.select_best()
+    assert partial.stop_reason == "warm_start_budget"
+    bigger, tracker = make(max_search_cost_usd=.5, observation_budget_fraction=.75)
+    result = bigger.select_best()
+    assert result.total_evaluations == 24
+    assert len(calls) == len(set(calls)) == 24
+    assert len(tracker.records) == 24 - partial.total_evaluations
+    resumed_cells = cells(result)
+    assert all(resumed_cells[key] == dp for key, dp in cells(partial).items())
+    original_bytes = path.read_bytes()
+    for change in (dict(max_total_question_evaluations=22), dict(max_search_cost_usd=.49),
+                   dict(seed=43), dict(checkpoint_id="changed")):
+        options = dict(checkpoint_path=path, checkpoint_id="same-workflow", max_search_cost_usd=.5)
+        rejected, tracker = make_selector(**(options | change))
+        with pytest.raises(ValueError, match="only increase|Checkpoint setup differs"):
+            rejected.select_best()
+        assert not tracker.records and path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_old_checkpoint_requires_fresh_path(tmp_path, version):
+    path = tmp_path / "old.db"
+    selector, tracker = make_selector(checkpoint_path=path, checkpoint_id="same")
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE metadata (id INTEGER PRIMARY KEY, identity TEXT NOT NULL)")
+        db.execute("INSERT INTO metadata VALUES (1, ?)", (selector._identity_for_limits(selector.cell_cap, None),))
+        db.execute("CREATE TABLE batches (id INTEGER PRIMARY KEY, arm TEXT NOT NULL, questions TEXT NOT NULL)")
+        db.execute("CREATE TABLE cells (batch INTEGER NOT NULL, question INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (batch, question))")
+        db.execute(f"PRAGMA user_version={version}")
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="Use a new path"):
+        selector.select_best()
+    assert not tracker.records and path.read_bytes() == before
+
+
 def test_concurrent_run_is_rejected_and_lock_released(tmp_path):
     path = tmp_path / "lock.sqlite3"
-    with EvaluationCheckpoint(path, "identity"):
+    with EvaluationCheckpoint(path, lambda *_: "identity", limits=(1, None)):
         with pytest.raises(RuntimeError, match="already in use"):
-            with EvaluationCheckpoint(path, "identity"):
+            with EvaluationCheckpoint(path, lambda *_: "identity", limits=(1, None)):
                 pytest.fail("Must not acquire a second lock")
-    with EvaluationCheckpoint(path, "identity") as journal:
+    with EvaluationCheckpoint(path, lambda *_: "identity", limits=(1, None)) as journal:
         assert journal.saved_cells == 0
 
 

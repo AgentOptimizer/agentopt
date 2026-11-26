@@ -18,7 +18,7 @@ from uuid import uuid4
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..model_price import MODEL_PRICES, compute_price, get_model_price
+from ..model_price import MODEL_PRICES, get_model_price
 from .axis_gittins_dp import AxisGittinsBoundaryCache
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 from .checkpoint import CheckpointError, EvaluationCheckpoint, fingerprint
@@ -173,7 +173,9 @@ class GittinsModelSelector(BaseModelSelector):
     Set ``checkpoint_path`` and a stable ``checkpoint_id`` (workflow/evaluator
     version) to persist each successful cell and automatically resume on restart.
     Dataset, ordered model specifications, seed, prices and algorithm settings
-    must match. Change checkpoint_id when prompts, tools or evaluator behavior
+    must match, except that the total cell and spending limits may increase.
+    Saved evaluations and spending count toward both new limits.
+    Change checkpoint_id when prompts, tools or evaluator behavior
     change. Inputs must be JSON-serializable. Finish stops the current run but
     keeps the checkpoint; use a different path for a fresh run. An interrupted
     request not yet saved may run again. Other algorithms do not support this.
@@ -265,7 +267,6 @@ class GittinsModelSelector(BaseModelSelector):
         self._journal = None
         self.restored_cells = 0
         self.checkpoint_path = checkpoint_path
-        self._checkpoint_identity = None
         if checkpoint_path is not None:
             # Own the input graph so edits to caller-owned containers cannot
             # change what a checkpoint identity represents.
@@ -275,17 +276,21 @@ class GittinsModelSelector(BaseModelSelector):
             if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
                 raise ValueError("checkpoint_id is required: give a stable workflow/evaluator version")
             settings = {key: value for key, value in vars(self).items()
-                        if key not in {"_journal", "restored_cells", "checkpoint_path", "_checkpoint_identity"}}
+                        if key not in {"_journal", "restored_cells", "checkpoint_path"}}
             identity_inputs = {
                 "format": 1, "algorithm": "gittins-v1", "workflow": checkpoint_id,
                 "dataset": [dataset[i] for i in range(len(dataset))],
                 "models": list(models.items()), "settings": settings,
                 "lambda_cost": float(lambda_cost), "lambda_latency": float(lambda_latency),
-                "prices": model_prices, "price_table": MODEL_PRICES,
+                "prices": _ordered_prices(model_prices), "price_table": MODEL_PRICES,
             }
-            self._legacy_price_identity = fingerprint(identity_inputs)
-            identity_inputs["prices"] = _ordered_prices(model_prices)
-            self._checkpoint_identity = fingerprint(identity_inputs)
+
+            def identity_for_limits(cell_cap, max_spend):
+                return fingerprint({**identity_inputs, "settings": {
+                    **settings, "cell_cap": cell_cap, "max_spend": max_spend,
+                }})
+
+            self._identity_for_limits = identity_for_limits
             self._checkpoint_input_identity = fingerprint({"dataset": dataset, "models": list(models.items()), "prices": _ordered_prices(model_prices)})
             self._checkpoint_setting_keys = tuple(settings)
             self._checkpoint_settings_identity = fingerprint(settings)
@@ -316,8 +321,8 @@ class GittinsModelSelector(BaseModelSelector):
             self._run_combos = deepcopy(self._all_combos())
         if self.checkpoint_path is None:
             return asyncio.run(self._select(parallel, concurrency))
-        with EvaluationCheckpoint(self.checkpoint_path, self._checkpoint_identity,
-                                  legacy_identity=self._legacy_price_identity) as journal:
+        with EvaluationCheckpoint(self.checkpoint_path, self._identity_for_limits,
+                                  limits=(self.cell_cap, self.max_spend)) as journal:
             journal.validate(names=[self._combo_name(combo) for combo in self._run_combos],
                              questions=len(self._run_dataset), score_bounds=self.score_bounds,
                              prices=self._custom_prices)
@@ -353,7 +358,7 @@ class GittinsModelSelector(BaseModelSelector):
         if rates is None or any(not math.isfinite(rate) or rate < 0 for rate in rates):
             raise ValueError(f"Cannot account for Gittins search cost for {model!r}; supply model_prices")
         # Rates and budget limits are decimal USD. Preserve that value through
-        # aggregation and batch prediction; SDK results and v3 cells use floats.
+        # aggregation and batch prediction; SDK results and saved cells use floats.
         input_rate, output_rate = (Fraction(str(rate)) for rate in rates)
         return (input_rate * input_tokens + output_rate * output_tokens) / 1_000_000
 
@@ -362,17 +367,7 @@ class GittinsModelSelector(BaseModelSelector):
 
     def _restored_cell(self, item):
         dp = DatapointResult.model_validate(item["datapoint"])
-        cost, charge = item["cost"], item["charge"]
-        if charge and charge == cost:
-            # Old v3 writers used binary floats to multiply token counts by
-            # rates. Reprice fully charged cells only on an exact match to the
-            # old calculation. Discounts and mixed-cache charges stay recorded.
-            legacy = compute_price(dp.input_tokens, dp.output_tokens, custom_prices=self._custom_prices)
-            if charge == legacy:
-                charge = float(sum(self._token_charge(model, dp.input_tokens.get(model, 0),
-                                                      dp.output_tokens.get(model, 0))
-                                   for model in dp.input_tokens.keys() | dp.output_tokens.keys()))
-        return dp, cost, charge
+        return dp, item["cost"], item["charge"]
 
     def _update_spend(self):
         records = self._tracker.get_records()
@@ -492,10 +487,11 @@ class GittinsModelSelector(BaseModelSelector):
         restoring = self._journal is not None and self._journal.batch_index < self._journal.saved_batches
         if not restoring and self._should_stop():
             return "user_stopped"
-        if self._evaluations + count > self.cell_cap:
+        cell_cap, max_spend = self._journal.saved_limits if restoring else (self.cell_cap, self.max_spend)
+        if self._evaluations + count > cell_cap:
             return "question_budget"
-        if self.max_spend is not None:
-            limit = Fraction(str(self.max_spend))
+        if max_spend is not None:
+            limit = Fraction(str(max_spend))
             if self._spent >= limit or self._spent + predicted_charge > limit:
                 return "search_cost_budget"
         return None

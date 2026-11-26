@@ -61,12 +61,12 @@ def fingerprint(payload):
 
 
 class EvaluationCheckpoint:
-    def __init__(self, path, identity, *, legacy_identity=None):
+    def __init__(self, path, identity_for_limits, *, limits):
         self.paths = checkpoint_paths(path)
         self.path = self.paths["checkpoint"]
-        self.identity = identity
-        self.legacy_identity = legacy_identity
-        self._needs_normalization = False
+        self.identity = identity_for_limits(*limits)
+        self.limits = self.saved_limits = limits
+        self.identity_for_limits = identity_for_limits
         self.db = self.lock = None
 
     def __enter__(self):
@@ -86,24 +86,23 @@ class EvaluationCheckpoint:
             if not existed:
                 self.db.execute("BEGIN IMMEDIATE")
                 try:
-                    self.db.execute("CREATE TABLE metadata (id INTEGER PRIMARY KEY, identity TEXT NOT NULL)")
-                    self.db.execute("INSERT INTO metadata VALUES (1, ?)", (self.identity,))
+                    self.db.execute("CREATE TABLE metadata (id INTEGER PRIMARY KEY, identity TEXT NOT NULL, "
+                                    "cell_cap INTEGER NOT NULL, max_spend REAL)")
+                    self.db.execute("INSERT INTO metadata VALUES (1, ?, ?, ?)", (self.identity, *self.limits))
                     self.db.execute("CREATE TABLE batches (id INTEGER PRIMARY KEY, arm TEXT NOT NULL, questions TEXT NOT NULL)")
                     self.db.execute("CREATE TABLE cells (batch INTEGER NOT NULL, question INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (batch, question))")
-                    self.db.execute("PRAGMA user_version = 3")
+                    self.db.execute("PRAGMA user_version = 4")
                     self.db.execute("COMMIT")
                 except BaseException:
                     self.db.execute("ROLLBACK")
                     raise
             tables = {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if not {"metadata", "batches", "cells"} <= tables or self.db.execute("PRAGMA user_version").fetchone()[0] != 3:
+            if self.db.execute("PRAGMA user_version").fetchone()[0] != 4 or not {"metadata", "batches", "cells"} <= tables:
                 raise CheckpointError(f"Invalid or legacy checkpoint schema in '{self.path}'; original retained. Use a new path.")
-            identity = self.db.execute("SELECT identity FROM metadata WHERE id=1").fetchone()
+            identity = self.db.execute("SELECT identity, cell_cap, max_spend FROM metadata WHERE id=1").fetchone()
             if identity is None:
                 raise CheckpointError(f"Missing checkpoint identity in '{self.path}'; original retained")
-            self._needs_normalization = identity[0] != self.identity and identity[0] == self.legacy_identity
-            if identity[0] != self.identity and not self._needs_normalization:
-                raise CheckpointError("Checkpoint setup differs: check dataset, models, seed, workflow and algorithm settings; use a new checkpoint path for a new run")
+            self._check_identity(*identity)
             self.db.execute("PRAGMA synchronous = FULL")
             self.saved_cells = self.db.execute("SELECT COUNT(*) FROM cells").fetchone()[0]
             self.saved_batches = self.db.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
@@ -115,11 +114,25 @@ class EvaluationCheckpoint:
                 raise CheckpointError(f"Cannot open/read checkpoint '{self.path}'. Check the file and permissions; the checkpoint has not been replaced.") from error
             raise
 
-    def _normalize_identity(self):
+    def _check_identity(self, stored_identity, old_cells, old_spend):
+        if type(old_cells) is not int or old_cells < 1 or (
+            old_spend is not None and (type(old_spend) is not float or not math.isfinite(old_spend) or old_spend <= 0)
+        ):
+            raise CheckpointError("Invalid checkpoint budget metadata")
+        self.saved_limits = (old_cells, old_spend)
+        expected = self.identity if self.saved_limits == self.limits else self.identity_for_limits(*self.saved_limits)
+        if stored_identity != expected:
+            raise CheckpointError("Checkpoint setup differs: check dataset, models, seed, workflow and algorithm settings.")
+        cells, spend = self.limits
+        if cells < old_cells or (spend is not None and (old_spend is None or spend < old_spend)):
+            raise CheckpointError("Checkpoint budget limits may only increase; keep or raise both total limits")
+
+    def _save_extended_limits(self):
         # Called after static validation and deterministic replay of all saved manifests.
         with self._operation("update"):
-            self.db.execute("UPDATE metadata SET identity=? WHERE id=1", (self.identity,))
-        self._needs_normalization = False
+            self.db.execute("UPDATE metadata SET identity=?, cell_cap=?, max_spend=? WHERE id=1",
+                            (self.identity, *self.limits))
+        self.saved_limits = self.limits
 
     def __exit__(self, *_):
         if self.db is not None:
@@ -184,8 +197,8 @@ class EvaluationCheckpoint:
         except (ValueError, TypeError, KeyError, AttributeError) as error:
             raise CheckpointError(f"Invalid checkpoint contents in '{self.path}': {error}. The original file is retained; use a valid checkpoint or a new path.") from error
 
-        if self._needs_normalization and not batches:
-            self._normalize_identity()
+        if self.saved_limits != self.limits and not batches:
+            self._save_extended_limits()
 
     def begin_batch(self, arm, questions):
         with self._operation("read/write"):
@@ -194,8 +207,8 @@ class EvaluationCheckpoint:
             row = self.db.execute("SELECT arm, questions FROM batches WHERE id=?", (self.batch_index,)).fetchone()
             if row is not None and row != (arm, encoded):
                 raise CheckpointError(f"Checkpoint evaluation order differs in '{self.path}'; use a new checkpoint path")
-            if self._needs_normalization and self.batch_index == self.saved_batches:
-                self._normalize_identity()
+            if self.saved_limits != self.limits and self.batch_index == self.saved_batches:
+                self._save_extended_limits()
             if row is None:
                 self.db.execute("INSERT INTO batches VALUES (?, ?, ?)", (self.batch_index, arm, encoded))
             return {question: json.loads(data) for question, data in self.db.execute(

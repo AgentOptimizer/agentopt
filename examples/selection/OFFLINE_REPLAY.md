@@ -67,3 +67,20 @@ Show-Replay mathqa
 3. Click **Finish** and note the final evaluated cell count. Once the terminal prints `Saved results to`, close the window. Run `Show-Replay bird_mini_dev 200` to resume from the checkpoint and stop at about 200 total cells. At the end, check that `restored` matches the count you noted and `newly evaluated` counts only the additional cells.
 
 Each dataset's result JSON, chart, and SQLite checkpoint are saved under `$env:LOCALAPPDATA\AgentOpt\ui-check\<dataset>`. In a new PowerShell session, define `Show-Replay` again from the repository root to reuse the checkpoint.
+
+## Continue with a larger budget
+
+Use the same checkpoint and raise the total cell or spending limit. For example,
+with the data in its default location, run these commands from the repository root.
+
+```powershell
+$run = Join-Path $env:TEMP ("agentopt-budget-" + [guid]::NewGuid())
+New-Item -ItemType Directory $run | Out-Null
+$replay = @(".\examples\selection\replay_10x10.py", "--benchmark", "bird_mini_dev", "--max-configs", "12", "--delay-seconds", "0", "--output", "$run\result.json")
+.\.venv\Scripts\python.exe @replay --max-total-question-evaluations 60
+.\.venv\Scripts\python.exe @replay --max-total-question-evaluations 96
+```
+
+The second command can evaluate up to 36 more cells after the first 60.
+Use `--max-search-cost-usd` to set or raise a total simulated spending limit.
+When both limits are set, retain or raise each one on restart. For an older checkpoint, use a fresh output or checkpoint path.

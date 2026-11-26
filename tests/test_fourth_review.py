@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 import os
 from threading import Event, Thread
 
@@ -29,19 +28,12 @@ def test_relative_plot_path_survives_cwd_change(tmp_path, monkeypatch):
         plot.plt.close(plot.figure)
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_reordered_custom_prices_restore_same_checkpoint(tmp_path, monkeypatch, legacy):
+def test_reordered_custom_prices_restore_same_checkpoint(tmp_path, monkeypatch):
     from tests import test_gittins
     factory = test_gittins.ModelSelector
     options = dict(count=2, checkpoint_path=tmp_path/"prices.db", checkpoint_id="prices")
     selector, _ = make_selector(**options)
     selector.select_best()
-    if legacy:
-        with sqlite3.connect(options["checkpoint_path"]) as db:
-            db.execute("UPDATE metadata SET identity=? WHERE id=1", (selector._legacy_price_identity,))
-        reopened, tracker = make_selector(**options)
-        reopened.select_best()
-        assert not tracker.records
 
     def reorder(**kwargs):
         kwargs["model_prices"] = {k: dict(reversed(list(v.items())))

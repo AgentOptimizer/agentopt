@@ -35,7 +35,7 @@ def test_winner_preserves_literal_plus_in_model_alias(tmp_path):
 def test_role_mapping_survives_json_round_trip(method):
     tracker = RecordingTracker()
     alias = "local + variant=large"
-    models = {"planner": [alias], "solver": ["compact"]}
+    models = {"planner": [alias, "baseline"], "solver": ["compact"]}
 
     class Agent:
         def __init__(self, combo):
@@ -44,14 +44,19 @@ def test_role_mapping_survives_json_round_trip(method):
         def run(self, question):
             for model in self.combo.values():
                 tracker.record(model, 10)
-            return 1
+            return int(self.combo["planner"] == alias)
 
     selector = ModelSelector(method=method, agent=Agent, models=models, eval_fn=lambda _, score: score,
                              dataset=[("2 + 2", None)], tracker=tracker,
-                             model_prices={m: {"input_price": 1, "output_price": 0} for m in (alias, "compact")})
+                             model_prices={m: {"input_price": 1, "output_price": 0}
+                                           for m in (alias, "baseline", "compact")})
     result = selector.select_best()
     restored = type(result).model_validate_json(result.model_dump_json())
     assert restored.get_best_combo() == {"planner": alias, "solver": "compact"}
+    assert {row.model_name: row.combo for row in restored.results} == {
+        f"planner={planner} + solver=compact": {"planner": planner, "solver": "compact"}
+        for planner in models["planner"]
+    }
 
 
 def test_legacy_result_with_only_display_label():

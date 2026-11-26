@@ -715,7 +715,8 @@ class GittinsModelSelector(BaseModelSelector):
             if calibrated and self.objective_mode == "single" and self._has_combined_objective:
                 low, high = self.score_bounds
                 objective = float(np.mean(self._scalar_observations(arm)) * (high - low) + low)
-            records.append(self._make_result(model_name=name, accuracy=float(np.mean(self._scores[arm])),
+            records.append(self._make_result(model_name=name, combo=self._combos[arm],
+                                            accuracy=float(np.mean(self._scores[arm])),
                                             latency_seconds=float(np.mean(self._latencies[arm])),
                                             input_tokens=input_tokens, output_tokens=output_tokens,
                                             attribute="combination", datapoint_results=dps, combined_objective=objective))

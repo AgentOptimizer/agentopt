@@ -151,7 +151,7 @@ class RandomSearchModelSelector(GittinsModelSelector):
                     for model, count in tokens.items():
                         target[model] = target.get(model, 0) + count
             records.append(self._make_result(
-                model_name=name, accuracy=float(np.mean(self._scores[arm])),
+                model_name=name, combo=self._combos[arm], accuracy=float(np.mean(self._scores[arm])),
                 latency_seconds=float(np.mean(self._latencies[arm])),
                 input_tokens=input_tokens, output_tokens=output_tokens,
                 attribute="combination", datapoint_results=dps,

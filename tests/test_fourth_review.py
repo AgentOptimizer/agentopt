@@ -109,3 +109,72 @@ def test_first_draw_of_dense_frontier_has_only_hittable_visible_labels():
             assert plot._chart_combination_at(event) == name
     finally:
         plot.plt.close(plot.figure)
+
+
+def test_exact_tie_group_starts_at_five_and_excludes_nearby_points():
+    from types import SimpleNamespace
+    from matplotlib.backend_bases import MouseEvent
+    from agentopt.visualization import LiveParetoPlot
+
+    rows = [SimpleNamespace(model_name=str(i), combo={"solver": str(i)}, observed_samples=1,
+                            conservative_cost_usd=.001, conservative_accuracy=.5)
+            for i in range(6)]
+    rows[-1].conservative_accuracy += 1e-12
+    plot = LiveParetoPlot(total_questions=1, show_window=False)
+
+    def update(active):
+        plot.update(SimpleNamespace(total_evaluations=len(active), selection_cost=0, stop_reason="running",
+                                    is_final=False, get_recommendations=lambda: active))
+        plot.figure.canvas.draw()
+
+    try:
+        four_and_neighbor = rows[:4] + rows[-1:]
+        update(four_and_neighbor)
+        assert not plot._group_labels
+        assert all(label.get_visible() for _, label, _ in plot._chart_labels)
+        update(rows)
+        group, label = next(iter(plot._group_labels.items()))
+        assert group == frozenset(r.model_name for r in rows[:5])
+        assert label.get_text() == "5 combinations" and label.get_bbox_patch() is None
+        x, y = label.get_window_extent().get_points().mean(axis=0)
+        plot._select_chart_combination(MouseEvent("button_release_event", plot.figure.canvas, x, y, button=1))
+        assert plot._active_group == group
+        assert {name for _, _, name in plot._card_regions} <= group
+        update(four_and_neighbor)
+        assert plot._active_group is None and not plot._group_labels
+    finally:
+        plot.plt.close(plot.figure)
+
+
+def test_nearby_numbers_keep_their_targets_when_view_size_changes():
+    from types import SimpleNamespace
+    from matplotlib.backend_bases import MouseEvent, ResizeEvent
+    from agentopt.visualization import LiveParetoPlot
+
+    plot = LiveParetoPlot(total_questions=10, show_window=False)
+    rows = [SimpleNamespace(model_name=str(i), combo={"solver": str(i)}, observed_samples=3,
+                            conservative_cost_usd=cost, conservative_accuracy=score)
+            for i, (cost, score) in enumerate(((.001, .2), (.002, .60), (.00201, .601)))]
+    try:
+        plot.update(SimpleNamespace(total_evaluations=9, selection_cost=0, stop_reason="running",
+                                    is_final=False, get_recommendations=lambda: rows))
+        canvas = plot.figure.canvas
+        for inches in (11.8, 15.0, 9.0):
+            plot.figure.set_size_inches(inches, 7.2)
+            canvas.callbacks.process("resize_event", ResizeEvent("resize_event", canvas))
+            canvas.draw()
+            limits = plot.axis.get_xlim(), plot.axis.get_ylim()
+            for i, (point, label, name) in enumerate(plot._chart_labels):
+                assert label.get_visible() and label.get_text() == str(i + 1)
+                x, y = label.get_window_extent().get_points().mean(axis=0)
+                assert plot._chart_combination_at(MouseEvent("motion_notify_event", canvas, x, y)) == name
+                if i:
+                    assert plot._chart_leaders[i].get_visible()
+                    assert plot._chart_leaders[i].xy == point
+                    own = plot.axis.transData.transform(point)
+                    other = plot.axis.transData.transform(plot._chart_labels[3-i][0])
+                    assert (x-own[0])**2 + (y-own[1])**2 < (x-other[0])**2 + (y-other[1])**2
+                canvas.callbacks.process("scroll_event", MouseEvent("scroll_event", canvas, x, y, step=1))
+            assert limits == (plot.axis.get_xlim(), plot.axis.get_ylim())
+    finally:
+        plot.plt.close(plot.figure)

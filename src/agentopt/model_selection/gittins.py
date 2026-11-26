@@ -79,6 +79,16 @@ class GittinsSelectionResults(SelectionResults):
     def get_recommendations(self) -> list[GittinsRecommendation]:
         return list(self.recommendations)
 
+    def get_best_combo(self) -> dict[str, str] | None:
+        # Archived Gittins and random runs already carry the structured
+        # mapping on their recommendation, even with an ambiguous label.
+        best = self.get_best()
+        if best is not None:
+            for candidate in self.recommendations:
+                if candidate.model_name == best.model_name:
+                    return dict(candidate.combo)
+        return super().get_best_combo()
+
     def choose(self, *, max_cost_usd=None, min_score=None, cost_weight=None):
         """Choose a deployment candidate using conservative score/cost.
 
@@ -705,7 +715,8 @@ class GittinsModelSelector(BaseModelSelector):
             if calibrated and self.objective_mode == "single" and self._has_combined_objective:
                 low, high = self.score_bounds
                 objective = float(np.mean(self._scalar_observations(arm)) * (high - low) + low)
-            records.append(self._make_result(model_name=name, accuracy=float(np.mean(self._scores[arm])),
+            records.append(self._make_result(model_name=name, combo=self._combos[arm],
+                                            accuracy=float(np.mean(self._scores[arm])),
                                             latency_seconds=float(np.mean(self._latencies[arm])),
                                             input_tokens=input_tokens, output_tokens=output_tokens,
                                             attribute="combination", datapoint_results=dps, combined_objective=objective))

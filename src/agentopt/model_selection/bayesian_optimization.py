@@ -131,7 +131,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
     def _bo_record_result(
         self,
-        combo_name: str,
+        combo: Dict[str, ModelCandidate],
         accuracy: float,
         latency: float,
         input_tokens: Dict[str, int],
@@ -140,7 +140,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         all_results: List[ModelResult],
     ) -> ModelResult:
         result = self._make_result(
-            model_name=combo_name,
+            model_name=self._combo_name(combo), combo=combo,
             accuracy=accuracy,
             latency_seconds=latency,
             input_tokens=input_tokens,
@@ -273,7 +273,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 combo
             )
             result = self._bo_record_result(
-                combo_name,
+                combo_dict,
                 accuracy,
                 latency,
                 input_tokens,
@@ -525,7 +525,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 dp_results,
             ) = await evaluate_combo(combo)
             result = self._bo_record_result(
-                combo_name,
+                combo_dict,
                 accuracy,
                 latency,
                 input_tokens,
@@ -659,7 +659,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     continue
                 accuracy, latency, input_tokens, output_tokens, dp_results = res
                 result = self._bo_record_result(
-                    combo_name,
+                    combo_dict,
                     accuracy,
                     latency,
                     input_tokens,

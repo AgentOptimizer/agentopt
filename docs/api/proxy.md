@@ -302,7 +302,7 @@ The interception machinery, split between the in-process httpx wrapper, the per-
 - **`recording.py`** — `Recorder`.  The single function that turns (session, request body, response body, latency, status) into a `CallRecord` and dispatches to `SessionManager`.  Owns the warn-once-per-host set for token-extraction failures.  Both the httpx wrapper and the addon use the same instance.
 - **`providers.py`** — `Provider` dataclass and `ProviderRegistry`.  Per-`LocalBackend` catalog of LLM hostnames and path patterns.
 - **`usage.py`** — pure token-extraction for OpenAI / Anthropic / Gemini response shapes (JSON object, JSON array, SSE).  Raises `UsageExtractionError` with a structured diagnostic on miss; never reports zero tokens silently.
-- **`cache.py`** — `ResponseCache`.  In-memory dict, optionally persisted to SQLite via a daemon flush thread.  Keyed by a hash of the request body (excluding `stream`).
+- **`cache.py`** — `ResponseCache`.  In-memory dict, optionally persisted to SQLite via a daemon flush thread.  Keys include the full URL, routed request body, stream mode and selected provider headers.
 - **`session.py`** — `SessionManager`.  Active and archived sessions; `add_record` checks both so a slow upstream that finishes after `end_session` doesn't drop its record.
 
 ### `agentopt.proxy.LLMTracker` (the public surface)

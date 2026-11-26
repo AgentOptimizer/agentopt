@@ -330,6 +330,51 @@ def test_untracked_llm_usage_is_rejected_instead_of_assuming_zero_spend():
     assert tracker.stopped
 
 
+def test_unmeasured_success_does_not_consume_grid_or_pollute_resume(tmp_path):
+    import sqlite3
+    import httpx
+    from agentopt.proxy import LLMTracker
+
+    requests = []
+
+    def upstream(request):
+        requests.append(request)
+        body = {"model": "paid", "answer": "OK"}
+        if len(requests) > 1:
+            body["usage"] = {"prompt_tokens": 10, "completion_tokens": 10}
+        return httpx.Response(200, json=body)
+
+    with httpx.Client(transport=httpx.MockTransport(upstream)) as client:
+        class Agent:
+            def __init__(self, models):
+                self.model = models["answer"]
+
+            def run(self, q):
+                return client.post("https://billing.invalid/v1/chat/completions",
+                                   json={"model": self.model, "messages": [{"role": "user", "content": str(q)}]}).json()["answer"]
+
+        checkpoint = tmp_path / "run.db"
+
+        def selector():
+            return ModelSelector(
+                agent=Agent, models={"answer": ["paid"]}, dataset=[(q, "OK") for q in range(6)],
+                eval_fn=lambda expected, answer: float(expected == answer),
+                model_prices={"paid": {"input_price": 2, "output_price": 8}}, max_search_cost_usd=.000001,
+                tracker=LLMTracker(cache=True, cache_dir=tmp_path / "cache"),
+                checkpoint_path=checkpoint, checkpoint_id="billing-test",
+            )
+
+        with pytest.raises(ValueError, match="Token usage is unavailable"):
+            selector().select_best()
+        assert len(requests) == 1
+        with sqlite3.connect(checkpoint) as db:
+            assert db.execute("SELECT count(*) FROM cells").fetchone()[0] == 0
+        result = selector().select_best()
+        assert len(requests) == 2 and result.total_evaluations == 1
+        assert result.selection_cost == pytest.approx(.0001)
+        assert result.stop_reason == "warm_start_budget"
+
+
 def test_unpriced_usage_stops_tracker():
     selector, tracker = make_selector()
     original = tracker.record

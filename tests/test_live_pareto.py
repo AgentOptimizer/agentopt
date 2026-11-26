@@ -53,6 +53,17 @@ def test_live_plot_runs_user_supplied_two_role_workflow(tmp_path):
     assert output.read_bytes().startswith(b"\x89PNG")
 
 
+def test_callback_stop_also_applies_in_plot_mode():
+    selector, tracker = make_selector()
+    plot = LiveParetoPlot(total_questions=8, show_window=False)
+    try:
+        result = plot.run(selector, on_update=lambda snapshot: snapshot.total_evaluations < 2)
+        assert result.stop_reason == "user_stopped"
+        assert result.total_evaluations == len(tracker.records) == 2
+    finally:
+        plot.plt.close(plot.figure)
+
+
 def test_pause_continue_and_finish_control_real_selection(tmp_path):
     def measured(score):
         def run(_question):
@@ -232,6 +243,54 @@ def test_complete_run_reaches_full_coverage():
     assert plot.metric_values[0].get_text() == "100.00%"
     assert plot.evaluation_count.get_text() == "8 / 8"
     assert plot.status_text.get_text() == "Finished"
+
+
+def test_finish_before_first_evaluation_exports_empty_frontier(tmp_path):
+    selector, tracker = make_selector(count=1, outcomes={"only": 0.0}, tokens={"only": 0})
+    output = tmp_path / "empty.png"
+    plot = LiveParetoPlot(total_questions=1, total_combinations=1, warm_total=1,
+                          show_window=False, output=output)
+    try:
+        plot.finish_button._observers.process("clicked", None)
+        result = plot.run(selector)
+
+        assert result.stop_reason == "user_stopped"
+        assert result.total_evaluations == len(tracker.records) == 0
+        assert result.get_recommendations() == []
+        assert plot.evaluation_count.get_text() == "0 / 1"
+        assert [metric.get_text() for metric in plot.metric_values] == ["0.00%", "$0.0000", "0"]
+        assert plot.empty_title.get_visible() and plot.empty_title.get_text() == "No recommendation available"
+        assert not plot.axis.get_visible() and not plot.progress_axis.get_visible()
+        assert plot.status_text.get_text() == "Finished"
+        assert output.read_bytes().startswith(b"\x89PNG")
+    finally:
+        plot.plt.close(plot.figure)
+
+
+def test_single_zero_cost_zero_score_point_is_selectable():
+    from matplotlib.backend_bases import MouseEvent
+
+    selector, tracker = make_selector(count=1, outcomes={"only": 0.0}, tokens={"only": 0})
+    plot = LiveParetoPlot(total_questions=1, total_combinations=1, warm_total=1, show_window=False)
+    try:
+        result = plot.run(selector)
+        candidate, = result.get_recommendations()
+        assert result.total_evaluations == len(tracker.records) == 1
+        assert plot.evaluation_count.get_text() == "1 / 1"
+        assert [metric.get_text() for metric in plot.metric_values] == ["100.00%", "$0.0000", "1"]
+        assert plot.axis.get_visible() and not plot.empty_title.get_visible()
+        point, = plot.axis.collections[0].get_offsets()
+        assert tuple(point) == pytest.approx((0, 0))
+
+        canvas = plot.figure.canvas
+        canvas.draw()
+        x, y = plot.axis.transData.transform(point)
+        for action in ("button_press_event", "button_release_event"):
+            canvas.callbacks.process(action, MouseEvent(action, canvas, x, y, button=1))
+        assert plot._selected_combination == candidate.model_name
+        assert any("1/1 tested" in text.get_text() for text in plot.recommendation_axis.texts)
+    finally:
+        plot.plt.close(plot.figure)
 
 
 def test_chart_number_reveals_matching_card_without_panning(monkeypatch):

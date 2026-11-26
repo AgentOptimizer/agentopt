@@ -67,16 +67,27 @@ def _is_llm_request(request: httpx.Request, patterns: FrozenSet[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _make_cached_response(request: httpx.Request, entry: CacheEntry,) -> httpx.Response:
+def _make_cached_response(request: httpx.Request, entry: CacheEntry, *, stream: bool = False) -> httpx.Response:
     """Build an ``httpx.Response`` from a cache entry, attached to *request*."""
     headers = {
         k: v
         for k, v in entry.response_headers.items()
-        if k.lower() not in ("transfer-encoding", "content-encoding")
+        if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")
     }
+    headers["content-length"] = str(len(entry.response_bytes))
+    if stream:
+        return httpx.Response(200, headers=headers, stream=httpx.ByteStream(entry.response_bytes), request=request)
     return httpx.Response(
         status_code=200, headers=headers, content=entry.response_bytes, request=request,
     )
+
+
+def _prepare_buffered_stream(response: httpx.Response, wire: bytes) -> bytes:
+    """Keep raw iteration and content decoding available to the caller after recording."""
+    response.stream = httpx.ByteStream(wire)
+    if "content-encoding" in response.headers:
+        return httpx.Response(response.status_code, headers=response.headers, content=wire).content
+    return wire
 
 
 # ---------------------------------------------------------------------------
@@ -149,24 +160,31 @@ class LocalHandler(CallHandler):
 
         # Cache lookup (post-routing — key reflects the actual model)
         if self._cache is not None and json_body:
-            entry = self._cache.get(_make_cache_key(json_body, str(request.url.path)))
+            entry = self._cache.get(_make_cache_key(json_body, str(request.url), request.headers))
             if entry is not None:
-                resp = _make_cached_response(request, entry)
+                resp = _make_cached_response(request, entry, stream=stream)
                 self._record(
-                    request, resp, None, entry.latency_seconds, cached=True,
+                    request, resp, None, entry.latency_seconds, cached=True, body_bytes=entry.response_bytes,
                 )
                 return resp
 
         assert _original_sync_send is not None  # set by install_redirect
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
+        body = None
         try:
             response = _original_sync_send(client, request, stream=stream, **kwargs)
+            if stream and not response.is_stream_consumed:
+                try:
+                    wire = b"".join(response.stream)
+                finally:
+                    response.stream.close()
+                body = _prepare_buffered_stream(response, wire)
         except Exception as exc:
-            latency = time.monotonic() - t0
+            latency = time.perf_counter() - t0
             self._record(request, None, str(exc), latency, cached=False)
             raise
-        latency = time.monotonic() - t0
-        self._record(request, response, None, latency, cached=False)
+        latency = time.perf_counter() - t0
+        self._record(request, response, None, latency, cached=False, body_bytes=body)
         return response
 
     # -- async --------------------------------------------------------
@@ -183,26 +201,33 @@ class LocalHandler(CallHandler):
         request = self._maybe_route(request, json_body)
 
         if self._cache is not None and json_body:
-            entry = self._cache.get(_make_cache_key(json_body, str(request.url.path)))
+            entry = self._cache.get(_make_cache_key(json_body, str(request.url), request.headers))
             if entry is not None:
-                resp = _make_cached_response(request, entry)
+                resp = _make_cached_response(request, entry, stream=stream)
                 self._record(
-                    request, resp, None, entry.latency_seconds, cached=True,
+                    request, resp, None, entry.latency_seconds, cached=True, body_bytes=entry.response_bytes,
                 )
                 return resp
 
         assert _original_async_send is not None
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
+        body = None
         try:
             response = await _original_async_send(
                 client, request, stream=stream, **kwargs,
             )
+            if stream and not response.is_stream_consumed:
+                try:
+                    wire = b"".join([chunk async for chunk in response.stream])
+                finally:
+                    await response.stream.aclose()
+                body = _prepare_buffered_stream(response, wire)
         except Exception as exc:
-            latency = time.monotonic() - t0
+            latency = time.perf_counter() - t0
             self._record(request, None, str(exc), latency, cached=False)
             raise
-        latency = time.monotonic() - t0
-        self._record(request, response, None, latency, cached=False)
+        latency = time.perf_counter() - t0
+        self._record(request, response, None, latency, cached=False, body_bytes=body)
         return response
 
     # -- routing ------------------------------------------------------
@@ -254,6 +279,7 @@ class LocalHandler(CallHandler):
         latency: float,
         *,
         cached: bool,
+        body_bytes: Optional[bytes] = None,
     ) -> None:
         """Convert a completed (or failed) httpx exchange into a CallRecord."""
         json_body = decode_json_body(request.content)
@@ -275,10 +301,11 @@ class LocalHandler(CallHandler):
             return
 
         status = response.status_code
-        body_bytes = response.content  # forces buffering for streamed bodies
+        if body_bytes is None:
+            body_bytes = response.content
         record_error = None if status == 200 else f"HTTP {status}"
 
-        self._recorder.record(
+        usage_measured = self._recorder.record(
             self._session,
             json_body,
             body_bytes,
@@ -291,9 +318,9 @@ class LocalHandler(CallHandler):
         )
 
         # Cache successful 200s on the miss path only.
-        if not cached and status == 200 and self._cache is not None and json_body:
+        if not cached and status == 200 and usage_measured and self._cache is not None and json_body:
             self._cache.put(
-                _make_cache_key(json_body, str(request.url.path)),
+                _make_cache_key(json_body, str(request.url), request.headers),
                 CacheEntry(
                     response_bytes=body_bytes,
                     response_headers=dict(response.headers),

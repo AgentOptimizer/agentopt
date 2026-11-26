@@ -1,6 +1,7 @@
 """Tests for agentopt.proxy API-level response cache."""
 
 import asyncio
+import hashlib
 import json
 import threading
 
@@ -71,13 +72,12 @@ class TestMakeCacheKey:
         body2 = {"model": "gpt-4o-mini", "messages": []}
         assert _make_cache_key(body1) != _make_cache_key(body2)
 
-    def test_stream_field_ignored(self):
+    def test_cache_separates_streams_from_non_streamed_responses(self):
         body1 = {"model": "gpt-4o", "messages": [], "stream": True}
         body2 = {"model": "gpt-4o", "messages": [], "stream": False}
         body3 = {"model": "gpt-4o", "messages": []}
-        assert (
-            _make_cache_key(body1) == _make_cache_key(body2) == _make_cache_key(body3)
-        )
+        assert _make_cache_key(body1) != _make_cache_key(body2)
+        assert _make_cache_key(body2) == _make_cache_key(body3)
 
     def test_key_order_independent(self):
         body1 = {"model": "gpt-4o", "temperature": 0.5, "messages": []}
@@ -100,6 +100,46 @@ class TestMakeCacheKey:
 # ---------------------------------------------------------------------------
 # Integration tests: cache through proxy server
 # ---------------------------------------------------------------------------
+
+
+def test_restarted_cache_separates_providers_formats_and_versions(tmp_path):
+    upstream_calls = []
+    old_body = json.dumps({"model": "shared", "messages": []}, sort_keys=True)
+    old_key = hashlib.sha256(f"/v1/chat/completions\n{old_body}".encode()).hexdigest()
+    old_cache = ResponseCache(tmp_path, flush_interval=0)
+    old_cache.put(old_key, CacheEntry(response_bytes=b'{"text":"legacy"}'))
+    old_cache.close()
+
+    def upstream(request):
+        streamed = json.loads(request.content).get("stream", False)
+        marker = f"{request.url.host}/{request.url.params['version']}"
+        upstream_calls.append((marker, streamed))
+        usage = {"prompt_tokens": 5, "completion_tokens": 1}
+        if streamed:
+            data = 'data: ' + json.dumps({"usage": usage, "text": marker}) + '\n\ndata: [DONE]\n\n'
+            return httpx.Response(200, text=data, headers={"content-type": "text/event-stream"})
+        return httpx.Response(200, json={"model": "shared", "text": marker, "usage": usage})
+
+    cases = [("first", "1", False), ("second", "1", False),
+             ("first", "2", False), ("first", "1", True)]
+    with httpx.Client(transport=httpx.MockTransport(upstream)) as client:
+        for cached in (False, True):
+            with LLMTracker(cache=True, cache_dir=tmp_path) as tracker:
+                with tracker.track(data_id="comparison", combo_id="shared"):
+                    for provider, version, stream in cases:
+                        host = provider + ".invalid"
+                        response = client.post(f"https://{host}/v1/chat/completions?version={version}",
+                                               json={"model": "shared", "messages": [], "stream": stream})
+                        marker = f"{host}/{version}"
+                        if stream:
+                            assert response.headers["content-type"] == "text/event-stream"
+                            assert marker in response.text
+                        else:
+                            assert response.json()["text"] == marker
+                records = tracker.get_records()
+                assert len(records) == len(cases)
+                assert all(r.cached == cached and r.error is None for r in records)
+    assert len(upstream_calls) == len(cases)
 
 
 class TestCacheIntegration:

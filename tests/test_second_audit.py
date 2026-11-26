@@ -47,13 +47,13 @@ def test_missing_checkpoint_structure_not_recreated(tmp_path, damage):
 
 def test_hardlinked_checkpoint_rejected(tmp_path):
     cp = tmp_path / "saved.db"
-    with EvaluationCheckpoint(cp, "identity"):
+    with EvaluationCheckpoint(cp, lambda *_: "identity", limits=(1, None)):
         pass
     alias = tmp_path / "alias.db"
     alias.hardlink_to(cp)
     for name in (cp, alias):
         with pytest.raises(CheckpointError, match="hard link"):
-            with EvaluationCheckpoint(name, "identity"):
+            with EvaluationCheckpoint(name, lambda *_: "identity", limits=(1, None)):
                 pytest.fail("hardlinked file acquired")
 
 

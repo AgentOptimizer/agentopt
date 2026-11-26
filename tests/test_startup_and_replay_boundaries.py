@@ -61,19 +61,17 @@ def test_finishing_one_proxy_during_another_startup_error(monkeypatch):
     assert logging.getLogger().handlers == handlers
 
 
-def test_empty_legacy_checkpoint_upgrades_on_immediate_stop(tmp_path, monkeypatch):
-    options = dict(count=2, checkpoint_path=tmp_path / "empty.db", checkpoint_id="empty")
+def test_empty_checkpoint_accepts_extended_limit_on_immediate_stop(tmp_path, monkeypatch):
+    options = dict(count=4, checkpoint_path=tmp_path / "empty.db", checkpoint_id="empty")
     stop = Event()
     stop.set()
-    seed, _ = test_gittins.make_selector(**options)
+    seed, _ = test_gittins.make_selector(**options, max_total_question_evaluations=8)
     seed.select_best(stop_event=stop)
-    with sqlite3.connect(options["checkpoint_path"]) as db:
-        db.execute("UPDATE metadata SET identity=?", (seed._legacy_price_identity,))
     resumed, tracker = test_gittins.make_selector(**options)
     assert resumed.select_best(stop_event=stop).stop_reason == "user_stopped"
     assert not tracker.records
     with sqlite3.connect(options["checkpoint_path"]) as db:
-        assert db.execute("SELECT identity FROM metadata").fetchone() == (resumed._checkpoint_identity,)
+        assert db.execute("SELECT cell_cap FROM metadata").fetchone() == (16,)
         assert db.execute("SELECT COUNT(*) FROM batches").fetchone() == (0,)
 
     factory = test_gittins.ModelSelector
@@ -85,18 +83,15 @@ def test_empty_legacy_checkpoint_upgrades_on_immediate_stop(tmp_path, monkeypatc
 
     monkeypatch.setattr(test_gittins, "ModelSelector", reordered)
     reopened, tracker = test_gittins.make_selector(**options)
-    assert reopened.select_best().total_evaluations == len(tracker.records) == 8
+    assert reopened.select_best().total_evaluations == len(tracker.records) == 16
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_unreachable_final_manifest_rejected_without_writes(tmp_path, legacy):
+def test_unreachable_final_manifest_rejected_without_writes(tmp_path):
     path = tmp_path / "full.db"
     options = dict(count=2, checkpoint_path=path, checkpoint_id="extra")
     seed, _ = test_gittins.make_selector(**options)
     assert seed.select_best().total_evaluations == 8
     with sqlite3.connect(path) as db:
-        if legacy:
-            db.execute("UPDATE metadata SET identity=?", (seed._legacy_price_identity,))
         db.execute("INSERT INTO batches SELECT MAX(id)+1, 'solver=cheap', '[0]' FROM batches")
     before = path.read_bytes()
     restored, tracker = test_gittins.make_selector(**options)
@@ -187,7 +182,6 @@ def test_replay_refuses_batch_outside_original_budget(tmp_path, budget, reason):
     assert result.total_evaluations == 8 and result.stop_reason == reason
     with sqlite3.connect(path) as db:
         db.execute("INSERT INTO batches VALUES (?, ?, ?)", next_batch)
-        db.execute("UPDATE metadata SET identity=?", (limited._legacy_price_identity,))
     before = path.read_bytes()
 
     resumed, tracker = test_gittins.make_selector(checkpoint_path=path, **budget, **options)
@@ -262,33 +256,23 @@ def test_exact_decimal_batch_budget_and_reopen(tmp_path, limit, expected):
     assert restored.total_evaluations == expected and not tracker.records
 
 
-def test_legacy_float_charges_resume_at_exact_token_budget(tmp_path, monkeypatch):
-    import json
-
+def test_saved_charges_resume_at_exact_token_budget(tmp_path, monkeypatch):
     factory = test_gittins.ModelSelector
 
-    def with_legacy_prices(**kwargs):
+    def with_decimal_prices(**kwargs):
         for rates in kwargs["model_prices"].values():
             rates["input_price"] = 0.01
         return factory(**kwargs)
 
-    monkeypatch.setattr(test_gittins, "ModelSelector", with_legacy_prices)
+    monkeypatch.setattr(test_gittins, "ModelSelector", with_decimal_prices)
     tokens = dict(cheap=1, middle=3, expensive=10, dominated=4)
-    path = tmp_path / "legacy.db"
-    options = dict(count=8, checkpoint_path=path, checkpoint_id="decimal-v3",
+    path = tmp_path / "decimal.db"
+    options = dict(count=8, checkpoint_path=path, checkpoint_id="decimal",
                    tokens=tokens, outcomes=dict.fromkeys(tokens, .5),
                    max_search_cost_usd=3.8e-7)
     fresh, _ = test_gittins.make_selector(**options)
     reference = fresh.select_best()
     assert reference.total_evaluations == 10
-    with sqlite3.connect(path) as db:
-        rows = db.execute("SELECT rowid, data FROM cells").fetchall()
-        for rowid, data in rows:
-            cell = json.loads(data)
-            # One uncached call per cell. The pre-1cc writer evaluated both
-            # charge and deployment cost with the same binary float operations.
-            cell["charge"] = cell["cost"]
-            db.execute("UPDATE cells SET data=? WHERE rowid=?", (json.dumps(cell), rowid))
     before = path.read_bytes()
     reopened, tracker = test_gittins.make_selector(**options)
     result = reopened.select_best()

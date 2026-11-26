@@ -177,7 +177,7 @@ def test_stop_waits_for_start_and_does_not_hand_out_stopped_session(monkeypatch)
     assert not [t for t in threading.enumerate() if t.name.startswith("agentopt-mitm-")]
 
 
-def test_eight_edge_labels_stay_inside_axes_and_select_correct_cards():
+def test_edge_labels_stay_inside_axes_and_select_correct_cards():
     import matplotlib
     matplotlib.use("Agg", force=True)
     from matplotlib.backend_bases import MouseEvent
@@ -187,16 +187,22 @@ def test_eight_edge_labels_stay_inside_axes_and_select_correct_cards():
     plot = LiveParetoPlot(total_questions=2, show_window=False)
     plot.update(selector.select_best())
     try:
-        for i in range(8):
+        expected_group = frozenset(name for _, _, name in plot._chart_labels[1:])
+        assert set(plot._group_labels) == {expected_group}
+        for expected in (plot._chart_labels[0][2], expected_group):
             plot.figure.canvas.draw()
-            _, label, expected = plot._chart_labels[i]
+            label = (plot._group_labels[expected_group] if expected == expected_group
+                     else plot._chart_labels[0][1])
             box = label.get_window_extent()
             assert plot.axis.bbox.contains(box.x0, box.y0)
             assert plot.axis.bbox.contains(box.x1, box.y1)
             event = MouseEvent("button_release_event", plot.figure.canvas,
                                (box.x0+box.x1)/2, (box.y0+box.y1)/2, button=1)
             plot._select_chart_combination(event)
-            assert plot._selected_combination == expected
+            if expected == expected_group:
+                assert plot._active_group == expected_group
+            else:
+                assert plot._selected_combination == expected
     finally:
         plot.plt.close(plot.figure)
 

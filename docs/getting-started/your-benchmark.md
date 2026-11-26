@@ -138,9 +138,12 @@ cards show conservative estimates for quality and deployment cost in USD per
 
 The header names the selection algorithm. Click a point or its number to
 highlight the corresponding recommendation and bring its card into view.
-Drag the chart to pan, and use the mouse wheel over the chart to zoom.
-**Reset view** restores the chart bounds. Scroll or drag the scrollbar in
-the recommendations panel to browse longer lists.
+The chart automatically fits the frontier. Short lines connect crowded labels
+to their points. Click a recommendation card to highlight its point and number.
+When five or more combinations share identical cost and quality estimates,
+click the count above their point to see the matching cards. **Show all**
+returns to the full list.
+Scroll or drag the scrollbar in the recommendations panel to browse longer lists.
 
 **Pause** holds the search after the current evaluation batch; **Continue**
 resumes it; **Finish** requests a final result after scheduled work completes.

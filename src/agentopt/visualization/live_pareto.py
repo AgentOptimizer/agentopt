@@ -18,6 +18,8 @@ BLUE = "#3985a0"
 FONT_SMALL = 9
 FONT_MEDIUM = 11
 FONT_LARGE = 19
+_ALL_COMBINATIONS = object()
+_MIN_IDENTICAL_POINTS = 5
 
 
 class LiveParetoPlot:
@@ -68,6 +70,11 @@ class LiveParetoPlot:
         self._recommendations = []
         self._selected_combination = None
         self._chart_labels = []
+        self._chart_leaders = []
+        self._group_labels = {}
+        self._point_groups = {}
+        self._active_group = None
+        self._back_label = None
         self._chart_hovering = False
         self._legend_offset = 0.0
         self._legend_scroll_limit = 0.0
@@ -120,18 +127,13 @@ class LiveParetoPlot:
         self.scroll_thumb, = self.scroll_axis.plot([.5, .5], [0, 1], color="#d4ddda",
                                                   linewidth=3, solid_capstyle="round")
         self._scroll_drag = None
-        self._chart_drag = None
         self._chart_press = None
         self.finish_button = self._make_button((.704, footer_y, .12, button_height), "Finish",
                                                self.finish_search)
         self.pause_button = self._make_button((.839, footer_y, .12, button_height), "Pause",
                                               self.toggle_pause, primary=True)
         self.buttons = (self.finish_button, self.pause_button)
-        self._zoomed = False
-        self.reset_button = None
-        if show_window:
-            self.reset_button = self._make_button((.445, .677, .09, .036), "Reset view",
-                                                  self._reset_chart)
+        self.figure.canvas.mpl_connect("resize_event", self._layout_chart_labels)
         self.figure.canvas.mpl_connect("scroll_event", self._on_scroll)
         self.figure.canvas.mpl_connect("button_press_event", self._start_drag)
         self.figure.canvas.mpl_connect("motion_notify_event", self._drag)
@@ -180,10 +182,7 @@ class LiveParetoPlot:
         if event.button != 1:
             return
         if event.inaxes is self.axis and self._recommendations:
-            transform = self.axis.transData.frozen().inverted()
-            origin = transform.transform((event.x, event.y))
-            self._chart_drag = transform, origin, self.axis.get_xlim(), self.axis.get_ylim()
-            self._chart_press = (event.x, event.y)
+            self._chart_press = (event.x, event.y, self._chart_combination_at(event))
             self._update_chart_cursor(event)
         elif event.inaxes is self.recommendation_axis:
             self._card_press = self._card_at(event)
@@ -194,20 +193,7 @@ class LiveParetoPlot:
             self._drag(event)
 
     def _drag(self, event):
-        if self._chart_drag is not None:
-            if self._chart_press is not None:
-                x, y = self._chart_press
-                if (event.x-x)**2 + (event.y-y)**2 < 16:
-                    return
-                self._chart_press = None
-            transform, origin, xlim, ylim = self._chart_drag
-            dx, dy = transform.transform((event.x, event.y)) - origin
-            self.axis.set_xlim(xlim[0]-dx, xlim[1]-dx)
-            self.axis.set_ylim(ylim[0]-dy, ylim[1]-dy)
-            self._zoomed = True
-            self._layout_chart_labels()
-            self._request_draw()
-        elif self._scroll_drag is not None and self._legend_scroll_limit > 0:
+        if self._scroll_drag is not None and self._legend_scroll_limit > 0:
             _, y = self.scroll_axis.transAxes.inverted().transform((event.x, event.y))
             low, high = self.scroll_thumb.get_ydata()
             thumb_height = high - low
@@ -219,22 +205,27 @@ class LiveParetoPlot:
     def _end_drag(self, event):
         if event.button == 1:
             press, card = self._chart_press, self._card_press
-            self._chart_press = self._chart_drag = self._scroll_drag = self._card_press = None
+            self._chart_press = self._scroll_drag = self._card_press = None
             if card is not None and card == self._card_at(event):
-                self._selected_combination = card
+                if card is _ALL_COMBINATIONS:
+                    self._active_group = None
+                    self._selected_combination = None
+                    self._legend_offset = 0
+                else:
+                    self._selected_combination = card
                 self._render_chart()
                 self._render_legend()
                 self._request_draw()
             if press is not None and event.inaxes is self.axis:
-                x, y = press
-                if (event.x-x)**2 + (event.y-y)**2 < 16:
+                x, y, name = press
+                if name is not None and (event.x-x)**2 + (event.y-y)**2 < 16 and name == self._chart_combination_at(event):
                     self._select_chart_combination(event)
             self._update_chart_cursor(event)
 
     def _update_chart_cursor(self, event):
         from matplotlib.backend_tools import Cursors
 
-        hovering = (event.name != "figure_leave_event" and self._chart_drag is None
+        hovering = (event.name != "figure_leave_event"
                     and (self._chart_combination_at(event) is not None or self._card_at(event) is not None))
         if hovering != self._chart_hovering:
             self.figure.canvas.set_cursor(Cursors.HAND if hovering else Cursors.POINTER)
@@ -242,6 +233,8 @@ class LiveParetoPlot:
 
     def _card_at(self, event):
         if event.inaxes is self.recommendation_axis:
+            if self._back_label is not None and self._back_label.contains(event)[0]:
+                return _ALL_COMBINATIONS
             for card, viewport, name in self._card_regions:
                 if viewport.contains(event)[0] and card.contains(event)[0]:
                     return name
@@ -250,6 +243,9 @@ class LiveParetoPlot:
     def _chart_combination_at(self, event):
         if event.inaxes is not self.axis:
             return None
+        for group, badge in self._group_labels.items():
+            if badge.contains(event)[0]:
+                return group
         candidates = []
         for point, label, name in self._chart_labels:
             x, y = self.axis.transData.transform(point)
@@ -259,7 +255,7 @@ class LiveParetoPlot:
                 return name
             distance = (event.x-x)**2 + (event.y-y)**2
             if distance <= (self.figure.dpi * 8 / 72)**2:
-                candidates.append((distance, name))
+                candidates.append((distance, self._point_groups.get(name, name)))
         if not candidates:
             return None
         shortest = min(distance for distance, _ in candidates)
@@ -272,60 +268,136 @@ class LiveParetoPlot:
     def _select_chart_combination(self, event):
         name = self._chart_combination_at(event)
         if name is not None:
-            self._selected_combination = name
+            if isinstance(name, frozenset):
+                self._active_group = name
+                self._selected_combination = None
+                self._legend_offset = 0
+            else:
+                self._selected_combination = name
+                if self._active_group and name not in self._active_group:
+                    self._active_group = None
             self._render_chart()
             self._render_legend(reveal_selection=True)
             self._request_draw()
 
-    def _reset_chart(self, _event):
-        self._zoomed = False
-        self._render_chart()
-        self._request_draw()
-
     def _on_scroll(self, event):
-        if event.inaxes is self.axis and self._recommendations:
-            if event.xdata is None or event.ydata is None or not event.step:
-                return
-            factor = 1.2 ** (-event.step)
-            left, right = self.axis.get_xlim()
-            bottom, top = self.axis.get_ylim()
-            self.axis.set_xlim(event.xdata + (left-event.xdata)*factor,
-                               event.xdata + (right-event.xdata)*factor)
-            self.axis.set_ylim(event.ydata + (bottom-event.ydata)*factor,
-                               event.ydata + (top-event.ydata)*factor)
-            self._zoomed = True
-            self._layout_chart_labels()
-            self._request_draw()
-            return
         if self._legend_scroll_limit and event.inaxes in (self.recommendation_axis, self.scroll_axis):
             step = 1 if event.button == "down" else -1
             self._scroll_to(self._legend_offset + .09 * step)
 
-    def _layout_chart_labels(self):
-        """Assign visible numbers to distinct screen slots nearest their point."""
+    def _place_groups(self, scale):
+        """Group exact ties in the original data, independently of display scale."""
+        for badge in self._group_labels.values():
+            badge.remove()
+        self._group_labels.clear()
+        self._point_groups.clear()
+        occupied = []
+        by_coordinate = {}
+        for rec in self._recommendations:
+            key = (rec.conservative_cost_usd, rec.conservative_accuracy)
+            by_coordinate.setdefault(key, []).append(rec.model_name)
+        for (cost, score), names in by_coordinate.items():
+            if len(names) < _MIN_IDENTICAL_POINTS:
+                continue
+            group = frozenset(names)
+            self._point_groups.update((name, group) for name in group)
+            label = self.axis.annotate(f"{len(group)} combinations", (cost * 1000, score),
+                xytext=(0, 12), textcoords="offset points", ha="center", va="bottom",
+                fontsize=10, fontfamily=self.font, color=MUTED, zorder=6)
+            bounds = self.axis.bbox
+            for dy in (12, -28, 34, -50):
+                label.set_position((0, dy))
+                box = label.get_window_extent().padded(3 * scale)
+                dx = max(0, bounds.x0-box.x0) - max(0, box.x1-bounds.x1)
+                label.set_position((dx / scale, dy))
+                box = label.get_window_extent().padded(3 * scale)
+                if bounds.contains(*box.min) and bounds.contains(*box.max) and not box.count_overlaps(occupied):
+                    break
+            self._group_labels[group] = label
+            occupied.append(box)
+        if self._active_group and self._active_group not in self._group_labels:
+            old = self._active_group
+            group = max(self._group_labels, key=lambda g: len(g & old), default=None)
+            self._active_group = group if group and len(group & old) > len(old)/2 else None
+            self._legend_offset = 0
+        if self._active_group:
+            self._group_labels[self._active_group].set_color(MINT)
+        return occupied
+
+    def _layout_chart_labels(self, _event=None, *, prioritize_selected=False):
+        """Keep numbers near their own markers, with room to click each target."""
+        from matplotlib.path import Path
+        from matplotlib.transforms import Bbox
+
         labels = self._chart_labels
         if not labels:
             return
         bbox = self.axis.bbox
         scale = self.figure.dpi / 72
-        width = max(18, 8 * len(str(len(labels))) + 6) * scale
-        height = (FONT_MEDIUM + 6) * scale
-        slots = [(bbox.x0 + 4 + col * width, bbox.y0 + 4 + row * height)
-                 for col in range(int((bbox.width - 8) / width))
-                 for row in range(int((bbox.height - 8) / height))]
         points = [self.axis.transData.transform(point) for point, _, _ in labels]
-        # Leave room for direct point selection, including cycling through ties.
-        anchors = set(map(tuple, points))
-        slots = [(x, y) for x, y in slots if not any(
-            x - 3 <= px <= x + width and y - 3 <= py <= y + height for px, py in anchors)]
-        for (px, py), (_, artist, _) in zip(points, labels):
-            visible = bool(slots) and bbox.contains(px, py)
-            artist.set_visible(visible)
-            if visible:
-                idx = min(range(len(slots)), key=lambda i:
-                          (slots[i][0] - px - 8 * scale)**2 + (slots[i][1] - py - 8 * scale)**2)
-                x, y = slots.pop(idx)
-                artist.set_position(((x - px) / scale, (y - py) / scale))
+        frontier = Path(points)
+        occupied = [Bbox.from_bounds(x-6*scale, y-6*scale, 12*scale, 12*scale)
+                    for x, y in set(map(tuple, points))]
+        occupied.extend(self._place_groups(scale))
+        if _event is not None:
+            self._render_legend()
+        order = range(len(labels))
+        if prioritize_selected:
+            order = sorted(order, key=lambda i: labels[i][2] != self._selected_combination)
+        for i in order:
+            _, artist, name = labels[i]
+            leader = self._chart_leaders[i]
+            px, py = points[i]
+            artist.set_visible(False)
+            leader.set_visible(False)
+            if name in self._point_groups and name != self._selected_combination:
+                continue
+            if not bbox.contains(px, py):
+                continue
+            width = 8 * len(artist.get_text()) + 2
+            height = FONT_MEDIUM + 3
+            # Use screen distances: costs and scores have different axis scales.
+            neighbors = [(x-px, y-py) for j, (x, y) in enumerate(points) if j != i
+                         and (x-px)**2 + (y-py)**2 < (24*scale)**2]
+            distinct = [(dx, dy) for dx, dy in neighbors if dx or dy]
+            nearest = min(distinct, key=lambda v: v[0]**2 + v[1]**2, default=None)
+            for gap in ((7, 15, 26, 42) if nearest else (8, 26, 42)):
+                positions = ((gap, gap), (-gap-width, gap), (gap, -gap-height),
+                             (-gap-width, -gap-height), (-width/2, gap), (-width/2, -gap-height),
+                             (gap, -height/2), (-gap-width, -height/2))
+                if nearest:
+                    nx, ny = nearest
+                    # Put horizontal pairs above the markers, fanning left/right.
+                    # For steep pairs use the right side, fanning down/up.
+                    if abs(nx) >= abs(ny):
+                        preferred = (-width-2 if nx > 0 else 2, gap)
+                    else:
+                        preferred = (gap, -height-2 if ny > 0 else 2)
+                    def placement_key(offset):
+                        cx = (offset[0] + width/2) * scale
+                        cy = (offset[1] + height/2) * scale
+                        own_distance = cx*cx + cy*cy
+                        misleading = any((cx-x)**2 + (cy-y)**2 < own_distance for x, y in distinct)
+                        text_box = Bbox.from_bounds(px+offset[0]*scale, py+offset[1]*scale,
+                                                    width*scale, height*scale)
+                        on_line = frontier.intersects_bbox(text_box.padded(2*scale), filled=False)
+                        return misleading, on_line, (offset[0]-preferred[0])**2 + (offset[1]-preferred[1])**2
+                    positions = sorted((preferred, *positions), key=placement_key)
+                for dx, dy in positions:
+                    box = Bbox.from_bounds(px+dx*scale, py+dy*scale, width*scale, height*scale)
+                    if not (bbox.contains(*box.min) and bbox.contains(*box.max)) or box.count_overlaps(occupied):
+                        continue
+                    artist.set_position((dx, dy))
+                    artist.set_visible(True)
+                    leader.set_position((dx + width/2, dy + height/2))
+                    leader.set_visible(bool(neighbors) or (dx, dy) != (8, 8))
+                    occupied.append(box.padded(scale))
+                    break
+                if artist.get_visible():
+                    break
+        if not prioritize_selected and any(name == self._selected_combination and not artist.get_visible()
+                                           for _, artist, name in labels):
+            self._layout_chart_labels(prioritize_selected=True)
 
     def _render_status(self):
         phase = ("Finished" if self.finished else "Finishing…" if self.finish_requested
@@ -371,13 +443,15 @@ class LiveParetoPlot:
         ax = self.axis
         has_points = bool(self._recommendations)
         ax.set_visible(has_points)
-        if self.reset_button is not None:
-            self.reset_button.ax.set_visible(has_points)
         self.empty_title.set_visible(not has_points)
         self.empty_detail.set_visible(not has_points)
         self.progress_axis.set_visible(not has_points and self._warming_up and not self.finished and self.warm_total is not None)
         self._chart_labels.clear()
+        self._chart_leaders.clear()
+        self._group_labels.clear()
+        self._point_groups.clear()
         if not has_points:
+            self._active_group = None
             heading = "No recommendation available" if self.finished else (
                 "Collecting initial samples" if self._warming_up else "Evaluating combinations")
             self.empty_title.set_text(heading)
@@ -388,7 +462,6 @@ class LiveParetoPlot:
                 progress = f"{self._last_evaluations:,} / {self.warm_total:,} evaluations   ·   {fraction:.0%}"
             self.empty_detail.set_text(progress)
             return
-        view = (ax.get_xlim(), ax.get_ylim())
         ax.clear()
         costs = [r.conservative_cost_usd * 1000 for r in self._recommendations]
         scores = [r.conservative_accuracy for r in self._recommendations]
@@ -396,9 +469,6 @@ class LiveParetoPlot:
         ax.scatter(costs, scores, color=BLUE, edgecolor=BG, linewidth=1.5, s=70, zorder=3)
         ax.set_ylim(min(-.03, min(scores)-.08), max(1.03, max(scores)+.08))
         ax.margins(x=.14)
-        if self._zoomed:
-            ax.set_xlim(view[0])
-            ax.set_ylim(view[1])
         for number, (cost, score, recommendation) in enumerate(zip(costs, scores, self._recommendations), 1):
             selected = recommendation.model_name == self._selected_combination
             if selected:
@@ -410,6 +480,9 @@ class LiveParetoPlot:
                                 weight="bold" if selected else "normal", fontfamily=self.font,
                                 annotation_clip=True)
             self._chart_labels.append(((cost, score), label, recommendation.model_name))
+            self._chart_leaders.append(ax.annotate("", (cost, score), xytext=(0, 0),
+                textcoords="offset points", zorder=2.5,
+                arrowprops=dict(arrowstyle="-", color=MUTED, linewidth=.7, shrinkA=5, shrinkB=5)))
         ax.grid(color=EDGE, linewidth=.6, alpha=.7)
         ax.set_axisbelow(True)
         for side in ("top", "right"):
@@ -435,13 +508,18 @@ class LiveParetoPlot:
 
         ax = self.recommendation_axis
         self._card_regions.clear()
+        self._back_label = None
         ax.clear()
         ax.set(xlim=(0, 1), ylim=(0, 1))
         ax.set_axis_off()
         ax.add_patch(FancyBboxPatch((.002, .035), .996, .963, transform=ax.transAxes,
             boxstyle="round,pad=0,rounding_size=0.025", facecolor=PANEL, edgecolor=EDGE))
-        ax.text(.055, .913, "Recommended combinations", color=TEXT, fontsize=15,
+        heading = f"{len(self._active_group)} combinations" if self._active_group else "Recommended combinations"
+        ax.text(.055, .913, heading, color=TEXT, fontsize=15,
                 va="center", weight="bold", fontfamily=self.font, transform=ax.transAxes)
+        if self._active_group:
+            self._back_label = ax.text(.948, .913, "Show all", ha="right", va="center",
+                fontsize=FONT_MEDIUM, color=MINT, fontfamily=self.font, transform=ax.transAxes)
         if not self._recommendations:
             self._legend_scroll_limit = self._legend_offset = 0.0
             self.scroll_thumb.set_ydata([0, 1])
@@ -485,20 +563,22 @@ class LiveParetoPlot:
             return lines
 
         cards = []
-        for recommendation in self._recommendations:
+        for rank, recommendation in enumerate(self._recommendations, 1):
+            if self._active_group and recommendation.model_name not in self._active_group:
+                continue
             role_lines = []
             for role, model in recommendation.combo.items():
                 role_lines.extend(role_lines_for(f"{role.replace('_', ' ').title()}: {model}"))
-            cards.append((recommendation, role_lines, .098 + .048 * len(role_lines)))
+            cards.append((rank, recommendation, role_lines, .098 + .048 * len(role_lines)))
 
         viewport_top, viewport_bottom = .86, .084
         viewport_height = viewport_top - viewport_bottom
-        content_height = sum(height for _, _, height in cards)
+        content_height = sum(height for _, _, _, height in cards)
         self._legend_scroll_limit = max(0.0, content_height - viewport_height)
         self._legend_offset = min(self._legend_offset, self._legend_scroll_limit)
         if reveal_selection:
             start = 0.0
-            for recommendation, _, height in cards:
+            for _, recommendation, _, height in cards:
                 if recommendation.model_name == self._selected_combination:
                     minimum = min(start, start + height - viewport_height)
                     self._legend_offset = min(self._legend_scroll_limit,
@@ -511,7 +591,7 @@ class LiveParetoPlot:
                                      transform=ax.transAxes)
 
         top = viewport_top + self._legend_offset
-        for index, (recommendation, role_lines, height) in enumerate(cards, 1):
+        for index, recommendation, role_lines, height in cards:
             bottom = top - height
             if top <= viewport_bottom:
                 break

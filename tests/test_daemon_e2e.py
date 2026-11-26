@@ -175,6 +175,20 @@ def test_remote_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
         tracker.stop()
 
 
+def test_remote_reports_missing_usage(daemon, mock_upstream, monkeypatch):
+    from tests.conftest import MOCK_RESPONSE_BODY
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
+    monkeypatch.delitem(MOCK_RESPONSE_BODY, "usage")
+    with LLMTracker() as tracker:
+        with tracker.track(data_id="missing-usage", combo_id="budget"):
+            with httpx.Client(base_url=mock_upstream.base_url) as client:
+                response = client.post("/v1/chat/completions", json={"model": "paid", "messages": []})
+                assert response.status_code == 200
+        with pytest.raises(ValueError, match="Token usage is unavailable"):
+            tracker.get_usage(data_id="missing-usage")
+        assert tracker.get_records(data_id="missing-usage")[0].usage_unavailable
+
+
 def test_remote_get_session_env_points_at_daemon(daemon, monkeypatch):
     """``get_session_env`` returns the daemon's per-session port + bundle."""
     from urllib.parse import urlparse

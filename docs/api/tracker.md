@@ -136,7 +136,7 @@ All four params are optional. `router=` falls back to the `router` passed to `LL
 |:---|:---|:---|
 | `records` (property) | `List[CallRecord]` | All records captured so far. |
 | `get_records(data_id=None, combo_id=None, agent_id=None)` | `List[CallRecord]` | Filtered records. |
-| `get_usage(...)` | `Dict[str, Tuple[int, int]]` | `{model: (input_tokens, output_tokens)}` aggregated over matching records. |
+| `get_usage(...)` | `Dict[str, Tuple[int, int]]` | Aggregated input/output counts per model. Raises `ValueError` when a matching successful call lacks measurable usage. Inspect `get_records(...)` for individual outcomes. |
 | `get_cached_latency(...)` | `float` | Total latency (seconds) of cache-hit records — useful for "how much wall time did caching save?" |
 | `print_summary(data_id=None, combo_id=None, agent_id=None)` | `None` | Model sequence, per-model tokens, and total latency. Grouped by `data_id` when records span multiple distinct values; flat otherwise. Thin wrapper over `agentopt.routing.print_routing_summary`. |
 

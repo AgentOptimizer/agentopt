@@ -33,6 +33,7 @@ from .models import CallRecord
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo, SessionManager
+from .usage import UsageExtractionError
 
 if TYPE_CHECKING:
     from agentopt.routing.base import Router
@@ -310,6 +311,11 @@ class LocalBackend(_Backend):
         )
         totals: Dict[str, List[int]] = {}
         for r in records:
+            if r.usage_unavailable:
+                raise UsageExtractionError(
+                    "Token usage is unavailable for a successful model call. "
+                    "Enable provider usage reporting (stream_options.include_usage for OpenAI streams)."
+                )
             if r.model not in totals:
                 totals[r.model] = [0, 0]
             totals[r.model][0] += r.prompt_tokens

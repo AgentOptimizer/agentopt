@@ -30,3 +30,8 @@ class CallRecord:
     status_code: int = 200
     # Populated when the upstream call failed (non-2xx, connection error, etc.).
     error: Optional[str] = None
+
+    @property
+    def usage_unavailable(self) -> bool:
+        """A successful response whose token usage the recorder could not measure."""
+        return self.status_code == 200 and self.error is not None

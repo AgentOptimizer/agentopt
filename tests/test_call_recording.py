@@ -10,6 +10,7 @@ Covers two guarantees:
 """
 
 import asyncio
+import gzip
 import json
 import threading
 
@@ -176,6 +177,62 @@ def test_rate_limit_is_recorded(upstream):
         assert records[0].error == "HTTP 429"
     finally:
         tracker.stop()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_buffered_event_stream_can_be_consumed_and_cached(asynchronous):
+    body = b'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":3}}\n\ndata: [DONE]\n\n'
+    wire = gzip.compress(body)
+    calls = []
+
+    def upstream(request):
+        calls.append(request.url)
+        return httpx.Response(200, headers={"Content-Encoding": "gzip", "Content-Type": "text/event-stream"},
+                              stream=httpx.ByteStream(wire))
+
+    url = "https://test.invalid/v1/chat/completions"
+    request = {"model": "gpt-4o-mini", "stream": True, "stream_options": {"include_usage": True}}
+    transport = httpx.MockTransport(upstream)
+
+    async def read_async():
+        async with httpx.AsyncClient(transport=transport) as client:
+            async with client.stream("POST", url, json=request) as response:
+                assert b"".join([chunk async for chunk in response.aiter_raw()]) == wire
+            async with client.stream("POST", url, json=request) as response:
+                assert await response.aread() == body
+
+    with LLMTracker(cache=True, cache_dir=None) as tracker:
+        with tracker.track(data_id="stream", combo_id="test"):
+            if asynchronous:
+                asyncio.run(read_async())
+            else:
+                with httpx.Client(transport=transport) as client:
+                    with client.stream("POST", url, json=request) as response:
+                        assert b"".join(response.iter_raw()) == wire
+                    with client.stream("POST", url, json=request) as response:
+                        assert response.read() == body
+        assert len(calls) == 1
+        records = tracker.get_records()
+        assert [(r.prompt_tokens, r.completion_tokens, r.cached) for r in records] == [(8, 3, False), (8, 3, True)]
+        assert records[0].latency_seconds == records[1].latency_seconds > 0
+
+
+def test_reported_zero_tokens_and_split_stream_usage_are_measurable():
+    from agentopt.proxy.usage import extract_usage_streaming, UsageExtractionError
+
+    def read(frames):
+        body = b"".join(b"data:" + json.dumps(frame).encode() + b"\n\n" for frame in frames)
+        return extract_usage_streaming(body, {"model": "test", "stream": True}, "/messages")
+
+    zero = read([{"usage": {"prompt_tokens": 0, "completion_tokens": 0}}])
+    assert (zero.prompt_tokens, zero.completion_tokens) == (0, 0)
+    split = read([{"message": {"usage": {"input_tokens": 5}}},
+                  {"usage": {"output_tokens": 3}}])
+    assert (split.prompt_tokens, split.completion_tokens) == (5, 3)
+    with pytest.raises(UsageExtractionError):
+        read([{"usage": {"input_tokens": 5}}])
+    with pytest.raises(UsageExtractionError, match="nonnegative integer"):
+        read([{"usage": {"input_tokens": -1, "output_tokens": 0}}])
 
 
 def test_connection_failure_is_recorded():

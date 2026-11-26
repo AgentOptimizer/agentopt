@@ -38,6 +38,8 @@ _OPENAI_COMPAT_PATHS = (
 _PROMPT_KEYS = ("prompt_tokens", "input_tokens", "promptTokenCount")
 _COMPLETION_KEYS = ("completion_tokens", "output_tokens")
 _GEMINI_COMPLETION_KEYS = ("candidatesTokenCount", "thoughtsTokenCount")
+_TOKEN_COUNT_KEYS = (*_PROMPT_KEYS, *_COMPLETION_KEYS, *_GEMINI_COMPLETION_KEYS,
+                     "totalTokenCount", "cache_read_input_tokens", "cache_creation_input_tokens")
 
 
 class UsageExtractionError(ValueError):
@@ -111,6 +113,15 @@ def has_include_usage(request_body: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _validate_counts(usage: dict) -> None:
+    if not isinstance(usage, dict):
+        raise UsageExtractionError("expected an object containing token counts")
+    for key in _TOKEN_COUNT_KEYS:
+        count = usage.get(key)
+        if count is not None and (type(count) is not int or count < 0):
+            raise UsageExtractionError(f"expected a nonnegative integer for {key}")
+
+
 def _gemini_completion_tokens(usage: dict) -> int:
     """Sum visible output and reasoning tokens for Gemini thinking models.
 
@@ -146,6 +157,7 @@ def _extract_usage_dict(usage: dict) -> Tuple[int, int]:
     key cannot be found.  Both axes must be present — silent zero-fill would
     mask broken responses.
     """
+    _validate_counts(usage)
     prompt = next((usage[k] for k in _PROMPT_KEYS if k in usage), None)
     if prompt is None:
         raise UsageExtractionError(
@@ -162,7 +174,7 @@ def _extract_usage_dict(usage: dict) -> Tuple[int, int]:
     return prompt, completion
 
 
-def _parse_chunk(chunk: dict) -> Optional[ParsedUsage]:
+def _parse_chunk(chunk: dict, request_model: Optional[str] = None) -> Optional[ParsedUsage]:
     """Extract usage from one response object.
 
     Returns ``None`` when the chunk has no usage section at all (a normal
@@ -178,6 +190,7 @@ def _parse_chunk(chunk: dict) -> Optional[ParsedUsage]:
         model = model or msg.get("model")
     if not usage:
         return None
+    model = model or request_model
     if not model:
         raise UsageExtractionError(
             f"usage dict present but no `model` / `modelVersion` field. "
@@ -198,7 +211,7 @@ def _parse_chunk(chunk: dict) -> Optional[ParsedUsage]:
 # ---------------------------------------------------------------------------
 
 
-def extract_usage(body_bytes: bytes) -> ParsedUsage:
+def extract_usage(body_bytes: bytes, request_model: Optional[str] = None) -> ParsedUsage:
     """Parse usage from a non-streaming response body.
 
     Raises :class:`UsageExtractionError` on any failure — empty body,
@@ -217,7 +230,7 @@ def extract_usage(body_bytes: bytes) -> ParsedUsage:
         ) from exc
 
     if isinstance(parsed, dict):
-        usage = _parse_chunk(parsed)
+        usage = _parse_chunk(parsed, request_model)
         if usage is None:
             raise UsageExtractionError(
                 "response body is a JSON object but has no recognized "
@@ -239,7 +252,7 @@ def extract_usage(body_bytes: bytes) -> ParsedUsage:
             if not isinstance(chunk, dict):
                 continue
             try:
-                u = _parse_chunk(chunk)
+                u = _parse_chunk(chunk, request_model)
             except UsageExtractionError as exc:
                 last_error = exc
                 continue
@@ -292,13 +305,13 @@ def extract_usage_streaming(
     completion_tokens = 0
     model: Optional[str] = request_body.get("model")
     sse_lines_seen = 0
-    found_usage = False
+    found_prompt = found_completion = False
 
     for line in text.splitlines():
-        if not line.startswith("data: "):
+        if not line.startswith("data:"):
             continue
         sse_lines_seen += 1
-        payload = line[len("data: ") :]
+        payload = line[len("data:") :]
         if payload.strip() == "[DONE]":
             continue
         try:
@@ -318,16 +331,20 @@ def extract_usage_streaming(
         # Per-chunk reads stay tolerant: a frame may legitimately carry
         # only one direction (Anthropic message_start has input only).
         # The aggregate is what's checked at the end.
+        _validate_counts(usage)
         prompt_axis, completion_axis = _streaming_chunk_axes(usage)
         if prompt_axis > prompt_tokens:
             prompt_tokens = prompt_axis
         if completion_axis > completion_tokens:
             completion_tokens = completion_axis
         model = model or chunk.get("model") or chunk.get("modelVersion")
-        if prompt_axis or completion_axis:
-            found_usage = True
+        found_prompt |= any(usage.get(key) is not None for key in _PROMPT_KEYS)
+        found_completion |= any(usage.get(key) is not None for key in (*_COMPLETION_KEYS, *_GEMINI_COMPLETION_KEYS))
+        if "totalTokenCount" in usage and "promptTokenCount" in usage:
+            completion_tokens = max(completion_tokens, _gemini_completion_tokens(usage))
+            found_completion = True
 
-    if found_usage:
+    if found_prompt and found_completion:
         return ParsedUsage(
             model=model,
             prompt_tokens=prompt_tokens,
@@ -336,7 +353,9 @@ def extract_usage_streaming(
         )
 
     # No frame produced usage — diagnose with the most actionable message.
-    if (
+    if found_prompt or found_completion:
+        reason = "stream ended without both input and output token counts"
+    elif (
         is_openai_compatible_url(request_url)
         and request_body.get("stream") is True
         and not has_include_usage(request_body)
@@ -368,9 +387,8 @@ def _streaming_chunk_axes(usage: dict) -> Tuple[int, int]:
     """Lenient per-chunk read for streaming.
 
     Streaming chunks legitimately carry only one direction at a time, so
-    missing keys here fall through to ``0``.  The aggregate ``found_usage``
-    check in :func:`extract_usage_streaming` decides whether the *whole*
-    response was unparseable.
+    missing keys here fall through to ``0``. The caller checks that both
+    axes appeared across the whole response.
     """
     prompt_axis = (
         (

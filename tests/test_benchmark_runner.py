@@ -10,13 +10,21 @@ from types import SimpleNamespace
 import pytest
 
 import agentopt
-from tests.test_gittins import RecordingTracker
+from tests.test_gittins import RecordingTracker, make_selector
 
 
 SCRIPT = Path(__file__).parents[1] / "examples" / "selection" / "benchmark_runner.py"
 spec = importlib.util.spec_from_file_location("benchmark_runner", SCRIPT)
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
+
+
+def test_progress_displays_model_alias_verbatim(capsys):
+    alias = "local + review"
+    selector, _ = make_selector(mode="single", count=2, outcomes={alias: .9}, tokens={alias: 10})
+    result = selector.select_best()
+    runner.show_progress(result, total_questions=2)
+    assert str({"solver": alias}) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("contents,detail", [

@@ -103,7 +103,7 @@ class AgentoptAddon:
 
     def request(self, flow: http.HTTPFlow) -> None:
         json_body = decode_json_body(flow.request.content)
-        flow.metadata[_T0_KEY] = time.monotonic()
+        flow.metadata[_T0_KEY] = time.perf_counter()
 
         # Routing: run the active router *before* the cache lookup so the
         # cache key reflects the model that will actually be sent upstream.
@@ -126,7 +126,7 @@ class AgentoptAddon:
         if self._cache is None or flow.request.method != "POST" or not json_body:
             return
 
-        cache_key = _make_cache_key(json_body, flow.request.path)
+        cache_key = _make_cache_key(json_body, flow.request.pretty_url, flow.request.headers)
         entry = self._cache.get(cache_key)
         if entry is None:
             return
@@ -171,7 +171,7 @@ class AgentoptAddon:
             latency = float(flow.metadata.get("agentopt.cached_latency", 0.0))
         else:
             t0 = flow.metadata.get(_T0_KEY)
-            latency = (time.monotonic() - t0) if t0 is not None else 0.0
+            latency = (time.perf_counter() - t0) if t0 is not None else 0.0
 
         status = flow.response.status_code
         body_bytes = flow.response.content if flow.response.content else b""
@@ -179,7 +179,7 @@ class AgentoptAddon:
         if status != 200:
             record_error = f"HTTP {status}"
 
-        self._recorder.record(
+        usage_measured = self._recorder.record(
             self._session,
             json_body,
             body_bytes,
@@ -192,9 +192,9 @@ class AgentoptAddon:
         )
 
         # Cache successful 200s on the miss path.
-        if not cached and status == 200 and self._cache is not None and json_body:
+        if not cached and status == 200 and usage_measured and self._cache is not None and json_body:
             self._cache.put(
-                _make_cache_key(json_body, flow.request.path),
+                _make_cache_key(json_body, flow.request.pretty_url, flow.request.headers),
                 CacheEntry(
                     response_bytes=body_bytes,
                     response_headers=dict(flow.response.headers),
@@ -220,7 +220,7 @@ class AgentoptAddon:
         json_body = decode_json_body(flow.request.content)
         request_url = flow.request.pretty_url
         t0 = flow.metadata.get(_T0_KEY)
-        latency = (time.monotonic() - t0) if t0 is not None else 0.0
+        latency = (time.perf_counter() - t0) if t0 is not None else 0.0
         err = flow.error.msg if flow.error else "upstream error"
 
         self._recorder.record(

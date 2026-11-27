@@ -320,7 +320,7 @@ shows the restored state rather than replaying old progress on screen.
 Python also checkpoints Gittins automatically in both objective modes, with or
 without a live window. Run from the same working directory and inspect
 `selector.checkpoint_path` for the database under `.agentopt_cache/checkpoints/`.
-The default key includes the Python agent and scoring definitions. Give external
+The default key includes the Python agent and scoring definitions and serializable class settings. Give external
 prompts, tool settings and custom provider endpoints a stable `checkpoint_id`
 and update it when they change. When a callable captures opaque runtime state,
 AgentOpt saves a fresh checkpoint and reports the ID to use on restart. For
@@ -361,8 +361,14 @@ crash. One checkpoint can be used by only one process at a time; its `.lock`
 sidecar releases automatically on exit. Symlinks resolve to the same canonical
 path; hard-linked checkpoint files are rejected. Keep the SQLite file to continue later.
 
-Format 4 records both total limits. For an older checkpoint, start a new run
-with a fresh checkpoint path.
+Format 4 records both total limits. A failed evaluation with measured charges
+or missing usage adds a separate attempt ledger and promotes the file to format 5.
+Retries count known non-cached charges from earlier attempts toward the cumulative
+budget, while only successful cells count toward evaluation coverage. If
+`unmeasured_failed_attempts` is positive, reported spend is a lower bound;
+reconcile unknown charges with the provider. A hard crash before recording the
+attempt may leave charges unknown. Older binaries reject format 5; checkpoints
+predating format 4 require a fresh path.
 Finish saves the report and stops this run; it does not discard the checkpoint.
 Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
 disable saving and reuse. Other selection algorithms do not yet support this.

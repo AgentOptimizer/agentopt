@@ -77,6 +77,7 @@ class GittinsSelectionResults(SelectionResults):
     """
 
     objective_mode: str
+    unmeasured_failed_attempts: int = 0
     pending_batch_evaluations: int = 0
     recommendations: list[GittinsRecommendation] = Field(default_factory=list)
     stop_reason: str
@@ -192,6 +193,8 @@ class GittinsModelSelector(BaseModelSelector):
     # Random baselines reuse the observation methods without this initializer.
     # Only Gittins itself enables persistence.
     checkpoint_path = None
+    _failed_spend = 0
+    _unmeasured_attempts = 0
     _journal = None
 
     def __init__(self, agent=None, models=None, eval_fn=None, dataset=None, *,
@@ -274,11 +277,12 @@ class GittinsModelSelector(BaseModelSelector):
         # endpoints and other configuration outside the model/dataset arguments.
         self._journal = None
         self.restored_cells = 0
+        inferred_workflow = None
         automatic = checkpoint_path is AUTO_CHECKPOINT
         if automatic:
             if checkpoint_id is None:
                 try:
-                    checkpoint_id = workflow_identity(agent, eval_fn)
+                    checkpoint_id = inferred_workflow = workflow_identity(agent, eval_fn)
                 except (ValueError, TypeError, RecursionError):
                     # A fresh ID prevents silently restoring another runtime configuration.
                     checkpoint_id = uuid4().hex
@@ -324,6 +328,7 @@ class GittinsModelSelector(BaseModelSelector):
             self._checkpoint_input_identity = fingerprint({"dataset": dataset, "models": list(models.items()), "prices": _ordered_prices(model_prices)})
             self._checkpoint_setting_keys = tuple(settings)
             self._checkpoint_settings_identity = fingerprint(settings)
+        self._inferred_workflow = inferred_workflow
         super().__init__(agent=agent, models=models, eval_fn=eval_fn, dataset=dataset,
                          model_prices=model_prices, tracker=tracker,
                          lambda_cost=lambda_cost, lambda_latency=lambda_latency)
@@ -408,6 +413,13 @@ class GittinsModelSelector(BaseModelSelector):
         self._run_dataset = self.dataset
         self._run_combos = self._all_combos()
         if self.checkpoint_path is not None:
+            if self._inferred_workflow is not None:
+                try:
+                    current_workflow = workflow_identity(self.agent, self.eval_fn)
+                except (ValueError, TypeError, RecursionError) as exc:
+                    raise CheckpointError("Workflow changed after construction; create a new selector") from exc
+                if current_workflow != self._inferred_workflow:
+                    raise CheckpointError("Workflow changed after construction; create a new selector")
             self._run_dataset = deepcopy([self.dataset[i] for i in range(len(self.dataset))])
             models = deepcopy(self._models)
             current = fingerprint({"dataset": self._run_dataset, "models": list(models.items()), "prices": _ordered_prices(self.model_prices)})
@@ -447,7 +459,7 @@ class GittinsModelSelector(BaseModelSelector):
 
     def _selection_cost_so_far(self):
         # Charged calls only, accumulated before tracker archival.
-        return float(self._spent)
+        return float(self._spent + self._failed_spend)
 
     def _token_charge(self, model, input_tokens, output_tokens):
         rates = get_model_price(model, custom_prices=self._custom_prices)
@@ -460,6 +472,27 @@ class GittinsModelSelector(BaseModelSelector):
 
     def _record_charge(self, record):
         return self._token_charge(record.model, record.prompt_tokens, record.completion_tokens)
+
+    def _record_failed_attempt(self, arm, question):
+        if self._journal is None:
+            return
+        attempt_id = f"{self._names[arm]}::gittins_{self._run_id}::dp_{question + 1}"
+        charge = Fraction(0)
+        unmeasured = False
+        for record in self._tracker.get_records():
+            if record.data_id != attempt_id or record.cached:
+                continue
+            if getattr(record, "usage_unavailable", False):
+                unmeasured = True
+            else:
+                try:
+                    charge += self._record_charge(record)
+                except ValueError:
+                    unmeasured = True
+        if charge or unmeasured:
+            self._journal.save_failed_attempt(attempt_id, charge, unmeasured)
+            self._failed_spend += charge
+            self._unmeasured_attempts += int(unmeasured)
 
     def _restored_cell(self, item):
         dp = DatapointResult.model_validate(item["datapoint"])
@@ -475,6 +508,13 @@ class GittinsModelSelector(BaseModelSelector):
             self._spent += self._record_charge(record)
 
     async def _evaluate_cell(self, arm, question, agent, parallel):
+        try:
+            return await self._evaluate_new_cell(arm, question, agent, parallel)
+        except Exception:
+            self._record_failed_attempt(arm, question)
+            raise
+
+    async def _evaluate_new_cell(self, arm, question, agent, parallel):
         label = f"{self._names[arm]}::gittins_{self._run_id}"
         tasks = [deepcopy(self._run_dataset[question]) if self._journal else self._run_dataset[question]]
         if parallel or self._is_async_run:
@@ -515,11 +555,11 @@ class GittinsModelSelector(BaseModelSelector):
         self._evaluations += 1
         self._spent += Fraction(str(charge))
 
-    async def _pull(self, arm, question_ids, parallel, max_concurrent):
+    async def _pull(self, arm, question_ids, parallel, max_concurrent, expected_charge=0):
         """Persist each successful cell before advancing the adaptive batch."""
         saved = self._journal.begin_batch(self._names[arm], question_ids) if self._journal else {}
         if self._journal and self._journal.batch_index <= self._journal.saved_batches and len(saved) < len(question_ids):
-            self._publish_partial_restore(arm, question_ids, saved)
+            self._publish_partial_restore(arm, question_ids, saved, expected_charge)
         # Constructing an agent can itself initialize clients; avoid it entirely
         # when every cell in the batch already exists.
         agent = self.agent(deepcopy(self._combos[arm]) if self._journal else self._combos[arm]) if len(saved) < len(question_ids) else None
@@ -549,7 +589,7 @@ class GittinsModelSelector(BaseModelSelector):
             self._record_cell(arm, observation, len(self._datapoints[arm]))
         return self._spent - before
 
-    def _publish_partial_restore(self, arm, question_ids, saved):
+    def _publish_partial_restore(self, arm, question_ids, saved, expected_charge):
         """Expose durable partial work before authorizing any missing requests."""
         count = len(saved)
         before_spent = self._spent
@@ -577,6 +617,11 @@ class GittinsModelSelector(BaseModelSelector):
         if self._should_stop():
             snapshot.stop_reason = "user_stopped"
             raise _RestoredBatchStopped(snapshot)
+        if self._failed_spend and self.max_spend is not None:
+            remaining = snapshot.pending_batch_evaluations
+            if self._budget_stop(remaining, expected_charge * remaining) == "search_cost_budget":
+                snapshot.stop_reason = "search_cost_budget" if self._calibrated else "warm_start_budget"
+                raise _RestoredBatchStopped(snapshot)
         # The algorithm will incorporate the entire batch once; this temporary
         # view must not update its posterior twice when the missing cells finish.
         if count:
@@ -599,7 +644,8 @@ class GittinsModelSelector(BaseModelSelector):
             return "question_budget"
         if max_spend is not None:
             limit = Fraction(str(max_spend))
-            if self._spent >= limit or self._spent + predicted_charge > limit:
+            spent = self._spent if restoring else self._spent + self._failed_spend
+            if spent >= limit or spent + predicted_charge > limit:
                 return "search_cost_budget"
         return None
 
@@ -785,6 +831,8 @@ class GittinsModelSelector(BaseModelSelector):
         self._orders = [np.random.default_rng(child).permutation(n_questions).tolist() for child in children[1:]]
         self._record_cursor = len(self._tracker.get_records())
         self._spent, self._evaluations = 0, 0
+        self._failed_spend = self._journal.failed_spend if self._journal else 0
+        self._unmeasured_attempts = self._journal.unmeasured_attempts if self._journal else 0
         self._stop_recommended = False
         dimensions = 1 if self.objective_mode == "single" else 2
         # Completed posteriors and observed tie-break statistics never change.
@@ -898,7 +946,7 @@ class GittinsModelSelector(BaseModelSelector):
             reason = self._budget_stop(len(questions), charge_per_question[arm] * len(questions))
             if reason:
                 break
-            await self._pull(arm, questions, parallel, max_concurrent)
+            await self._pull(arm, questions, parallel, max_concurrent, charge_per_question[arm])
             observations = self._calibration.observations(self._scores[arm][-len(questions):], self._costs[arm][-len(questions):])
             self._posteriors[arm].update(observations.mean(axis=0), self._calibration.question_noise, len(questions))
             values = self._scalar_observations(arm)[-len(questions):]
@@ -975,5 +1023,6 @@ class GittinsModelSelector(BaseModelSelector):
                                        objective_mode=self.objective_mode, stop_reason=reason,
                                        stop_recommended=self._stop_recommended,
                                        total_evaluations=self._evaluations,
-                                       search_cost_overshoot_usd=max(0.0, float(self._spent) - self.max_spend) if self.max_spend is not None else 0.0,
+                                       unmeasured_failed_attempts=self._unmeasured_attempts,
+                                       search_cost_overshoot_usd=max(0.0, self._selection_cost_so_far() - self.max_spend) if self.max_spend is not None else 0.0,
                                        direction_eta=list(eta))

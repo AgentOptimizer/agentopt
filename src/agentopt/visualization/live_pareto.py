@@ -297,13 +297,12 @@ class LiveParetoPlot:
             step = 1 if event.button == "down" else -1
             self._scroll_to(self._legend_offset + .09 * step)
 
-    def _place_groups(self, scale):
+    def _place_groups(self, scale, occupied):
         """Group exact ties in the original data, independently of display scale."""
         for badge in self._group_labels.values():
             badge.remove()
         self._group_labels.clear()
         self._point_groups.clear()
-        occupied = []
         by_coordinate = {}
         for rec in self._recommendations:
             key = (rec.conservative_cost_usd, rec.conservative_accuracy)
@@ -317,7 +316,13 @@ class LiveParetoPlot:
                 xytext=(0, 12), textcoords="offset points", ha="center", va="bottom",
                 fontsize=10, fontfamily=self.font, color=MUTED, zorder=6)
             bounds = self.axis.bbox
-            for dy in (12, -28, 34, -50):
+            # Search outwards above and below the marker. A fixed last-resort
+            # position can overlap a different label and route clicks to its group.
+            height = label.get_window_extent().height / scale
+            step = height + 8
+            offsets = (dy for row in range(1 + int(bounds.height / (scale * step)))
+                       for dy in (12 + row * step, -12 - height - row * step))
+            for dy in offsets:
                 label.set_position((0, dy))
                 box = label.get_window_extent().padded(3 * scale)
                 dx = max(0, bounds.x0-box.x0) - max(0, box.x1-bounds.x1)
@@ -325,16 +330,20 @@ class LiveParetoPlot:
                 box = label.get_window_extent().padded(3 * scale)
                 if bounds.contains(*box.min) and bounds.contains(*box.max) and not box.count_overlaps(occupied):
                     break
+            else:
+                # Keep the marker and its sidebar cards accessible on small canvases.
+                label.remove()
+                continue
             self._group_labels[group] = label
             occupied.append(box)
-        if self._active_group and self._active_group not in self._group_labels:
+        groups = set(self._point_groups.values())
+        if self._active_group and self._active_group not in groups:
             old = self._active_group
-            group = max(self._group_labels, key=lambda g: len(g & old), default=None)
+            group = max(groups, key=lambda g: len(g & old), default=None)
             self._active_group = group if group and len(group & old) > len(old)/2 else None
             self._legend_offset = 0
-        if self._active_group:
+        if self._active_group in self._group_labels:
             self._group_labels[self._active_group].set_color(MINT)
-        return occupied
 
     def _layout_chart_labels(self, _event=None, *, prioritize_selected=False):
         """Keep numbers near their own markers, with room to click each target."""
@@ -350,7 +359,7 @@ class LiveParetoPlot:
         frontier = Path(points)
         occupied = [Bbox.from_bounds(x-6*scale, y-6*scale, 12*scale, 12*scale)
                     for x, y in set(map(tuple, points))]
-        occupied.extend(self._place_groups(scale))
+        self._place_groups(scale, occupied)
         if _event is not None:
             self._render_legend()
         order = range(len(labels))
@@ -706,6 +715,8 @@ class LiveParetoPlot:
         self._pending_batch_evaluations = getattr(snapshot, "pending_batch_evaluations", 0)
         self._last_evaluations = snapshot.total_evaluations
         self._last_spent = "Unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.4f}"
+        if getattr(snapshot, "unmeasured_failed_attempts", 0):
+            self._last_spent = "≥ " + self._last_spent
         recommendations = sorted(snapshot.get_recommendations(),
             key=lambda r: (r.conservative_cost_usd, -r.conservative_accuracy, r.model_name))
         redraw_legend = (recommendations != self._recommendations or self.finished != snapshot.is_final

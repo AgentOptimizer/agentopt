@@ -352,3 +352,22 @@ def test_results_actions_follow_successful_export(tmp_path, monkeypatch):
         assert "Saved: results.json" in plot.detail_text.get_text()
     finally:
         plot.plt.close(plot.figure)
+
+
+def test_ui_start_failure_leaves_other_tracker_hooks_owned_by_caller(tmp_path, monkeypatch):
+    import httpx
+    from agentopt.proxy import LLMTracker, interceptor
+    monkeypatch.chdir(tmp_path)
+    matplotlib.use("Agg", force=True)
+    original = httpx.Client.send
+    refs = interceptor._install_refcount, interceptor._subprocess_install_refcount
+    with LLMTracker(cache=False, cache_dir=None):
+        external = httpx.Client.send
+        selector, tracker = make_selector(count=2)
+        with pytest.raises(RuntimeError, match="interactive Matplotlib"):
+            selector.select_best(show_ui=True)
+        assert not tracker.started and httpx.Client.send is external
+        assert (interceptor._install_refcount, interceptor._subprocess_install_refcount) == (refs[0]+1, refs[1]+1)
+        assert selector.select_best().total_evaluations == len(tracker.records)
+    assert httpx.Client.send is original
+    assert (interceptor._install_refcount, interceptor._subprocess_install_refcount) == refs

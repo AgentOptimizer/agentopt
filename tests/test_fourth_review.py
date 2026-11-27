@@ -170,3 +170,31 @@ def test_nearby_numbers_keep_their_targets_when_view_size_changes():
             assert limits == (plot.axis.get_xlim(), plot.axis.get_ylim())
     finally:
         plot.plt.close(plot.figure)
+
+
+def test_dense_exact_groups_have_distinct_click_targets():
+    from types import SimpleNamespace
+    from matplotlib.backend_bases import MouseEvent
+    from agentopt.visualization import LiveParetoPlot
+    rows = []
+    def add(count, cost, score):
+        for _ in range(count):
+            name = str(len(rows))
+            rows.append(SimpleNamespace(model_name=name, combo={"solver": name}, observed_samples=1,
+                                        conservative_cost_usd=cost, conservative_accuracy=score))
+    add(1, .001, .1)
+    for index in range(6):
+        add(5, .005 + index * .000001, .55 + index * .0001)
+    add(1, .01, .9)
+    plot = LiveParetoPlot(total_questions=1, show_window=False)
+    try:
+        plot.update(SimpleNamespace(total_evaluations=len(rows), selection_cost=.1, is_final=False,
+                                    stop_reason="running", get_recommendations=lambda: rows))
+        canvas = plot.figure.canvas
+        canvas.draw()
+        assert len(plot._group_labels) == 6
+        for group, label in plot._group_labels.items():
+            x, y = label.get_window_extent().get_points().mean(axis=0)
+            assert plot._chart_combination_at(MouseEvent("button_release_event", canvas, x, y)) == group
+    finally:
+        plot.plt.close(plot.figure)

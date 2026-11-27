@@ -373,6 +373,7 @@ def test_unmeasured_success_does_not_consume_grid_or_pollute_resume(tmp_path):
         result = selector().select_best()
         assert len(requests) == 2 and result.total_evaluations == 1
         assert result.selection_cost == pytest.approx(.0001)
+        assert result.unmeasured_failed_attempts == 1
         assert result.stop_reason == "warm_start_budget"
 
 

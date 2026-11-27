@@ -16,9 +16,10 @@ import math
 import os
 import signal
 import sys
-import tempfile
 from pathlib import Path
 from threading import Event, Lock
+
+from agentopt.model_selection.base import save_json
 
 
 METHODS = {
@@ -141,22 +142,6 @@ class FailureState:
         return checked_score
 
 
-def save_json(path, payload):
-    """Replace a result only after a complete JSON write succeeds."""
-    path = Path(path)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
-                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
-            temporary = Path(handle.name)
-            json.dump(payload, handle, indent=2, ensure_ascii=False, allow_nan=False)
-            handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None and temporary.exists():
-            temporary.unlink()
-
-
 def report_failure(message, *, output, snapshot=None):
     print("\nStatus: Failed", file=sys.stderr, flush=True)
     print(f"Error: {message}", file=sys.stderr, flush=True)
@@ -219,7 +204,12 @@ def make_parser():
     parser.add_argument("--stop-on-recommendation", action="store_true",
                         help="Automatically stop single Gittins on its stopping advice; default is advice only")
     parser.add_argument("--seed", type=int, help="Seed for Gittins, random, or UCB; Bayesian has no seed option")
-    parser.add_argument("--max-concurrent", type=int, default=4, help="Maximum concurrent evaluations (default 4)")
+    parser.add_argument("--warm-start-max-concurrent", type=int, default=None,
+                        help="Gittins initial concurrency (default 8), capped by --max-concurrent; "
+                             "a dollar budget reserves estimated in-flight spend")
+    parser.add_argument("--batch-size", type=int, help="Questions per adaptive Gittins batch (default: 4)")
+    parser.add_argument("--max-concurrent", type=int,
+                        help="Shared concurrency limit (optional for Gittins; other methods default to 4)")
     parser.add_argument("--output", type=Path, default=Path("results.json"), help="Result JSON path (default results.json)")
     parser.add_argument("--checkpoint", type=Path,
                         help="Gittins checkpoint to create or resume (default: output path + .checkpoint.sqlite3)")
@@ -245,7 +235,9 @@ def selector_options(args):
         raise ValueError("--cost-scaling-factor and --stop-on-recommendation apply only to single Gittins")
     if args.max_search_cost_usd is not None and args.method in RANDOM_METHODS:
         raise ValueError("Random baselines use --evaluation-fraction or Ctrl+C, not a dollar cap")
-    if args.max_concurrent < 1:
+    if args.max_concurrent is None and args.method not in ("auto", "gittins"):
+        args.max_concurrent = 4
+    if args.max_concurrent is not None and args.max_concurrent < 1:
         raise ValueError("--max-concurrent must be positive")
     if args.seed is not None and (args.seed < 0 or args.method == "bayesian"):
         raise ValueError("--seed must be nonnegative and applies only to Gittins, random, or UCB")
@@ -254,6 +246,13 @@ def selector_options(args):
     if args.checkpoint is not None and args.method not in ("auto", "gittins"):
         raise ValueError("--checkpoint currently supports Gittins only")
     options = {}
+    if args.batch_size is not None:
+        if args.method not in ("auto", "gittins") or args.batch_size < 1:
+            raise ValueError("--batch-size requires Gittins and a positive count")
+        options["batch_size"] = args.batch_size
+    if args.warm_start_max_concurrent is not None:
+        if args.method not in ("auto", "gittins") or args.warm_start_max_concurrent < 1:
+            raise ValueError("--warm-start-max-concurrent requires Gittins and a positive count")
     if args.evaluation_fraction is not None:
         if not math.isfinite(args.evaluation_fraction) or not 0 < args.evaluation_fraction <= 1:
             raise ValueError("--evaluation-fraction must be in (0, 1]")
@@ -331,7 +330,7 @@ def show_progress(snapshot, *, total_questions):
             print(f"Search cost limit exceeded by: ${snapshot.search_cost_overshoot_usd:.6f}", flush=True)
 
 
-def run_selection(selector, *, max_concurrent, output, failures=None, plot=None):
+def run_selection(selector, *, max_concurrent, output, failures=None, plot=None, warm_start_max_concurrent=None):
     """Run on the main thread so Ctrl+C requests a stop without cancelling work."""
     failures = failures or FailureState()
     stop_event = failures.stop_event
@@ -357,19 +356,17 @@ def run_selection(selector, *, max_concurrent, output, failures=None, plot=None)
     try:
         print("Each evaluation runs one model configuration on one test question and scores its output.", flush=True)
         print("Press Ctrl+C to stop after the scheduled batch; its completed results will be saved.", flush=True)
-        if plot is None:
-            results = selector.select_best(
-                parallel=True, max_concurrent=max_concurrent,
-                on_update=update, stop_event=stop_event,
-            )
-        else:
-            results = plot.run(selector, parallel=True, max_concurrent=max_concurrent,
-                               on_update=update)
+        results = selector.select_best(
+            parallel=True, max_concurrent=max_concurrent, on_update=update, stop_event=stop_event,
+            **({"show_ui": plot} if plot is not None else {}),
+            **({"warm_start_max_concurrent": warm_start_max_concurrent} if warm_start_max_concurrent is not None else {}),
+        )
         if failures.message is not None:
             raise BenchmarkRunError(failures.message)
         save_json(output, results.model_dump(mode="json"))
         print(f"Saved results to {output}", flush=True)
         if plot is not None:
+            plot.show_saved_results(output)
             plot.wait_for_close()
         return results
     except Exception as error:
@@ -429,6 +426,8 @@ def main(argv=None):
         options.update(checkpoint_path=checkpoint,
                        checkpoint_id=hashlib.sha256(workflow.encode("utf-8")).hexdigest())
         print(f"Checkpoint: {checkpoint} (saved cells are reused automatically)", flush=True)
+    elif args.method in ("auto", "gittins"):
+        options["checkpoint_path"] = None
     failures = FailureState()
     try:
         selector = ModelSelector(
@@ -458,7 +457,7 @@ def main(argv=None):
             parser.error(str(error))
     try:
         return run_selection(selector, max_concurrent=args.max_concurrent, output=args.output,
-                             failures=failures, plot=plot)
+                             failures=failures, plot=plot, warm_start_max_concurrent=args.warm_start_max_concurrent)
     except BenchmarkRunError:
         raise SystemExit(1) from None
 

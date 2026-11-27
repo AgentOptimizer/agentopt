@@ -27,7 +27,7 @@ def test_resume_warm_and_adaptive_without_repeating_cells(tmp_path, mode, parall
         def update(snapshot):
             snapshots.append(snapshot)
             return snapshot.total_evaluations < limit
-        result = selector.select_best(parallel=parallel, on_update=update)
+        result = selector.select_best(parallel=parallel, warm_start_max_concurrent=1, on_update=update)
         return result, tracker, snapshots, selector
 
     warm, first, _, _ = run(3)
@@ -145,15 +145,15 @@ def test_hard_process_exit_preserves_cell_inside_incomplete_batch(tmp_path):
 import os, sys
 from tests.test_gittins import make_selector
 from agentopt.model_selection.checkpoint import EvaluationCheckpoint
-original = EvaluationCheckpoint.save_cell
+original = EvaluationCheckpoint.save_cell_at
 count = 0
-def save(self, question, data):
+def save(self, batch, question, data):
     global count
-    original(self, question, data)
+    original(self, batch, question, data)
     count += 1
     if count == 9:  # Eight warm cells plus one cell of a two-cell batch.
         os._exit(23)
-EvaluationCheckpoint.save_cell = save
+EvaluationCheckpoint.save_cell_at = save
 selector, _ = make_selector(checkpoint_path=sys.argv[1], checkpoint_id="workflow-v1")
 selector.select_best()
 '''
@@ -211,3 +211,117 @@ def test_close_and_reopen_view_restores_progress_and_spend(tmp_path):
     assert reopened.metric_values[0].get_text() == "50.00%"
     assert reopened.metric_values[1].get_text() == f"${result.selection_cost:.4f}"
     reopened.plt.close(reopened.figure)
+
+
+class DefaultAgent:
+    def __init__(self, models):
+        self.model = models["answer"]
+
+    def run(self, question):
+        default_tracker.record(self.model, 1000)
+        return 1
+
+
+def default_score(expected, actual):
+    return float(expected == actual)
+
+
+@pytest.mark.parametrize("mode", ["single", "multi"])
+def test_public_default_checkpoint(monkeypatch, tmp_path, mode):
+    from agentopt import ModelSelector
+    from tests.test_gittins import RecordingTracker
+    monkeypatch.chdir(tmp_path)
+
+    def selector(**options):
+        tracker = RecordingTracker()
+        monkeypatch.setattr(sys.modules[__name__], "default_tracker", tracker, raising=False)
+        return ModelSelector(agent=DefaultAgent, eval_fn=default_score, models={"answer": ["test"]},
+                             dataset=[(i, 1) for i in range(8)], tracker=tracker, objective_mode=mode,
+                             model_prices={"test": {"input_price": 1, "output_price": 0}},
+                             **options), tracker
+
+    first, _ = selector(max_total_question_evaluations=4)
+    initial = first.select_best()
+    assert first.checkpoint_path.is_file()
+    second, calls = selector(max_total_question_evaluations=8)
+    assert second.checkpoint_path == first.checkpoint_path
+    result = second.select_best()
+    assert second.restored_cells == initial.total_evaluations == 4
+    assert result.total_evaluations == 8 and len(calls.records) == 4
+    assert result.selection_cost == pytest.approx(0.008)
+    different, _ = selector(seed=8)
+    assert different.checkpoint_path != first.checkpoint_path
+    fresh, calls = selector(checkpoint_path=None)
+    fresh.select_best()
+    assert fresh.checkpoint_path is None and len(calls.records) == 8
+
+
+def test_default_window_exports_and_resumes(monkeypatch, tmp_path):
+    import json
+    from PIL import Image
+    from agentopt import ModelSelector
+    from agentopt.visualization import LiveParetoPlot
+    from tests.test_gittins import RecordingTracker
+    monkeypatch.chdir(tmp_path)
+    initialize = LiveParetoPlot.__init__
+    def offscreen(plot, **options):
+        initialize(plot, show_window=False, **options)
+    monkeypatch.setattr(LiveParetoPlot, "__init__", offscreen)
+    for expected_new in (4, 0):
+        tracker = RecordingTracker()
+        monkeypatch.setattr(sys.modules[__name__], "default_tracker", tracker, raising=False)
+        selector = ModelSelector(agent=DefaultAgent, eval_fn=default_score, objective_mode="multi",
+                                 models={"answer": ["test"]}, dataset=[(i, 1) for i in range(4)],
+                                 tracker=tracker, model_prices={"test": {"input_price": 1, "output_price": 0}})
+        result = selector.select_best(show_ui=True)
+        assert len(tracker.records) == expected_new
+        assert selector.restored_cells + expected_new == result.total_evaluations == 4
+    exports = list((tmp_path / ".agentopt_cache" / "exports").glob("*/results.json"))
+    assert len(exports) == 2
+    for path in exports:
+        assert json.loads(path.read_text("utf-8"))["total_evaluations"] == 4
+        with Image.open(path.with_name("frontier.png")) as image:
+            assert image.format == "PNG"
+
+
+def test_automatic_identity_distinguishes_closures_and_adjacent_scorers():
+    from agentopt.model_selection.checkpoint import workflow_identity
+
+    def scorer(weight):
+        return lambda expected, actual: weight * (expected == actual)
+
+    left, right = (lambda x, y: x), (lambda x, y: y)
+    assert workflow_identity(DefaultAgent, left) != workflow_identity(DefaultAgent, right)
+    assert workflow_identity(DefaultAgent, scorer(2)) == workflow_identity(DefaultAgent, scorer(2))
+    assert workflow_identity(DefaultAgent, scorer(2)) != workflow_identity(DefaultAgent, scorer(3))
+
+
+def test_runtime_workflow_can_resume_with_reported_version(monkeypatch, tmp_path):
+    import re
+    from agentopt import ModelSelector
+    from tests.test_gittins import RecordingTracker
+    monkeypatch.chdir(tmp_path)
+
+    def create(**options):
+        tracker = RecordingTracker()
+
+        class Agent:
+            def __init__(self, models):
+                self.model = models["answer"]
+
+            def run(self, question):
+                tracker.record(self.model, 1000)
+                return 1
+
+        return ModelSelector(agent=Agent, eval_fn=default_score, models={"answer": ["test"]},
+                             dataset=[(0, 1)], tracker=tracker,
+                             model_prices={"test": {"input_price": 1, "output_price": 0}}, **options), tracker
+
+    with pytest.warns(RuntimeWarning, match="stable workflow identity") as emitted:
+        original, _ = create()
+    version = re.search(r"checkpoint_id='([^']+)'", str(emitted[0].message)).group(1)
+    original.select_best()
+    resumed, tracker = create(checkpoint_id=version)
+    assert resumed.checkpoint_path == original.checkpoint_path
+    resumed.select_best()
+    assert resumed.restored_cells == 1 and len(tracker.records) == 0

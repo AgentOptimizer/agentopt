@@ -38,7 +38,7 @@ An in-flight request whose result has not been saved may need to run again.
 The JSON report and PNG are exports, not restart files. Other algorithms do not
 yet support search continuation.
 
-For a custom workflow, pass `checkpoint_path="run.sqlite3"` and
+The Python Gittins selector also checkpoints automatically. To choose a custom path and workflow version, pass `checkpoint_path="run.sqlite3"` and
 `checkpoint_id="my-workflow-and-scorer-v1"` to `ModelSelector(method="gittins", ...)`.
 Increment the ID when prompts, tools, evaluator logic or provider configuration
 change. Dataset entries and model specifications must be JSON-serializable.

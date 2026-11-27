@@ -4,10 +4,15 @@ Only JSON is read from disk (never pickle). The separate SQLite lock is held
 for the entire run; the journal itself commits each successful cell separately.
 """
 
+from functools import partial
 import hashlib
+import inspect
+import marshal
+import os
 import json
 import math
 from contextlib import contextmanager
+from types import CodeType
 
 from .base import DatapointResult
 import sqlite3
@@ -58,6 +63,56 @@ def fingerprint(payload):
     except (TypeError, ValueError) as error:
         raise ValueError("Checkpoint inputs must be JSON-serializable; use plain dataset and model specifications") from error
     return hashlib.sha256(encoded).hexdigest()
+
+
+AUTO_CHECKPOINT = object()
+
+
+def workflow_identity(agent, evaluator):
+    """Version the visible Python workflow; external dependencies may be versioned explicitly."""
+    def bytecode(code):
+        # Exclude source locations so equivalent notebook cells and relocated scripts can resume.
+        constants = tuple(bytecode(c) if isinstance(c, CodeType) else c for c in code.co_consts)
+        return code.replace(co_consts=constants, co_filename="", co_firstlineno=1, co_linetable=b"")
+
+    def describe(target):
+        if isinstance(target, partial):
+            return ["partial", describe(target.func), target.args, target.keywords]
+        if inspect.isclass(target):
+            classes = []
+            for cls in target.__mro__:
+                if cls.__module__ == "builtins":
+                    classes.append([cls.__module__, cls.__qualname__])
+                    continue
+                try:
+                    source = inspect.getsource(cls)
+                except (TypeError, OSError):
+                    source = None
+                methods = []
+                for key, member in vars(cls).items():
+                    if isinstance(member, (staticmethod, classmethod)):
+                        member = member.__func__
+                    if inspect.isfunction(member):
+                        methods.append([key, describe(member)])
+                classes.append([cls.__module__, cls.__qualname__, source, methods])
+            return classes
+        if inspect.isbuiltin(target):
+            return [target.__module__, target.__qualname__]
+        if not inspect.isfunction(target):
+            raise ValueError("supply checkpoint_id for a callable with runtime state")
+        definition = hashlib.sha256(marshal.dumps(bytecode(target.__code__))).hexdigest()
+        bindings = inspect.getclosurevars(target)
+        captures = {k: v for k, v in bindings.nonlocals.items() if k != "__class__"}
+        constants = {k: v for k, v in bindings.globals.items()
+                     if type(v) in (str, bool, int, float, type(None))}
+        return [target.__module__, target.__qualname__, definition, target.__defaults__,
+                target.__kwdefaults__, captures, constants]
+
+    return fingerprint([describe(agent), describe(evaluator), os.environ.get("OPENAI_BASE_URL")])
+
+
+def default_checkpoint_path(identity):
+    return Path.cwd() / ".agentopt_cache" / "checkpoints" / (identity + ".sqlite3")
 
 
 class EvaluationCheckpoint:
@@ -150,12 +205,17 @@ class EvaluationCheckpoint:
                 "in-flight work not committed to disk may need to run again."
             ) from error
 
-    def validate(self, *, names, questions, score_bounds, prices):
+    def validate(self, *, names, questions, score_bounds, prices, warm_cells=0):
         """Check the entire journal before any new evaluation is dispatched."""
         from ..model_price import compute_price
         with self._operation("read"):
             batches = self.db.execute("SELECT id, arm, questions FROM batches ORDER BY id").fetchall()
             rows = self.db.execute("SELECT batch, question, data FROM cells").fetchall()
+            has_reservations = self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='warm_inflight'"
+            ).fetchone()
+            self.parallel_warm_history = bool(has_reservations)
+            reserved = {row[0] for row in self.db.execute("SELECT batch FROM warm_inflight")} if has_reservations else set()
         try:
             manifests = {}
             for expected, (batch, arm, encoded) in enumerate(batches, 1):
@@ -192,7 +252,13 @@ class EvaluationCheckpoint:
                     raise ValueError("cost does not match token usage")
                 if item["charge"] > item["cost"] + 1e-12:
                     raise ValueError("charge exceeds recorded token cost")
-            if any(counts.get(batch, 0) != len(ids) for batch, (_, ids) in manifests.items() if batch < len(batches)):
+            # Parallel warm-up reserves deterministic singleton manifests before
+            # dispatch. Only an interrupted warm prefix can have holes.
+            if reserved and (len(batches) > warm_cells
+                             or any(k not in manifests or len(manifests[k][1]) != 1 or k in counts for k in reserved)):
+                raise ValueError("invalid parallel warm-up reservation")
+            if any(counts.get(batch, 0) != len(ids) for batch, (_, ids) in manifests.items()
+                   if batch < len(batches) and batch not in reserved):
                 raise ValueError("incomplete non-terminal batch")
         except (ValueError, TypeError, KeyError, AttributeError) as error:
             raise CheckpointError(f"Invalid checkpoint contents in '{self.path}': {error}. The original file is retained; use a valid checkpoint or a new path.") from error
@@ -214,7 +280,21 @@ class EvaluationCheckpoint:
             return {question: json.loads(data) for question, data in self.db.execute(
                 "SELECT question, data FROM cells WHERE batch=?", (self.batch_index,))}
 
+    def reserve_warm_cell(self, batch):
+        # Old journals need no migration. Create the extension only for a
+        # parallel run. Inserting a cell retires its reservation atomically.
+        with self._operation("reserve warm cell"):
+            if not getattr(self, "_warm_table_ready", False):
+                self.db.execute("CREATE TABLE IF NOT EXISTS warm_inflight (batch INTEGER PRIMARY KEY)")
+                self.db.execute("CREATE TRIGGER IF NOT EXISTS warm_cell_saved AFTER INSERT ON cells "
+                                "BEGIN DELETE FROM warm_inflight WHERE batch=NEW.batch; END")
+                self._warm_table_ready = True
+            self.db.execute("INSERT OR IGNORE INTO warm_inflight VALUES (?)", (batch,))
+
     def save_cell(self, question, data):
+        self.save_cell_at(self.batch_index, question, data)
+
+    def save_cell_at(self, batch, question, data):
         with self._operation("write"):
             self.db.execute("INSERT INTO cells VALUES (?, ?, ?)",
-                            (self.batch_index, question, json.dumps(data, allow_nan=False)))
+                            (batch, question, json.dumps(data, allow_nan=False)))

@@ -59,7 +59,7 @@ class RecordingTracker:
 
 
 def make_selector(*, mode="multi", count=8, tracker=None, outcomes=None, tokens=None,
-                  async_agent=False, **kwargs):
+                  async_agent=False, batch_size=2, **kwargs):
     tracker = tracker or RecordingTracker()
     outcomes = outcomes or {"cheap": 0.6, "middle": 0.8, "expensive": 0.9, "dominated": 0.5}
     tokens = tokens or {"cheap": 1000, "middle": 3000, "expensive": 10000, "dominated": 4000}
@@ -77,13 +77,14 @@ def make_selector(*, mode="multi", count=8, tracker=None, outcomes=None, tokens=
         async def run(self, question):
             return super().run(question)
 
+    kwargs.setdefault("checkpoint_path", None)  # Independent mock runs unless the test requests persistence.
     selector = ModelSelector(agent=AsyncAgent if async_agent else Agent,
                              models={"solver": list(outcomes)},
                              eval_fn=lambda expected, actual: actual,
                              dataset=[(i, None) for i in range(count)],
                              method="gittins", objective_mode=mode,
                              tracker=tracker, model_prices={m: {"input_price": 1, "output_price": 0} for m in outcomes},
-                             batch_size=2, warm_start_batch_size=2, grid_size=33,
+                             batch_size=batch_size, warm_start_batch_size=2, grid_size=33,
                              **kwargs)
     return selector, tracker
 
@@ -196,11 +197,11 @@ def test_warm_budget_exhaustion_returns_records_without_inventing_recommendation
     selector, tracker = make_selector(max_search_cost_usd=0.0015)
     result = selector.select_best()
     assert result.stop_reason == "warm_start_budget"
-    assert result.total_evaluations == 2
+    assert result.total_evaluations == 1
     assert result.recommendations == []
     assert result.get_best() is None
-    assert result.selection_cost == pytest.approx(0.002)
-    assert result.search_cost_overshoot_usd == pytest.approx(0.0005)
+    assert result.selection_cost == pytest.approx(0.001)
+    assert result.search_cost_overshoot_usd == 0
     assert tracker.stopped
 
 
@@ -440,6 +441,7 @@ def test_real_tracker_http_calls_produce_costs_and_recommendations(mock_upstream
                              eval_fn=lambda expected, actual: float(actual == expected),
                              dataset=[("capital", "Paris"), ("another", "Paris")],
                              method="gittins", objective_mode=mode, tracker=tracker,
+                             checkpoint_path=None,  # Exercise the local HTTP session on every run.
                              warm_start_batch_size=1, batch_size=1, grid_size=17,
                              model_prices={"gpt-4o-mini": {"input_price": 1, "output_price": 2}})
     result = selector.select_best(parallel=True, max_concurrent=2)

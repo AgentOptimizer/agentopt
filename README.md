@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <em>A simple model swap can cut your agent's costs by 10–100x without sacrificing performance.</em>
+  <em>Explore quality–cost trade-offs for your agent with cost-efficient search.</em>
 </p>
 
 <p align="center">
@@ -22,7 +22,21 @@
   AgentOpt is supported by <a href="https://daplab.cs.columbia.edu/">DAPLab</a> at Columbia University.
 </p>
 
+<p align="center">
+  <img width="900" alt="HotpotQA evaluation cost and quality–cost recommendations" src="docs/assets/hotpotqa_cost_frontier_20seed_recommendations.png" />
+</p>
+
 ---
+
+## Watch the demo
+
+[![AgentOpt demo: explore the Pareto frontier and choose a model assignment](docs/assets/video/agentopt-cover.png)](https://agentoptimizer.github.io/agentopt/demo/)
+
+[Watch the walkthrough](https://agentoptimizer.github.io/agentopt/demo/) · [Download the video](https://agentoptimizer.github.io/agentopt/assets/video/agentopt-demo.mp4)
+
+The HotpotQA segment visualizes a recorded CC-Gittins run using real evaluation records. Its presentation layout is designed for the video rather than captured from the current product interface.
+
+<sub>Video by Yueli He and Yucheng Pan. Thank you for creating this walkthrough.</sub>
 
 ## News
 [2026/04] Version 0.1.0 released.
@@ -38,7 +52,9 @@ On top of that one primitive, AgentOpt gives you three capabilities that share t
 - **Routing** — swap models *per call* at runtime based on prompt, history, or any policy you write.
 - **Tracking** — just record token usage, latency, and per-query cost across an agent run.
 
-The combinatorial search problem is real: 3 steps × 8 models = **512 combinations** to evaluate. AgentOpt uses Gittins selection by default to allocate evaluation effort using estimated quality, uncertainty, and evaluation cost, and the routing API lets you keep refining at runtime once you've shipped.
+**Model choices multiply across roles.** Our two-role benchmarks use 10 candidate models per role, yielding **100 configurations**. Exhaustively evaluating those configurations on just 100 examples requires **10,000 workflow runs**, each potentially involving multiple LLM calls. AgentOpt supports user-defined roles and candidate model sets: with 10 candidates per role, a five-role workflow would have **100,000 configurations**.
+
+AgentOpt uses Gittins selection by default to allocate evaluation effort using estimated quality, uncertainty, and evaluation cost, and the routing API lets you keep refining at runtime once you've shipped.
 
 ## Use Cases
 

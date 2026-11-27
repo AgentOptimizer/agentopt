@@ -181,7 +181,7 @@ AgentOpt patches `httpx` at the transport level — the same HTTP library used b
     ---
 
     ```bash
-    pip install agentopt-py
+    pip install "agentopt-py @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
     ```
 
     [:octicons-arrow-right-24: Installation guide](getting-started/installation.md)

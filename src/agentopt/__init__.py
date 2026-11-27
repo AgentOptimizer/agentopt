@@ -6,7 +6,7 @@ Define an agent class with ``__init__(self, models)`` and
 model combination.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1.dev0"
 
 from dataclasses import dataclass
 from typing import Optional

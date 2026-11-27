@@ -93,6 +93,7 @@ class RandomSearchModelSelector(GittinsModelSelector):
         self._positions = np.zeros(n_arms, dtype=int)
         self._record_cursor = len(self._tracker.get_records())
         self._spent, self._evaluations = 0, 0
+        self._failed_spend = self._unmeasured_attempts = 0
         eligible = np.zeros(n_arms, dtype=int)
         rng = np.random.default_rng(self.seed)
         units = rng.permutation(n_arms if self.sampling == "configurations" else n_questions)
@@ -181,5 +182,6 @@ class RandomSearchModelSelector(GittinsModelSelector):
             results=records, recommendations=recommendations, objective_mode=self.objective_mode,
             stop_reason=reason, sampling=self.sampling, completed_units=completed_units,
             total_evaluations=self._evaluations,
+            unmeasured_failed_attempts=self._unmeasured_attempts,
             search_cost_overshoot_usd=0.0,
         )

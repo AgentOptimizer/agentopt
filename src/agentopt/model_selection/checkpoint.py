@@ -6,6 +6,7 @@ for the entire run; the journal itself commits each successful cell separately.
 
 from functools import partial
 from fractions import Fraction
+import dis
 import hashlib
 import inspect
 import marshal
@@ -13,7 +14,7 @@ import os
 import json
 import math
 from contextlib import contextmanager
-from types import CodeType
+from types import CodeType, ModuleType
 
 from .base import DatapointResult
 import sqlite3
@@ -76,9 +77,41 @@ def workflow_identity(agent, evaluator):
         constants = tuple(bytecode(c) if isinstance(c, CodeType) else c for c in code.co_consts)
         return code.replace(co_consts=constants, co_filename="", co_firstlineno=1, co_linetable=b"")
 
-    def describe(target):
+    # Store each referenced scoring function once. Reserving its slot before
+    # descent also gives recursive and mutually recursive helpers stable IDs.
+    helpers = []
+    helper_ids = {}
+    def score_helper(fn):
+        if fn not in helper_ids:
+            index = helper_ids[fn] = len(helpers)
+            helpers.append(None)
+            helpers[index] = describe(fn, scoring=True)
+        return helper_ids[fn]
+
+    def scoring_bindings(code, namespace):
+        """Resolve globals and module attributes without invoking descriptors."""
+        module = None
+        for op in dis.get_instructions(code):
+            if op.opname in ("LOAD_GLOBAL", "LOAD_DEREF") and op.argval in namespace:
+                name = op.argval
+                value = namespace[name]
+            elif module is not None and op.opname in ("LOAD_ATTR", "LOAD_METHOD"):
+                name += "." + op.argval
+                if op.argval not in vars(module):
+                    raise ValueError("supply checkpoint_id for a dynamically resolved scoring dependency")
+                value = vars(module)[op.argval]
+            else:
+                module = None
+                continue
+            module = value if isinstance(value, ModuleType) else None
+            yield name, value
+        for nested in code.co_consts:
+            if isinstance(nested, CodeType):
+                yield from scoring_bindings(nested, namespace)
+
+    def describe(target, scoring=False):
         if isinstance(target, partial):
-            return ["partial", describe(target.func), target.args, target.keywords]
+            return ["partial", describe(target.func, scoring), target.args, target.keywords]
         if inspect.isclass(target):
             classes = []
             for cls in target.__mro__:
@@ -119,10 +152,31 @@ def workflow_identity(agent, evaluator):
         captures = {k: v for k, v in bindings.nonlocals.items() if k != "__class__"}
         constants = {k: v for k, v in bindings.globals.items()
                      if type(v) in (str, bool, int, float, type(None))}
-        return [target.__module__, target.__qualname__, definition, target.__defaults__,
-                target.__kwdefaults__, captures, constants]
+        description = [target.__module__, target.__qualname__, definition, target.__defaults__,
+                       target.__kwdefaults__, captures, constants]
+        if scoring:
+            namespace = {**target.__globals__, **captures}
+            dependencies = {}
+            for name, value in scoring_bindings(target.__code__, namespace):
+                if inspect.isfunction(value):
+                    dependencies[name] = score_helper(value)
+                    captures.pop(name, None)
+                elif isinstance(value, ModuleType) or inspect.isbuiltin(value):
+                    constants[name] = (value.__name__ if isinstance(value, ModuleType)
+                                       else [value.__module__, value.__qualname__])
+                    captures.pop(name, None)
+                elif name not in captures:
+                    # Plain values are fingerprinted; opaque runtime state falls back
+                    # to the documented explicit-ID/fresh-checkpoint behavior.
+                    constants[name] = value
+            if dependencies:
+                description.append(dependencies)
+        return description
 
-    return fingerprint([describe(agent), describe(evaluator), os.environ.get("OPENAI_BASE_URL")])
+    identity = [describe(agent), describe(evaluator, scoring=True), os.environ.get("OPENAI_BASE_URL")]
+    if helpers:
+        identity.append(helpers)
+    return fingerprint(identity)
 
 
 def default_checkpoint_path(identity):

@@ -5,6 +5,7 @@ for the entire run; the journal itself commits each successful cell separately.
 """
 
 from functools import partial
+from fractions import Fraction
 import hashlib
 import inspect
 import marshal
@@ -89,12 +90,25 @@ def workflow_identity(agent, evaluator):
                 except (TypeError, OSError):
                     source = None
                 methods = []
+                attributes = {}
                 for key, member in vars(cls).items():
                     if isinstance(member, (staticmethod, classmethod)):
                         member = member.__func__
                     if inspect.isfunction(member):
                         methods.append([key, describe(member)])
-                classes.append([cls.__module__, cls.__qualname__, source, methods])
+                    elif type(member) is property:
+                        accessors = (member.fget, member.fset, member.fdel)
+                        methods.append([key, "property", [describe(fn) if fn is not None else None
+                                                         for fn in accessors]])
+                    elif key not in {"__dict__", "__weakref__", "__module__", "__doc__", "__qualname__",
+                                     "__firstlineno__", "__static_attributes__"}:
+                        attributes[key] = member
+                definition = [cls.__module__, cls.__qualname__, source, methods]
+                if attributes:
+                    # fingerprint accepts plain data; opaque descriptors or state
+                    # take the existing fresh-checkpoint path unless explicitly versioned.
+                    definition.append(attributes)
+                classes.append(definition)
             return classes
         if inspect.isbuiltin(target):
             return [target.__module__, target.__qualname__]
@@ -152,13 +166,26 @@ class EvaluationCheckpoint:
                     self.db.execute("ROLLBACK")
                     raise
             tables = {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if self.db.execute("PRAGMA user_version").fetchone()[0] != 4 or not {"metadata", "batches", "cells"} <= tables:
+            version = self.db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (4, 5) or not {"metadata", "batches", "cells"} <= tables:
                 raise CheckpointError(f"Invalid or legacy checkpoint schema in '{self.path}'; original retained. Use a new path.")
             identity = self.db.execute("SELECT identity, cell_cap, max_spend FROM metadata WHERE id=1").fetchone()
             if identity is None:
                 raise CheckpointError(f"Missing checkpoint identity in '{self.path}'; original retained")
             self._check_identity(*identity)
             self.db.execute("PRAGMA synchronous = FULL")
+            self.failed_spend = Fraction(0)
+            self.unmeasured_attempts = 0
+            if version == 5:
+                for amount, unknown in self.db.execute("SELECT charge, unmeasured FROM failed_attempts"):
+                    try:
+                        charge = Fraction(amount)
+                        if charge < 0 or unknown not in (0, 1):
+                            raise ValueError
+                    except (TypeError, ValueError, ZeroDivisionError) as exc:
+                        raise CheckpointError("Invalid failed-attempt charge") from exc
+                    self.failed_spend += charge
+                    self.unmeasured_attempts += unknown
             self.saved_cells = self.db.execute("SELECT COUNT(*) FROM cells").fetchone()[0]
             self.saved_batches = self.db.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
             self.batch_index = 0
@@ -290,6 +317,22 @@ class EvaluationCheckpoint:
                                 "BEGIN DELETE FROM warm_inflight WHERE batch=NEW.batch; END")
                 self._warm_table_ready = True
             self.db.execute("INSERT OR IGNORE INTO warm_inflight VALUES (?)", (batch,))
+
+    def save_failed_attempt(self, attempt_id, charge, unmeasured):
+        """Commit a billed attempt without marking its question complete."""
+        with self._operation("write failed-attempt charge"):
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("CREATE TABLE IF NOT EXISTS failed_attempts "
+                                "(id TEXT PRIMARY KEY, charge TEXT NOT NULL, unmeasured INTEGER NOT NULL)")
+                self.db.execute("INSERT INTO failed_attempts VALUES (?, ?, ?)",
+                                (attempt_id, str(charge), int(unmeasured)))
+                # Older readers cannot enforce budgets against this additional spend.
+                self.db.execute("PRAGMA user_version = 5")
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def save_cell(self, question, data):
         self.save_cell_at(self.batch_index, question, data)

@@ -22,7 +22,7 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
-from agentopt.model_selection.gittins import GittinsModelSelector
+from agentopt.model_selection.gittins import DEFAULT_GITTINS_BATCH_SIZE, GittinsModelSelector
 from agentopt.model_selection.checkpoint import checkpoint_paths, require_distinct_paths
 from agentopt.visualization.live_pareto import LiveParetoPlot
 from benchmark_runner import save_json, show_progress
@@ -189,8 +189,13 @@ def main():
                         help="soft total spending limit in replay USD, including restored spend")
     parser.add_argument("--delay-seconds", type=float, default=0.1,
                         help="simulated API time per cell (default: 0.1 second)")
-    parser.add_argument("--max-concurrent", type=int, default=4,
-                        help="maximum concurrent evaluations, as in benchmark_runner.py (default: 4)")
+    parser.add_argument("--warm-start-max-concurrent", type=int,
+                        help="Gittins initial concurrency (defaults to --batch-size), capped by --max-concurrent; "
+                             "a dollar budget reserves estimated in-flight spend")
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_GITTINS_BATCH_SIZE,
+                        help="questions per configuration at warm-up and per adaptive Gittins batch (default: 4)")
+    parser.add_argument("--max-concurrent", type=int,
+                        help="optional shared concurrency limit for warm-up and adaptive batches")
     parser.add_argument("--grid-size", type=int, default=129,
                         help="Gittins DP grid size (default: 129)")
     parser.add_argument("--output", type=Path, default=None)
@@ -205,7 +210,11 @@ def main():
         parser.error("--stop-after must be positive")
     if not math.isfinite(args.delay_seconds) or args.delay_seconds < 0:
         parser.error("--delay-seconds must be nonnegative")
-    if args.max_concurrent < 1:
+    if args.warm_start_max_concurrent is not None and args.warm_start_max_concurrent < 1:
+        parser.error("--warm-start-max-concurrent must be positive")
+    if args.batch_size < 1:
+        parser.error("--batch-size must be positive")
+    if args.max_concurrent is not None and args.max_concurrent < 1:
         parser.error("--max-concurrent must be positive")
     if args.max_configs is not None and (args.benchmark not in SCOPE or args.max_configs < 1):
         parser.error("--max-configs requires a SCOPE benchmark and a positive count")
@@ -240,7 +249,7 @@ def main():
     for name in files:
         fingerprint.update(hashlib.sha256((directory / name).read_bytes()).digest())
     identity = json.dumps({"version": 1, "benchmark": args.benchmark, "matrix": fingerprint.hexdigest(),
-                           "grid_size": args.grid_size, "seed": 42, "warm_size": 4, "batch_size": 4},
+                           "grid_size": args.grid_size, "seed": 42, "warm_size": args.batch_size, "batch_size": args.batch_size},
                           sort_keys=True)
 
     class MatrixAgent:
@@ -264,10 +273,9 @@ def main():
         dataset=[(question_id, None) for question_id in range(questions)],
         eval_fn=lambda expected, actual: actual,
         objective_mode="multi",
-        warm_start_batch_size=4,
         max_total_question_evaluations=args.max_total_question_evaluations,
         max_search_cost_usd=args.max_search_cost_usd,
-        batch_size=4,
+        batch_size=args.batch_size,
         grid_size=args.grid_size,
         tracker=tracker,
         model_prices={LEDGER_MODEL: {"input_price": LEDGER_PRICE_PER_MILLION,
@@ -279,7 +287,7 @@ def main():
         plot = LiveParetoPlot(
             title=f"{args.benchmark.upper()} · {combinations:,} of {len(scores):,} configurations" if combinations < len(scores)
                   else f"{args.benchmark.upper()} · Offline replay",
-            warm_total=combinations * min(4, questions),
+            warm_total=combinations * selector.warm_size,
             total_questions=questions,
             total_combinations=combinations,
             output=plot_output,
@@ -312,11 +320,9 @@ def main():
     print("Press Ctrl+C to stop after the scheduled batch; its completed results will be saved.", flush=True)
     previous_handler = signal.signal(signal.SIGINT, request_stop)
     try:
-        if plot is not None:
-            results = plot.run(selector, max_concurrent=args.max_concurrent, on_update=update)
-        else:
-            results = selector.select_best(parallel=True, max_concurrent=args.max_concurrent,
-                                           on_update=update, stop_event=stop)
+        results = selector.select_best(parallel=True, max_concurrent=args.max_concurrent,
+                                       warm_start_max_concurrent=args.warm_start_max_concurrent,
+                                       show_ui=plot or False, on_update=update, stop_event=stop)
     finally:
         signal.signal(signal.SIGINT, previous_handler)
 

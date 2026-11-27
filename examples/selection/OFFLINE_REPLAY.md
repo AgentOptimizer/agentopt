@@ -84,3 +84,14 @@ $replay = @(".\examples\selection\replay_10x10.py", "--benchmark", "bird_mini_de
 The second command can evaluate up to 36 more cells after the first 60.
 Use `--max-search-cost-usd` to set or raise a total simulated spending limit.
 When both limits are set, retain or raise each one on restart. For an older checkpoint, use a fresh output or checkpoint path.
+
+### Warm-up concurrency
+
+Pass `--warm-start-max-concurrent 16` for up to 16 rolling warm-up cells (default: the batch size).
+Set `--batch-size 12` to evaluate 12 questions per configuration in warm-up and up to 12 questions for
+each selected configuration (default four). Add `--max-concurrent 6` to limit both
+phases to six simultaneous evaluations. The live window uses the same settings.
+
+With a dollar limit, warm-up probes for a price before reserving estimated charges
+for concurrent cells. Reuse the output path when changing concurrency. Choose a
+fresh checkpoint when changing the adaptive batch size, which affects selection.

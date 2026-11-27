@@ -181,7 +181,8 @@ class LocalHandler(CallHandler):
                 body = _prepare_buffered_stream(response, wire)
         except Exception as exc:
             latency = time.perf_counter() - t0
-            self._record(request, None, str(exc), latency, cached=False)
+            self._record(request, None, str(exc), latency, cached=False,
+                         request_not_sent=isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)))
             raise
         latency = time.perf_counter() - t0
         self._record(request, response, None, latency, cached=False, body_bytes=body)
@@ -224,7 +225,8 @@ class LocalHandler(CallHandler):
                 body = _prepare_buffered_stream(response, wire)
         except Exception as exc:
             latency = time.perf_counter() - t0
-            self._record(request, None, str(exc), latency, cached=False)
+            self._record(request, None, str(exc), latency, cached=False,
+                         request_not_sent=isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)))
             raise
         latency = time.perf_counter() - t0
         self._record(request, response, None, latency, cached=False, body_bytes=body)
@@ -280,6 +282,7 @@ class LocalHandler(CallHandler):
         *,
         cached: bool,
         body_bytes: Optional[bytes] = None,
+        request_not_sent: bool = False,
     ) -> None:
         """Convert a completed (or failed) httpx exchange into a CallRecord."""
         json_body = decode_json_body(request.content)
@@ -296,6 +299,7 @@ class LocalHandler(CallHandler):
                 cached=False,
                 is_streaming=is_streaming,
                 status_code=0,
+                request_not_sent=request_not_sent,
                 error=error or "upstream error",
             )
             return

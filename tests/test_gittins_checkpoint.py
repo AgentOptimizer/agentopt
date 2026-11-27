@@ -226,6 +226,27 @@ def default_score(expected, actual):
     return float(expected == actual)
 
 
+def test_agent_property_resumes_on_budget_extension(tmp_path, monkeypatch):
+    from agentopt import ModelSelector
+    from tests.test_gittins import RecordingTracker
+
+    class Agent(DefaultAgent):
+        @property
+        def model_name(self):
+            return self.model
+
+    monkeypatch.chdir(tmp_path)
+    for cap, restored in [(4, 0), (8, 4)]:
+        tracker = RecordingTracker()
+        monkeypatch.setattr(sys.modules[__name__], "default_tracker", tracker, raising=False)
+        selector = ModelSelector(agent=Agent, eval_fn=default_score, models={"answer": ["test"]},
+                                 dataset=[(i, 1) for i in range(8)], tracker=tracker,
+                                 model_prices={"test": {"input_price": 1, "output_price": 0}},
+                                 max_total_question_evaluations=cap)
+        assert selector.select_best().total_evaluations == cap
+        assert selector.restored_cells == restored and len(tracker.records) == 4
+
+
 @pytest.mark.parametrize("mode", ["single", "multi"])
 def test_public_default_checkpoint(monkeypatch, tmp_path, mode):
     from agentopt import ModelSelector
@@ -325,3 +346,114 @@ def test_runtime_workflow_can_resume_with_reported_version(monkeypatch, tmp_path
     assert resumed.checkpoint_path == original.checkpoint_path
     resumed.select_best()
     assert resumed.restored_cells == 1 and len(tracker.records) == 0
+
+
+def test_failed_charge_survives_budget_extension_and_reopen(tmp_path):
+    checkpoint = tmp_path / "failed.db"
+    broken = True
+
+    def fail_once(question):
+        nonlocal broken
+        if broken:
+            broken = False
+            raise ValueError("model call was already recorded")
+        return 1
+
+    def run(limit):
+        selector, tracker = make_selector(
+            count=6, outcomes={"only": fail_once}, tokens={"only": 1000},
+            max_search_cost_usd=limit, checkpoint_path=checkpoint, checkpoint_id="attempts")
+        return selector.select_best(parallel=False), tracker.records
+
+    with pytest.raises(RuntimeError, match="Evaluation failed"):
+        run(.001)
+    for limit, new_calls, total_cells, spent in [
+            (.001, 0, 0, .001), (.003, 2, 2, .003), (.003, 0, 2, .003), (.02, 4, 6, .007)]:
+        result, records = run(limit)
+        assert len(records) == new_calls
+        assert result.total_evaluations == total_cells
+        assert result.selection_cost == pytest.approx(spent)
+        assert result.unmeasured_failed_attempts == 0
+
+
+def test_failed_adaptive_batch_restores_observations_before_checking_retry_budget(tmp_path):
+    calls = []
+
+    def fail_fourth(question):
+        calls.append(question)
+        if len(calls) == 4:
+            raise ValueError("failed after being charged")
+        return .5
+
+    def run(limit):
+        selector, tracker = make_selector(
+            count=6, outcomes={"only": fail_fourth}, tokens={"only": 1000},
+            max_search_cost_usd=limit, checkpoint_path=tmp_path / "adaptive.db", checkpoint_id="attempts")
+        return selector.select_best(parallel=False), tracker.records
+
+    with pytest.raises(RuntimeError, match="Evaluation failed"):
+        run(.004)
+    result, records = run(.004)
+    assert not records and result.total_evaluations == 3 and result.pending_batch_evaluations == 1
+    assert result.selection_cost == pytest.approx(.004)
+    result, records = run(.01)
+    assert len(records) == 3 and result.total_evaluations == 6
+    assert result.selection_cost == pytest.approx(.007)
+
+
+def test_factory_class_attributes_version_the_automatic_checkpoint():
+    from agentopt.model_selection.checkpoint import workflow_identity
+    def agent_factory(value):
+        class Agent:
+            config = {"score": value}
+            def run(self, question):
+                return self.config["score"]
+        return Agent
+    assert workflow_identity(agent_factory(.2), default_score) == workflow_identity(agent_factory(.2), default_score)
+    assert workflow_identity(agent_factory(.2), default_score) != workflow_identity(agent_factory(.9), default_score)
+
+
+def test_changed_class_setting_after_construction_refuses_old_checkpoint(tmp_path, monkeypatch):
+    from agentopt import ModelSelector
+    from tests.test_gittins import RecordingTracker
+    monkeypatch.chdir(tmp_path)
+    class Agent(DefaultAgent):
+        setting = .2
+    tracker = RecordingTracker()
+    selector = ModelSelector(agent=Agent, eval_fn=default_score, models={"answer": ["test"]},
+                             dataset=[(0, 1)], tracker=tracker)
+    Agent.setting = .9
+    with pytest.raises(ValueError, match="Workflow changed after construction"):
+        selector.select_best()
+    assert not tracker.records and not selector.checkpoint_path.exists()
+
+
+def test_parallel_failed_attempts_each_count_once(tmp_path):
+    from threading import Lock
+    from tests.test_gittins import RecordingTracker
+    tracker = RecordingTracker()
+    lock = Lock()
+    attempts = 0
+
+    def fail_first_adaptive_batch(question):
+        nonlocal attempts
+        with lock:
+            attempts += 1
+            if attempts in (3, 4):
+                raise ValueError("scoring failed after charge")
+        return .5
+
+    def run():
+        selector, _ = make_selector(
+            tracker=tracker, count=6, outcomes={"only": fail_first_adaptive_batch},
+            tokens={"only": 1000}, checkpoint_path=tmp_path / "parallel.db", checkpoint_id="v1")
+        return selector.select_best(parallel=True, max_concurrent=2)
+
+    with pytest.raises(RuntimeError, match="Evaluation failed"):
+        run()
+    assert attempts == 4
+    for _ in range(2):
+        result = run()
+        assert result.total_evaluations == 6
+        assert attempts == len(tracker.records) == 8
+        assert result.selection_cost == pytest.approx(.008)

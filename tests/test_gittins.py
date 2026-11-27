@@ -331,7 +331,11 @@ def test_untracked_llm_usage_is_rejected_instead_of_assuming_zero_spend():
     assert tracker.stopped
 
 
-def test_unmeasured_success_does_not_consume_grid_or_pollute_resume(tmp_path):
+@pytest.mark.parametrize("failure, retry_in_agent, expected_unknown", [
+    ("missing_usage", False, 1), ("read_timeout", False, 1),
+    ("read_timeout", True, 1), ("connect_timeout", False, 0),
+])
+def test_unmeasured_attempts_across_retry_and_resume(tmp_path, failure, retry_in_agent, expected_unknown):
     import sqlite3
     import httpx
     from agentopt.proxy import LLMTracker
@@ -340,6 +344,9 @@ def test_unmeasured_success_does_not_consume_grid_or_pollute_resume(tmp_path):
 
     def upstream(request):
         requests.append(request)
+        if len(requests) == 1 and failure.endswith("timeout"):
+            exception = httpx.ReadTimeout if failure == "read_timeout" else httpx.ConnectTimeout
+            raise exception("mock transport timeout", request=request)
         body = {"model": "paid", "answer": "OK"}
         if len(requests) > 1:
             body["usage"] = {"prompt_tokens": 10, "completion_tokens": 10}
@@ -351,8 +358,15 @@ def test_unmeasured_success_does_not_consume_grid_or_pollute_resume(tmp_path):
                 self.model = models["answer"]
 
             def run(self, q):
-                return client.post("https://billing.invalid/v1/chat/completions",
-                                   json={"model": self.model, "messages": [{"role": "user", "content": str(q)}]}).json()["answer"]
+                payload = {"model": self.model, "messages": [{"role": "user", "content": str(q)}]}
+                url = "https://billing.invalid/v1/chat/completions"
+                try:
+                    response = client.post(url, json=payload)
+                except httpx.ReadTimeout:
+                    if not retry_in_agent:
+                        raise
+                    response = client.post(url, json=payload)
+                return response.json()["answer"]
 
         checkpoint = tmp_path / "run.db"
 
@@ -365,15 +379,22 @@ def test_unmeasured_success_does_not_consume_grid_or_pollute_resume(tmp_path):
                 checkpoint_path=checkpoint, checkpoint_id="billing-test",
             )
 
-        with pytest.raises(ValueError, match="Token usage is unavailable"):
-            selector().select_best()
-        assert len(requests) == 1
-        with sqlite3.connect(checkpoint) as db:
-            assert db.execute("SELECT count(*) FROM cells").fetchone()[0] == 0
+        if not retry_in_agent:
+            error = ValueError if failure == "missing_usage" else RuntimeError
+            message = "Token usage is unavailable" if failure == "missing_usage" else "Evaluation failed"
+            with pytest.raises(error, match=message):
+                selector().select_best()
+            assert len(requests) == 1
+            with sqlite3.connect(checkpoint) as db:
+                assert db.execute("SELECT count(*) FROM cells").fetchone()[0] == 0
         result = selector().select_best()
         assert len(requests) == 2 and result.total_evaluations == 1
         assert result.selection_cost == pytest.approx(.0001)
+        assert result.model_dump(mode="json")["unmeasured_failed_attempts"] == expected_unknown
         assert result.stop_reason == "warm_start_budget"
+        restored = selector().select_best()
+        assert len(requests) == 2 and restored.unmeasured_failed_attempts == expected_unknown
+        assert restored.selection_cost == result.selection_cost
 
 
 def test_unpriced_usage_stops_tracker():

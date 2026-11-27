@@ -56,6 +56,7 @@ class Recorder:
         is_streaming: bool,
         status_code: int = 200,
         error: Optional[str] = None,
+        request_not_sent: bool = False,
     ) -> bool:
         """Add a call to the session and return whether its usage was measured.
 
@@ -120,6 +121,7 @@ class Recorder:
                 cached=cached,
                 status_code=status_code,
                 error=record_error,
+                request_not_sent=request_not_sent,
             ),
         )
         return usage is not None

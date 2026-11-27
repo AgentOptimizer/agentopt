@@ -4,6 +4,7 @@ Only JSON is read from disk (never pickle). The separate SQLite lock is held
 for the entire run; the journal itself commits each successful cell separately.
 """
 
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -97,13 +98,26 @@ class EvaluationCheckpoint:
                     self.db.execute("ROLLBACK")
                     raise
             tables = {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if self.db.execute("PRAGMA user_version").fetchone()[0] != 4 or not {"metadata", "batches", "cells"} <= tables:
+            version = self.db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (4, 5) or not {"metadata", "batches", "cells"} <= tables:
                 raise CheckpointError(f"Invalid or legacy checkpoint schema in '{self.path}'; original retained. Use a new path.")
             identity = self.db.execute("SELECT identity, cell_cap, max_spend FROM metadata WHERE id=1").fetchone()
             if identity is None:
                 raise CheckpointError(f"Missing checkpoint identity in '{self.path}'; original retained")
             self._check_identity(*identity)
             self.db.execute("PRAGMA synchronous = FULL")
+            self.failed_spend = Fraction(0)
+            self.unmeasured_attempts = 0
+            if version == 5:
+                for amount, unknown in self.db.execute("SELECT charge, unmeasured FROM failed_attempts"):
+                    try:
+                        charge = Fraction(amount)
+                        if charge < 0 or unknown not in (0, 1):
+                            raise ValueError
+                    except (TypeError, ValueError, ZeroDivisionError) as exc:
+                        raise CheckpointError("Invalid failed-attempt charge") from exc
+                    self.failed_spend += charge
+                    self.unmeasured_attempts += unknown
             self.saved_cells = self.db.execute("SELECT COUNT(*) FROM cells").fetchone()[0]
             self.saved_batches = self.db.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
             self.batch_index = 0
@@ -213,6 +227,22 @@ class EvaluationCheckpoint:
                 self.db.execute("INSERT INTO batches VALUES (?, ?, ?)", (self.batch_index, arm, encoded))
             return {question: json.loads(data) for question, data in self.db.execute(
                 "SELECT question, data FROM cells WHERE batch=?", (self.batch_index,))}
+
+    def save_failed_attempt(self, attempt_id, charge, unmeasured):
+        """Commit a billed attempt without marking its question complete."""
+        with self._operation("write failed-attempt charge"):
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("CREATE TABLE IF NOT EXISTS failed_attempts "
+                                "(id TEXT PRIMARY KEY, charge TEXT NOT NULL, unmeasured INTEGER NOT NULL)")
+                self.db.execute("INSERT INTO failed_attempts VALUES (?, ?, ?)",
+                                (attempt_id, str(charge), int(unmeasured)))
+                # Older readers cannot enforce budgets against this additional spend.
+                self.db.execute("PRAGMA user_version = 5")
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                raise
 
     def save_cell(self, question, data):
         with self._operation("write"):

@@ -291,6 +291,8 @@ def stop_reason_message(reason):
 
 def show_progress(snapshot, *, total_questions):
     cost = "unavailable" if snapshot.selection_cost is None else f"${snapshot.selection_cost:.6f}"
+    if getattr(snapshot, "unmeasured_failed_attempts", 0):
+        cost = f"at least {cost} (some failed calls had unmeasured charges)"
     status = ("Finished" if snapshot.is_final else
               "Collecting initial samples" if snapshot.stop_reason == "warming_up" else "Searching")
     print(f"\nStatus: {status}", flush=True)

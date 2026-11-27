@@ -211,3 +211,87 @@ def test_close_and_reopen_view_restores_progress_and_spend(tmp_path):
     assert reopened.metric_values[0].get_text() == "50.00%"
     assert reopened.metric_values[1].get_text() == f"${result.selection_cost:.4f}"
     reopened.plt.close(reopened.figure)
+
+
+def test_failed_charge_survives_budget_extension_and_reopen(tmp_path):
+    checkpoint = tmp_path / "failed.db"
+    broken = True
+
+    def fail_once(question):
+        nonlocal broken
+        if broken:
+            broken = False
+            raise ValueError("model call was already recorded")
+        return 1
+
+    def run(limit):
+        selector, tracker = make_selector(
+            count=6, outcomes={"only": fail_once}, tokens={"only": 1000},
+            max_search_cost_usd=limit, checkpoint_path=checkpoint, checkpoint_id="attempts")
+        return selector.select_best(parallel=False), tracker.records
+
+    with pytest.raises(RuntimeError, match="Evaluation failed"):
+        run(.001)
+    for limit, new_calls, total_cells, spent in [
+            (.001, 0, 0, .001), (.003, 2, 2, .003), (.003, 0, 2, .003), (.02, 4, 6, .007)]:
+        result, records = run(limit)
+        assert len(records) == new_calls
+        assert result.total_evaluations == total_cells
+        assert result.selection_cost == pytest.approx(spent)
+        assert result.unmeasured_failed_attempts == 0
+
+
+def test_failed_adaptive_batch_restores_observations_before_checking_retry_budget(tmp_path):
+    calls = []
+
+    def fail_fourth(question):
+        calls.append(question)
+        if len(calls) == 4:
+            raise ValueError("failed after being charged")
+        return .5
+
+    def run(limit):
+        selector, tracker = make_selector(
+            count=6, outcomes={"only": fail_fourth}, tokens={"only": 1000},
+            max_search_cost_usd=limit, checkpoint_path=tmp_path / "adaptive.db", checkpoint_id="attempts")
+        return selector.select_best(parallel=False), tracker.records
+
+    with pytest.raises(RuntimeError, match="Evaluation failed"):
+        run(.004)
+    result, records = run(.004)
+    assert not records and result.total_evaluations == 3 and result.pending_batch_evaluations == 1
+    assert result.selection_cost == pytest.approx(.004)
+    result, records = run(.01)
+    assert len(records) == 3 and result.total_evaluations == 6
+    assert result.selection_cost == pytest.approx(.007)
+
+
+def test_parallel_failed_attempts_each_count_once(tmp_path):
+    from threading import Lock
+    from tests.test_gittins import RecordingTracker
+    tracker = RecordingTracker()
+    lock = Lock()
+    attempts = 0
+
+    def fail_first_adaptive_batch(question):
+        nonlocal attempts
+        with lock:
+            attempts += 1
+            if attempts in (3, 4):
+                raise ValueError("scoring failed after charge")
+        return .5
+
+    def run():
+        selector, _ = make_selector(
+            tracker=tracker, count=6, outcomes={"only": fail_first_adaptive_batch},
+            tokens={"only": 1000}, checkpoint_path=tmp_path / "parallel.db", checkpoint_id="v1")
+        return selector.select_best(parallel=True, max_concurrent=2)
+
+    with pytest.raises(RuntimeError, match="Evaluation failed"):
+        run()
+    assert attempts == 4
+    for _ in range(2):
+        result = run()
+        assert result.total_evaluations == 6
+        assert attempts == len(tracker.records) == 8
+        assert result.selection_cost == pytest.approx(.008)

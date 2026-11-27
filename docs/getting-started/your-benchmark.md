@@ -339,8 +339,14 @@ crash. One checkpoint can be used by only one process at a time; its `.lock`
 sidecar releases automatically on exit. Symlinks resolve to the same canonical
 path; hard-linked checkpoint files are rejected. Keep the SQLite file to continue later.
 
-Format 4 records both total limits. For an older checkpoint, start a new run
-with a fresh checkpoint path.
+Format 4 records both total limits. A failed evaluation with measured charges
+or missing usage adds a separate attempt ledger and promotes the file to format 5.
+Retries count known non-cached charges from earlier attempts toward the cumulative
+budget, while only successful cells count toward evaluation coverage. If
+`unmeasured_failed_attempts` is positive, reported spend is a lower bound;
+reconcile unknown charges with the provider. A hard crash before recording the
+attempt may leave charges unknown. Older binaries reject format 5; checkpoints
+predating format 4 require a fresh path.
 Finish saves the report and stops this run; it does not discard the checkpoint.
 Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
 disable saving and reuse. Other selection algorithms do not yet support this.

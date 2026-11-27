@@ -69,10 +69,8 @@ The routing API runs the same in-process or through the `agentopt serve` daemon,
 
 ## Installation
 
-Install the user branch for the Gittins selector, live UI, and checkpoint support.
-
 ```bash
-pip install "agentopt-py @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
+pip install agentopt-py
 ```
 ## Quick Start
 
@@ -300,7 +298,7 @@ choice. `auto` does not infer the objective from the dataset or budget.
 | `"auto"` / `"gittins"` | Gittins winner using a finite-dataset posterior | Two-axis Gittins accuracy/cost recommendation set |
 | `"random"` | Evaluate randomly ordered configurations | — |
 | `"ucb"` | UCB exploration over configurations and questions | — |
-| `"bayesian"` | Gaussian-process optimization; requires `pip install "agentopt-py[bayesian] @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"` | — |
+| `"bayesian"` | Gaussian-process optimization; requires `pip install "agentopt-py[bayesian]"` | — |
 | `"random_configurations"` | Evaluate randomly ordered configurations | Evaluate randomly ordered configurations |
 | `"random_questions"` | Evaluate every configuration on shared randomly ordered questions | Evaluate every configuration on shared randomly ordered questions |
 

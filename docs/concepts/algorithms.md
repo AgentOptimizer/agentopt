@@ -64,7 +64,7 @@ not generally mean that only that fraction of distinct questions will be used.
 - Random configurations spend N evaluations per selected configuration, so the fraction approximately specifies a fraction of configurations.
 - Random questions spend K evaluations per shared question, so the fraction approximately specifies a fraction of questions.
 - Gittins and UCB allocate their cell allowance adaptively. Gittins includes its uniform warm start in that allowance.
-- Bayesian optimization's `sample_fraction` counts configurations, each evaluated on the complete dataset, with a minimum of two configurations when available. It requires `pip install "agentopt-py[bayesian] @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"`.
+- Bayesian optimization's `sample_fraction` counts configurations, each evaluated on the complete dataset, with a minimum of two configurations when available. It requires `pip install "agentopt-py[bayesian]"`.
 
 The cell allowance is rounded up; random methods require whole units to fit and
 can leave a remainder. The default evaluation allowance for random, UCB, and

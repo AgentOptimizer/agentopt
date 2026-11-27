@@ -62,14 +62,11 @@ selection and a separate held-out set when reporting generalization performance.
 ## Try a complete terminal run
 
 The repository includes
-[`benchmark_runner.py`](https://github.com/AgentOptimizer/agentopt/blob/gittins-objective-modes/examples/selection/benchmark_runner.py)
-and a small illustrative dataset. With Python 3.12 or newer, clone the user branch
-and install it alongside the OpenAI SDK. If you already have that branch checked
-out, start with the install command from its repository root.
+[`benchmark_runner.py`](https://github.com/AgentOptimizer/agentopt/blob/main/examples/selection/benchmark_runner.py)
+and a small illustrative dataset. From the repository root, install the checkout
+and the OpenAI SDK in a Python 3.12+ environment:
 
 ```bash
-git clone --branch gittins-objective-modes https://github.com/AgentOptimizer/agentopt.git
-cd agentopt
 python -m pip install -e . openai
 ```
 
@@ -400,7 +397,7 @@ rule.
 
 `random` is a single-mode alias for `random_configurations`; `matrix_ucb` is an
 alias for `ucb`. Bayesian optimization requires `python -m pip install
-"agentopt-py[bayesian] @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"` (or `python -m pip install -e '.[bayesian]'` in a checkout).
+"agentopt-py[bayesian]"` (or `python -m pip install -e '.[bayesian]'` in a checkout).
 Gittins, random, and UCB are included in the standard installation.
 
 ### Set an evaluation allowance or dollar limit

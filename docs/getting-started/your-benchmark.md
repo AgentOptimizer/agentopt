@@ -160,7 +160,6 @@ For an agent with multiple model roles, use the same view with your own
 
 ```python
 from agentopt import ModelSelector
-from agentopt.visualization import LiveParetoPlot
 
 selector = ModelSelector(
     agent=MyAgent,
@@ -172,12 +171,26 @@ selector = ModelSelector(
     eval_fn=eval_fn,
     method="gittins",
     objective_mode="multi",
+    batch_size=12,                # questions per adaptive batch (default 4)
 )
-plot = LiveParetoPlot(total_questions=len(dataset))
-results = plot.run(selector, max_concurrent=4)
+results = selector.select_best(
+    show_ui=True,                 # False runs the same selection without a window
+    warm_start_max_concurrent=16, # rolling warm-up slots (default 8)
+)
 ```
 
-Run this on a desktop Python session with an interactive Matplotlib backend.
+Use an interactive Matplotlib backend for the multi-objective window. The Python
+Gittins API defaults to no window and parallel evaluation. Both UI modes honor the
+same execution settings. The existing `LiveParetoPlot.run(selector, ...)` API
+remains available for custom views. With `show_ui=True`, the finished window
+offers **Open results** and **Open folder** for the JSON and frontier PNG saved
+in a new `.agentopt_cache/exports/` subdirectory for each run.
+
+Warm-up samples the same seeded questions at every concurrency level. Parallel
+warm-up fills each free slot across configurations and saves completed cells
+individually when checkpointing is enabled. Pause and Finish take effect at the
+next safe boundary after in-flight cells finish. Adaptive search starts only after all warm-up cells finish. With a dollar limit, warm-up starts with a single probe and reserves the observed average charge for each in-flight cell (per configuration when available, otherwise pooled). Actual charges can exceed the estimates. Later, each adaptive batch can evaluate all its questions concurrently.
+Set `max_concurrent` in `select_best()` to limit both phases, for example when sharing a provider quota.
 The recommendations use the agent's actual calls and the supplied benchmark;
 they are estimates until the benchmark is fully evaluated.
 
@@ -304,7 +317,15 @@ modes restore saved scores, token counts, latencies, spend and search decisions
 without calling the agent or scorer for those cells. The first progress update
 shows the restored state rather than replaying old progress on screen.
 
-For your own Python entry point, enable it explicitly:
+Python also checkpoints Gittins automatically in both objective modes, with or
+without a live window. Run from the same working directory and inspect
+`selector.checkpoint_path` for the database under `.agentopt_cache/checkpoints/`.
+The default key includes the Python agent and scoring definitions. Give external
+prompts, tool settings and custom provider endpoints a stable `checkpoint_id`
+and update it when they change. When a callable captures opaque runtime state,
+AgentOpt saves a fresh checkpoint and reports the ID to use on restart. For
+non-serializable datasets or model specifications it warns before evaluation
+and runs without persistence. For a specific location and workflow version:
 
 ```python
 selector = ModelSelector(
@@ -319,6 +340,7 @@ results = selector.select_best()
 The checkpoint checks dataset contents and order, ordered model specifications,
 seed, prices and algorithm settings. `checkpoint_id` identifies your workflow:
 change it when prompts, tools, evaluator code or provider settings change.
+Pass `checkpoint_path=None` to disable saving and reuse in Python.
 Dataset entries and model specifications must contain plain Python JSON values
 or tuples. The checkpoint identity distinguishes tuples from lists, as well as
 key and scalar types. With checkpoints enabled, algorithm settings (including

@@ -5,10 +5,14 @@ Base classes and result types for model selection.
 import asyncio
 import inspect
 import itertools
+import json
 import logging
 import math
+import os
+import tempfile
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 from threading import Event, Lock
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
@@ -26,6 +30,22 @@ from ..base_models import (
 from ..model_price import compute_price
 
 logger = logging.getLogger(__name__)
+
+
+def save_json(path, payload):
+    """Replace a result only after a complete JSON write succeeds."""
+    path = Path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, indent=2, ensure_ascii=False, allow_nan=False)
+            handle.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
 
 
 class DatapointResult(BaseModel):
@@ -1425,6 +1445,9 @@ class BaseModelSelector(ABC):
         cancel requests already scheduled. Read :attr:`latest_results` to
         inspect progress without a callback.
         """
+        return self._select_with_tracking(parallel, max_concurrent, on_update, stop_event)
+
+    def _select_with_tracking(self, parallel, max_concurrent, on_update, stop_event, **run_options):
         if not self._selection_lock.acquire(blocking=False):
             raise RuntimeError("This selector already has an active selection run")
         self._on_update = on_update
@@ -1433,7 +1456,7 @@ class BaseModelSelector(ABC):
         self._selection_started = time.monotonic()
         try:
             self._selection_record_offset = len(self._tracker.get_records())
-            result = self._run_selection(parallel, max_concurrent)
+            result = self._run_selection(parallel, max_concurrent, **run_options)
             # Read the ledger before stop() archives tracker sessions.
             return self._publish_update(result, final=True)
         finally:

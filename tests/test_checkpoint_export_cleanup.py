@@ -35,7 +35,7 @@ def test_failed_late_batch_replay_preserves_original_budget(tmp_path):
     path = tmp_path / "run.db"
     options = dict(count=2, checkpoint_path=path, checkpoint_id="workflow")
     selector, _ = make_selector(**options, max_search_cost_usd=1)
-    selector.select_best(on_update=lambda snapshot: snapshot.total_evaluations < 3)
+    selector.select_best(warm_start_max_concurrent=1, on_update=lambda snapshot: snapshot.total_evaluations < 3)
     with sqlite3.connect(path) as db:
         # Keep the earlier prefix valid. This arm exists but was never evaluated.
         assert db.execute("SELECT COUNT(*) FROM batches WHERE arm='solver=dominated'").fetchone() == (0,)

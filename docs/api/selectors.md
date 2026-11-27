@@ -85,7 +85,7 @@ Progress and stopping checks occur at these boundaries:
 
 | Method | Update boundary | Recommendation readiness |
 |---|---|---|
-| Gittins | Each warm-start evaluation, then each adaptive batch | No recommendation until the uniform warm start finishes; subsequent recommendations use finite-dataset predictions. |
+| Gittins | Coalesced warm-up progress, then each adaptive batch | No recommendation until the uniform warm start finishes; subsequent recommendations use finite-dataset predictions. |
 | Random configurations | Each sequential evaluation or concurrent chunk of questions | Only complete configurations are eligible. |
 | Random questions | Each configuration evaluation within a shared-question sweep | Only complete sweeps contribute to recommendations. |
 | UCB | Each acquisition batch | Ranks observed configurations by their current empirical scalar means; these are partial-data estimates without calibrated uncertainty. |
@@ -147,7 +147,7 @@ These deployment weights are separate from Gittins' **search-cost coefficient** 
 
 Each configuration receives a seeded independent permutation of question indices and a uniform warm start. The live tracker supplies token attribution and pricing. Every evaluation must have tracked token usage and all recorded calls must have known nonnegative prices; supply `model_prices` for custom models. Evaluation or pricing failures abort selection and stop tracking.
 
-`parallel=True` runs questions within the selected adaptive batch concurrently, up to `max_concurrent`. Warm-start questions run sequentially so a dollar cap can be checked after each evaluation. Async agents work in both modes.
+`parallel=True` runs up to `batch_size` questions concurrently within the selected adaptive batch (default four). An optional `max_concurrent` caps both warm-up and adaptive concurrency. Gittins defaults to eight rolling warm-up slots across configurations. Each completion frees a slot for another cell. Calibration and adaptive batches wait for the entire warm start. A dollar cap starts warm-up with one probe, then reserves estimated charges for in-flight cells; the actual total may exceed this soft limit. Async agents work in both modes.
 
 ### Parameters
 
@@ -155,6 +155,8 @@ Each configuration receives a seeded independent permutation of question indices
 |---|---|---|
 | `objective_mode` | `"single"` | One scalar winner or a two-objective recommendation set. |
 | `batch_size` | `4` | Questions evaluated per adaptive visit. |
+| `checkpoint_path` | Automatic | Saves each successful cell in `.agentopt_cache/checkpoints/` under the working directory. Pass `None` to opt out. |
+| `checkpoint_id` | Derived from the workflow and scorer | Supply a stable version for external workflow settings or stateful callables. A custom checkpoint path requires an explicit ID. |
 | `warm_start_batch_size` | `4` | Questions per configuration before adaptation, clamped to dataset size. |
 | `observation_budget_fraction` | `1.0` | Maximum fraction of configuration–question cells, including warm start. |
 | `max_total_question_evaluations` | `None` | Absolute cell limit, combined with the fraction cap. |

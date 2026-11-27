@@ -57,7 +57,7 @@ def test_callback_stop_also_applies_in_plot_mode():
     selector, tracker = make_selector()
     plot = LiveParetoPlot(total_questions=8, show_window=False)
     try:
-        result = plot.run(selector, on_update=lambda snapshot: snapshot.total_evaluations < 2)
+        result = plot.run(selector, warm_start_max_concurrent=1, on_update=lambda snapshot: snapshot.total_evaluations < 2)
         assert result.stop_reason == "user_stopped"
         assert result.total_evaluations == len(tracker.records) == 2
     finally:
@@ -333,3 +333,22 @@ def test_chart_number_reveals_matching_card_without_panning(monkeypatch):
     recommendations.pop()
     plot.update(snapshot)
     assert plot._selected_combination is None
+
+
+def test_results_actions_follow_successful_export(tmp_path, monkeypatch):
+    plot = LiveParetoPlot(total_questions=10, show_window=False)
+    try:
+        assert not plot.open_results_button.active
+        results = tmp_path / "results.json"
+        results.write_text("{}", encoding="utf-8")
+        opened = []
+        monkeypatch.setattr(plot, "_open_path", opened.append)
+        plot.show_saved_results(results)
+        assert not plot.finish_button.ax.get_visible()
+        assert plot.open_results_button.ax.get_visible()
+        plot.open_results_button._observers.process("clicked", None)
+        plot.open_folder_button._observers.process("clicked", None)
+        assert opened == [results, tmp_path]
+        assert "Saved: results.json" in plot.detail_text.get_text()
+    finally:
+        plot.plt.close(plot.figure)

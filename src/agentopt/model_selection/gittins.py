@@ -9,22 +9,30 @@ freeze warm-start costs. Multi mode decays eta independently on direction stops.
 from __future__ import annotations
 
 import asyncio
+from bisect import bisect_left
 from copy import deepcopy
 from fractions import Fraction
+from itertools import chain
 import math
 import operator
+from pathlib import Path
 from uuid import uuid4
+import warnings
 
 import numpy as np
 from pydantic import BaseModel, Field
 
 from ..model_price import MODEL_PRICES, get_model_price
 from .axis_gittins_dp import AxisGittinsBoundaryCache
-from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
-from .checkpoint import CheckpointError, EvaluationCheckpoint, fingerprint
+from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults, save_json
+from .checkpoint import (AUTO_CHECKPOINT, CheckpointError, EvaluationCheckpoint,
+                         default_checkpoint_path, fingerprint, workflow_identity)
 from .gittins_statistics import (
     GaussianPosterior, finite_dataset_moments, fit_warm_start, raw_pareto_front_indices,
 )
+
+
+DEFAULT_GITTINS_CONCURRENCY = 8
 
 
 def _ordered_prices(prices):
@@ -170,8 +178,8 @@ class GittinsModelSelector(BaseModelSelector):
     Budget exhaustion and full completion can halt earlier. Evaluation or
     pricing failures abort the run, with the base selector stopping tracking.
 
-    Set ``checkpoint_path`` and a stable ``checkpoint_id`` (workflow/evaluator
-    version) to persist each successful cell and automatically resume on restart.
+    Successful cells are checkpointed automatically for identifiable workflows.
+    Use checkpoint_id to version external dependencies and checkpoint_path=None to opt out.
     Dataset, ordered model specifications, seed, prices and algorithm settings
     must match, except that the total cell and spending limits may increase.
     Saved evaluations and spending count toward both new limits.
@@ -182,7 +190,7 @@ class GittinsModelSelector(BaseModelSelector):
     """
 
     # Random baselines reuse the observation methods without this initializer.
-    # Persistence remains opt-in and supported only by Gittins itself.
+    # Only Gittins itself enables persistence.
     checkpoint_path = None
     _journal = None
 
@@ -198,7 +206,7 @@ class GittinsModelSelector(BaseModelSelector):
                  effective_cost_bin_anchor=1e-4, grid_size=129, stop_tolerance=1e-9,
                  seed=42, model_prices=None, tracker=None,
                  lambda_cost=0.0, lambda_latency=0.0,
-                 checkpoint_path=None, checkpoint_id=None):
+                 checkpoint_path=AUTO_CHECKPOINT, checkpoint_id=None):
         try:
             import scipy  # noqa: F401
         except ImportError as error:
@@ -266,6 +274,25 @@ class GittinsModelSelector(BaseModelSelector):
         # endpoints and other configuration outside the model/dataset arguments.
         self._journal = None
         self.restored_cells = 0
+        automatic = checkpoint_path is AUTO_CHECKPOINT
+        if automatic:
+            if checkpoint_id is None:
+                try:
+                    checkpoint_id = workflow_identity(agent, eval_fn)
+                except (ValueError, TypeError, RecursionError):
+                    # A fresh ID prevents silently restoring another runtime configuration.
+                    checkpoint_id = uuid4().hex
+                    warnings.warn(f"Could not infer a stable workflow identity. This run will save a "
+                                  f"new checkpoint. To resume it, pass checkpoint_id='{checkpoint_id}' "
+                                  "from this working directory with the same workflow.", RuntimeWarning,
+                                  stacklevel=2)
+            try:
+                fingerprint([[dataset[i] for i in range(len(dataset))], list(models.items()), model_prices])
+            except (ValueError, TypeError, RecursionError):
+                warnings.warn("Automatic checkpoint unavailable for these dataset or model values. "
+                              "Use plain JSON values or tuples for checkpointing, or checkpoint_path=None "
+                              "to run without it.", RuntimeWarning, stacklevel=2)
+                checkpoint_path = None
         self.checkpoint_path = checkpoint_path
         if checkpoint_path is not None:
             # Own the input graph so edits to caller-owned containers cannot
@@ -290,6 +317,9 @@ class GittinsModelSelector(BaseModelSelector):
                     **settings, "cell_cap": cell_cap, "max_spend": max_spend,
                 }})
 
+            if automatic:
+                # The journal validates accumulated limits separately on every reopen.
+                self.checkpoint_path = default_checkpoint_path(identity_for_limits(None, None))
             self._identity_for_limits = identity_for_limits
             self._checkpoint_input_identity = fingerprint({"dataset": dataset, "models": list(models.items()), "prices": _ordered_prices(model_prices)})
             self._checkpoint_setting_keys = tuple(settings)
@@ -307,8 +337,74 @@ class GittinsModelSelector(BaseModelSelector):
             raise CheckpointError(f"Checkpoint setting '{name}' is immutable; create a new selector for changed settings")
         super().__setattr__(name, value)
 
-    def _run_selection(self, parallel=False, max_concurrent=20):
-        concurrency = _integer(max_concurrent, "max_concurrent")
+    def select_best(self, parallel=None, max_concurrent=None, *, show_ui=False, warm_start_max_concurrent=None,
+                    on_update=None, stop_event=None, _warm_resume=None):
+        """Run once, optionally opening the multi-objective live view.
+
+        Gittins defaults to eight rolling warm-up slots. Use parallel=False
+        for a serial run, or warm_start_max_concurrent to change warm-up only.
+        Each adaptive batch can run all its questions together. An explicit
+        max_concurrent limits both phases. A dollar cap reserves estimated spend
+        for in-flight cells after an initial price probe.
+
+        A configured LiveParetoPlot can also be supplied as show_ui for custom
+        titles and exports. Its owner controls the window lifetime.
+        """
+        # Random search also inherits this entry point, but has no warm phase.
+        has_warmup = hasattr(self, "warm_size")
+        if parallel is None:
+            parallel = has_warmup
+        if warm_start_max_concurrent is None:
+            warm_start_max_concurrent = DEFAULT_GITTINS_CONCURRENCY if has_warmup else 1
+        if show_ui is False:
+            return self._select_with_tracking(parallel, max_concurrent, on_update, stop_event,
+                                              warm_start_max_concurrent=warm_start_max_concurrent,
+                                              warm_resume=_warm_resume)
+        if self.objective_mode != "multi" or not hasattr(self, "warm_size"):
+            raise ValueError("The live UI requires multi-objective Gittins")
+        from threading import current_thread, main_thread
+        from ..visualization import LiveParetoPlot
+        if current_thread() is not main_thread():
+            raise RuntimeError("The live UI must be opened on the main thread")
+        owns_view = show_ui is True
+        if owns_view:
+            export_dir = Path.cwd() / ".agentopt_cache" / "exports" / uuid4().hex
+            plot = LiveParetoPlot(output=export_dir / "frontier.png", total_questions=len(self.dataset),
+                                  warm_total=len(self._all_combos()) * self.warm_size,
+                                  stop_event=stop_event)
+        elif isinstance(show_ui, LiveParetoPlot):
+            plot = show_ui
+            if stop_event is not None and stop_event is not plot.stop_event:
+                raise ValueError("Use the same stop_event for the plot and selector")
+        else:
+            raise TypeError("show_ui must be a boolean or a LiveParetoPlot")
+        try:
+            if owns_view:
+                export_dir.mkdir(parents=True, exist_ok=False)
+            results = plot.run(self, parallel=parallel, max_concurrent=max_concurrent, on_update=on_update,
+                               warm_start_max_concurrent=warm_start_max_concurrent)
+            if owns_view:
+                output = export_dir / "results.json"
+                save_json(output, results.model_dump(mode="json"))
+                plot.show_saved_results(output)
+                plot.wait_for_close()
+            return results
+        finally:
+            if owns_view:
+                plot.plt.close(plot.figure)
+
+    def _run_selection(self, parallel=False, max_concurrent=None, *, warm_start_max_concurrent=1, warm_resume=None):
+        warm_width = _integer(warm_start_max_concurrent, "warm_start_max_concurrent")
+        if warm_width != 1 and not hasattr(self, "warm_size"):
+            raise ValueError("Warm-up concurrency requires Gittins")
+        if max_concurrent is None:
+            concurrency = self.batch_size if hasattr(self, "warm_size") else 20
+        else:
+            concurrency = _integer(max_concurrent, "max_concurrent")
+            warm_width = min(warm_width, concurrency)
+        self._warm_width = warm_width if parallel else 1
+        self._warm_resume = warm_resume
+        self._warm_inflight = 0
         self._run_dataset = self.dataset
         self._run_combos = self._all_combos()
         if self.checkpoint_path is not None:
@@ -325,7 +421,7 @@ class GittinsModelSelector(BaseModelSelector):
                                   limits=(self.cell_cap, self.max_spend)) as journal:
             journal.validate(names=[self._combo_name(combo) for combo in self._run_combos],
                              questions=len(self._run_dataset), score_bounds=self.score_bounds,
-                             prices=self._custom_prices)
+                             prices=self._custom_prices, warm_cells=len(self._run_combos) * self.warm_size)
             self._journal = journal
             self.restored_cells = journal.saved_cells
             try:
@@ -378,6 +474,47 @@ class GittinsModelSelector(BaseModelSelector):
                 continue
             self._spent += self._record_charge(record)
 
+    async def _evaluate_cell(self, arm, question, agent, parallel):
+        label = f"{self._names[arm]}::gittins_{self._run_id}"
+        tasks = [deepcopy(self._run_dataset[question]) if self._journal else self._run_dataset[question]]
+        if parallel or self._is_async_run:
+            outcome = await self._evaluate_agent_async(agent, tasks, label, max_concurrent=1, dp_offset=question)
+        else:
+            outcome = self._evaluate_agent(agent, tasks, label, dp_offset=question)
+        scores, latencies, dp_ids = outcome
+        if len(scores) != 1:
+            raise RuntimeError(f"Evaluation failed for {self._names[arm]} at dataset index {question}")
+        cost = self._per_sample_costs(dp_ids)[0]
+        low, high = self.score_bounds
+        if not math.isfinite(scores[0]) or not low <= scores[0] <= high:
+            raise ValueError("eval_fn score must be finite and within score_bounds")
+        if cost is None or not math.isfinite(cost) or cost < 0:
+            raise ValueError("Gittins requires known nonnegative per-evaluation costs; supply model_prices")
+        if not math.isfinite(latencies[0]) or latencies[0] < 0:
+            raise ValueError("Evaluation latency must be finite and nonnegative")
+        dp = self._build_datapoint_results(scores, latencies, dp_ids)[0]
+        if not dp.input_tokens and not dp.output_tokens:
+            raise ValueError("No LLM token usage was recorded; Gittins requires tracked evaluations")
+        dp.datapoint_index = question
+        charge = float(sum(self._record_charge(record) for record in self._tracker.get_records()
+                           if record.data_id in dp_ids and not record.cached))
+        return dp, cost, charge
+
+    @staticmethod
+    def _cell_data(observation):
+        dp, cost, charge = observation
+        return {"datapoint": dp.model_dump(mode="json"), "cost": cost, "charge": charge}
+
+    def _record_cell(self, arm, observation, position):
+        dp, cost, charge = observation
+        self._datapoints[arm].insert(position, dp)
+        self._scores[arm].insert(position, dp.score)
+        self._costs[arm].insert(position, cost)
+        self._latencies[arm].insert(position, dp.latency_seconds)
+        self._positions[arm] += 1
+        self._evaluations += 1
+        self._spent += Fraction(str(charge))
+
     async def _pull(self, arm, question_ids, parallel, max_concurrent):
         """Persist each successful cell before advancing the adaptive batch."""
         saved = self._journal.begin_batch(self._names[arm], question_ids) if self._journal else {}
@@ -386,37 +523,13 @@ class GittinsModelSelector(BaseModelSelector):
         # Constructing an agent can itself initialize clients; avoid it entirely
         # when every cell in the batch already exists.
         agent = self.agent(deepcopy(self._combos[arm]) if self._journal else self._combos[arm]) if len(saved) < len(question_ids) else None
-        label = f"{self._names[arm]}::gittins_{self._run_id}"
-
         async def evaluate(question):
             if question in saved:
                 return self._restored_cell(saved[question])
-            tasks = [deepcopy(self._run_dataset[question]) if self._journal else self._run_dataset[question]]
-            if parallel or self._is_async_run:
-                outcome = await self._evaluate_agent_async(agent, tasks, label, max_concurrent=1, dp_offset=question)
-            else:
-                outcome = self._evaluate_agent(agent, tasks, label, dp_offset=question)
-            scores, latencies, dp_ids = outcome
-            if len(scores) != 1:
-                raise RuntimeError(f"Evaluation failed for {self._names[arm]} at dataset index {question}")
-            cost = self._per_sample_costs(dp_ids)[0]
-            low, high = self.score_bounds
-            if not math.isfinite(scores[0]) or not low <= scores[0] <= high:
-                raise ValueError("eval_fn score must be finite and within score_bounds")
-            if cost is None or not math.isfinite(cost) or cost < 0:
-                raise ValueError("Gittins requires known nonnegative per-evaluation costs; supply model_prices")
-            if not math.isfinite(latencies[0]) or latencies[0] < 0:
-                raise ValueError("Evaluation latency must be finite and nonnegative")
-            dp = self._build_datapoint_results(scores, latencies, dp_ids)[0]
-            if not dp.input_tokens and not dp.output_tokens:
-                raise ValueError("No LLM token usage was recorded; Gittins requires tracked evaluations")
-            dp.datapoint_index = question
-            charge = float(sum(self._record_charge(record) for record in self._tracker.get_records()
-                               if record.data_id in dp_ids and not record.cached))
+            observation = await self._evaluate_cell(arm, question, agent, parallel)
             if self._journal:
-                self._journal.save_cell(question, {"datapoint": dp.model_dump(mode="json"),
-                                                   "cost": cost, "charge": charge})
-            return dp, cost, charge
+                self._journal.save_cell(question, self._cell_data(observation))
+            return observation
 
         if parallel:
             semaphore = asyncio.Semaphore(max_concurrent)
@@ -432,14 +545,8 @@ class GittinsModelSelector(BaseModelSelector):
         else:
             evaluated = [await evaluate(q) for q in question_ids]
         before = self._spent
-        for dp, cost, charge in evaluated:
-            self._spent += Fraction(str(charge))
-            self._datapoints[arm].append(dp)
-            self._scores[arm].append(dp.score)
-            self._costs[arm].append(cost)
-            self._latencies[arm].append(dp.latency_seconds)
-        self._evaluations += len(question_ids)
-        self._positions[arm] += len(question_ids)
+        for observation in evaluated:
+            self._record_cell(arm, observation, len(self._datapoints[arm]))
         return self._spent - before
 
     def _publish_partial_restore(self, arm, question_ids, saved):
@@ -546,6 +653,122 @@ class GittinsModelSelector(BaseModelSelector):
                     self._initial_var[1] / scale ** 2, self._calibration.question_noise[1] / scale ** 2)
         return self._posteriors[arm].mean[0], self._initial_var[0], self._calibration.question_noise[0]
 
+    async def _warm_up(self, charges, eta):
+        # One manifest per seeded cell, independent of worker count. A crash can
+        # leave holes when later cells finish first. Restore all durable work
+        # before dispatching any of those holes or publishing the first update.
+        journal = self._journal
+        total = len(self._combos) * self.warm_size
+        historical = min(journal.saved_batches, total) if journal else 0
+        missing = []
+        recorded_slots = [[] for _ in self._combos]
+        width = min(total, self._warm_width)
+
+        def cell(slot):
+            arm, offset = divmod(slot, self.warm_size)
+            return arm, self._orders[arm][offset]
+
+        def record(slot, observation):
+            arm, _ = cell(slot)
+            # Keep even partially restored results in seeded order.
+            positions = recorded_slots[arm]
+            index = bisect_left(positions, slot)
+            positions.insert(index, slot)
+            self._record_cell(arm, observation, index)
+            charges[arm] += Fraction(str(observation[2]))
+
+        for slot in range(historical):
+            # Several admitted cells can finish after a concurrent run crosses
+            # its soft limit. Restore their actual charges before admitting new work.
+            if not journal.parallel_warm_history and self._budget_stop(1):
+                raise CheckpointError("Checkpoint evaluation order differs: saved warm start exceeds its budget")
+            arm, question = cell(slot)
+            saved = journal.begin_batch(self._names[arm], [question])
+            if question in saved:
+                record(slot, self._restored_cell(saved[question]))
+            else:
+                missing.append(slot)
+        if historical and self._evaluations < total:
+            self._publish_update(self._results("warming_up", eta, calibrated=False))
+
+        async def evaluate(slot):
+            arm, question = cell(slot)
+            combo = self._combos[arm]
+            agent = self.agent(deepcopy(combo) if journal else combo)
+            observation = await self._evaluate_cell(arm, question, agent, width > 1)
+            if journal:
+                data = self._cell_data(observation)
+                journal.save_cell_at(slot + 1, question, data)
+            return observation
+
+        if historical == total and not missing:
+            return None
+        pending = chain(missing, range(historical, total))
+        active = {}
+        next_slot = next(pending, None)
+        reserved = Fraction(0)
+        reason = None
+        last_update_count = self._evaluations
+        loop = asyncio.get_running_loop()
+        last_update_time = loop.time()
+        try:
+            while active or (next_slot is not None and not reason):
+                while next_slot is not None and len(active) < width and not reason:
+                    if self._warm_resume is not None and not self._warm_resume.is_set():
+                        break
+                    slot = next_slot
+                    arm, question = cell(slot)
+                    estimate = 0
+                    if self.max_spend is not None:
+                        if not self._spent and active:
+                            break  # Only one probe until a positive charge is known.
+                        if charges[arm]:
+                            estimate = charges[arm] / len(recorded_slots[arm])
+                        elif self._evaluations:
+                            estimate = self._spent / self._evaluations
+                    decision = self._budget_stop(len(active) + 1, reserved + estimate)
+                    if decision:
+                        # A cheaper settlement may make this same cell affordable.
+                        # Keep it at the front of the queue while other cells drain.
+                        if not active or decision == "user_stopped":
+                            reason = decision
+                        break
+                    if journal:
+                        if slot >= historical:
+                            journal.begin_batch(self._names[arm], [question])
+                        if width > 1:
+                            journal.reserve_warm_cell(slot + 1)
+                    active[asyncio.create_task(evaluate(slot))] = (slot, estimate)
+                    reserved += estimate
+                    next_slot = next(pending, None)
+                if not active and (next_slot is None or reason) and self._evaluations == last_update_count:
+                    break
+                if active:
+                    done, _ = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        observation = task.result()
+                        slot, estimate = active.pop(task)
+                        reserved -= estimate
+                        record(slot, observation)
+                self._warm_inflight = len(active)
+                # Coalesce progress snapshots independently of dispatch: a slow
+                # cell holds just its own slot. Pause drains active work before
+                # the view waits for Continue; Finish also drains before return.
+                if (not active or self._evaluations - last_update_count >= width
+                        or loop.time() - last_update_time >= 0.2):
+                    self._publish_update(self._results("warming_up", eta, calibrated=False))
+                    last_update_count = self._evaluations
+                    last_update_time = loop.time()
+                if self._should_stop():
+                    reason = "user_stopped"
+        finally:
+            # A failed cell or progress callback must not abandon the other
+            # workers while they are still charging or writing the checkpoint.
+            if active:
+                await asyncio.gather(*active, return_exceptions=True)
+            self._warm_inflight = 0
+        return None if self._evaluations == total else reason
+
     async def _select(self, parallel, max_concurrent):
         self._combos = self._run_combos
         self._names = [self._combo_name(combo) for combo in self._combos]
@@ -569,17 +792,10 @@ class GittinsModelSelector(BaseModelSelector):
         eta = [1.0] if self.objective_mode == "single" else [self.eta_initial] * dimensions
         self._active_eta, self._calibrated = eta, False
         warm_charges = [Fraction(0) for _ in range(n_arms)]
-        # Warm cells are sequential so actual dollar usage is checked after
-        # each request even when their costs cannot yet be predicted.
-        for arm in range(n_arms):
-            for question in self._orders[arm][:self.warm_size]:
-                reason = self._budget_stop(1)
-                if reason:
-                    return self._results("user_stopped" if reason == "user_stopped" else "warm_start_budget", eta, calibrated=False)
-                warm_charges[arm] += await self._pull(arm, [question], False, max_concurrent)
-                at_warm_boundary = self._evaluations == n_arms * self.warm_size
-                if not (at_warm_boundary and self._journal and self._journal.saved_cells >= self._evaluations):
-                    self._publish_update(self._results("warming_up", eta, calibrated=False))
+        reason = await self._warm_up(warm_charges, eta)
+        if reason:
+            return self._results("user_stopped" if reason == "user_stopped" else "warm_start_budget",
+                                 eta, calibrated=False)
         self._calibration = fit_warm_start(self._scores, self._costs, score_bounds=self.score_bounds,
                                           prior_variance=self.prior_variance,
                                           score_noise_variance=self.score_noise_variance,

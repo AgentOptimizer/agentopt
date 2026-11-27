@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Thread, current_thread, main_thread
@@ -61,11 +64,13 @@ class LiveParetoPlot:
         self._pending_batch_evaluations = 0
         self._closed = False
         self._closed_canvas = None
+        self._saved_results = None
         self._card_regions = []
         self._card_press = None
         self.finished = False
         self.finish_requested = False
         self._warming_up = True
+        self._budget_limited_warmup = False
         self._stop_reason = ""
         self._recommendations = []
         self._selected_combination = None
@@ -133,6 +138,13 @@ class LiveParetoPlot:
         self.pause_button = self._make_button((.839, footer_y, .12, button_height), "Pause",
                                               self.toggle_pause, primary=True)
         self.buttons = (self.finish_button, self.pause_button)
+        self.open_folder_button = self._make_button((.704, footer_y, .12, button_height), "Open folder",
+                                                    self._open_results_folder)
+        self.open_results_button = self._make_button((.839, footer_y, .12, button_height), "Open results",
+                                                     self._open_results, primary=True)
+        for button in (self.open_folder_button, self.open_results_button):
+            button.set_active(False)
+            button.ax.set_visible(False)
         self.figure.canvas.mpl_connect("resize_event", self._layout_chart_labels)
         self.figure.canvas.mpl_connect("scroll_event", self._on_scroll)
         self.figure.canvas.mpl_connect("button_press_event", self._start_drag)
@@ -403,7 +415,7 @@ class LiveParetoPlot:
         phase = ("Finished" if self.finished else "Finishing…" if self.finish_requested
                  else "Paused" if self._pause_active else "Pausing…" if self.paused
                  else "Initial sampling" if self._warming_up else "Searching")
-        status = (phase, self.total_cells, self._last_evaluations, self._last_spent, len(self._recommendations), self._stop_reason, self._pending_batch_evaluations)
+        status = (phase, self.total_cells, self._last_evaluations, self._last_spent, len(self._recommendations), self._stop_reason, self._saved_results, self._pending_batch_evaluations)
         if status == self._last_status:
             return
         self._last_status = status
@@ -416,7 +428,7 @@ class LiveParetoPlot:
             artist.set_text(value)
         detail = "Recommendations update after each completed evaluation batch."
         if self.finished:
-            detail = "Search finished · " + (self._stop_reason or "completed").replace("_", " ")
+            detail = "Stopped by user" if self._stop_reason == "user_stopped" else (self._stop_reason or "completed").replace("_", " ").capitalize()
         elif self.finish_requested:
             detail = "Finishing scheduled evaluations. Results will be saved when they complete."
         elif self._pause_active:
@@ -424,12 +436,21 @@ class LiveParetoPlot:
         elif self.paused:
             detail = "Pause requested. Waiting for the current evaluation batch to complete."
         elif self._warming_up:
-            detail = "Sampling each model combination before estimating the first frontier."
+            detail = ("Warm-up concurrency adjusts to the remaining budget."
+                      if self._budget_limited_warmup else
+                      "Sampling each model combination before estimating the first frontier.")
         if self._pending_batch_evaluations:
             detail += f" Interrupted batch: {self._pending_batch_evaluations} evaluations pending."
-        self.detail_text.set_text("\n".join(wrap(detail, width=54)))
+        lines = wrap(detail, width=54)
+        if self._saved_results is not None:
+            filename = self._saved_results.name
+            if len(filename) > 46:
+                filename = filename[:24] + "…" + filename[-20:]
+            lines.append(f"Saved: {filename}")
+        self.detail_text.set_text("\n".join(lines))
         disabled = self.finished or self.finish_requested
         for button in self.buttons:
+            button.ax.set_visible(self._saved_results is None)
             button.set_active(not disabled)
             button.ax.set_facecolor(EDGE if disabled else button.color)
             button.ax.patch.set_edgecolor(EDGE if disabled or button is self.finish_button else button.color)
@@ -728,7 +749,7 @@ class LiveParetoPlot:
             if previous != self._last_status:
                 self._request_draw()
 
-    def run(self, selector, *, parallel=True, max_concurrent=4, on_update=None):
+    def run(self, selector, *, parallel=True, max_concurrent=None, on_update=None, warm_start_max_concurrent=None):
         """Run selection in a worker; render snapshots on Matplotlib's main thread.
 
         Pausing waits at the next selector update, after the scheduled batch.
@@ -745,6 +766,15 @@ class LiveParetoPlot:
         if self.output is not None and checkpoint is not None:
             from ..model_selection.checkpoint import checkpoint_paths, require_distinct_paths
             require_distinct_paths({"plot output": self.output, **checkpoint_paths(checkpoint)})
+        from ..model_selection.gittins import DEFAULT_GITTINS_CONCURRENCY, GittinsModelSelector, _integer
+        rolling = isinstance(selector, GittinsModelSelector) and hasattr(selector, "warm_size")
+        if max_concurrent is None and not rolling:
+            max_concurrent = 4
+        if warm_start_max_concurrent is None:
+            warm_start_max_concurrent = DEFAULT_GITTINS_CONCURRENCY if rolling else 1
+        warm_start_max_concurrent = _integer(warm_start_max_concurrent, "warm_start_max_concurrent")
+        self._budget_limited_warmup = (parallel and warm_start_max_concurrent > 1
+                                       and getattr(selector, "max_spend", None) is not None)
         self.total_questions = len(selector.dataset)
         self.total_cells = len(selector._all_combos()) * self.total_questions
         self._render_status()
@@ -753,11 +783,12 @@ class LiveParetoPlot:
 
         def receive(snapshot):
             rendered = Event()
-            self._pause_active = self.paused and not snapshot.is_final
+            can_pause = not getattr(selector, '_warm_inflight', 0) and not snapshot.is_final
+            self._pause_active = self.paused and can_pause
             updates.put((snapshot, rendered))
             while not rendered.wait(0.05) and not self.stop_event.is_set():
                 pass
-            if not snapshot.is_final and not self._resume.is_set():
+            if can_pause and not self._resume.is_set():
                 self._pause_active = True
                 while not self._resume.wait(0.05) and not self.stop_event.is_set():
                     pass
@@ -768,6 +799,8 @@ class LiveParetoPlot:
                 outcome["results"] = selector.select_best(
                     parallel=parallel, max_concurrent=max_concurrent,
                     on_update=receive, stop_event=self.stop_event,
+                    **({"warm_start_max_concurrent": warm_start_max_concurrent, "_warm_resume": self._resume}
+                       if rolling else {}),
                 )
             except BaseException as exc:
                 outcome["error"] = exc
@@ -797,6 +830,33 @@ class LiveParetoPlot:
         if "error" in outcome:
             raise outcome["error"]
         return outcome["results"]
+
+    def show_saved_results(self, path):
+        """Expose the result file after the caller has saved it successfully."""
+        if self.show_window and not self.plt.fignum_exists(self.figure.number):
+            return
+        self._saved_results = Path(path).resolve()
+        for button in (self.open_folder_button, self.open_results_button):
+            button.set_active(True)
+            button.ax.set_visible(True)
+        self._render_status()
+        self._request_draw()
+
+    def _open_results(self, _event):
+        self._open_path(self._saved_results)
+
+    def _open_results_folder(self, _event):
+        self._open_path(self._saved_results.parent)
+
+    def _open_path(self, path):
+        try:
+            if sys.platform == "win32":
+                os.startfile(path)
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+        except OSError:
+            self.detail_text.set_text("Could not open the saved results.\nCheck the output path in the terminal.")
+            self._request_draw()
 
     def wait_for_close(self):
         if not self._closed and self.show_window and self.plt.fignum_exists(self.figure.number):

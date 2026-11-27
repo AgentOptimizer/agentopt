@@ -95,3 +95,13 @@ phases to six simultaneous evaluations. The live window uses the same settings.
 With a dollar limit, warm-up probes for a price before reserving estimated charges
 for concurrent cells. Reuse the output path when changing concurrency. Choose a
 fresh checkpoint when changing the adaptive batch size, which affects selection.
+
+## Test the user package before release
+
+To check what a user will receive, open a separate PowerShell environment and install the user branch directly. Use a separate virtual environment so the replay checkout keeps its editable installation.
+
+```powershell
+py -3.12 -m venv .venv-user
+.\.venv-user\Scripts\python.exe -m pip install "agentopt-py @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
+.\.venv-user\Scripts\agentopt.exe --help
+```

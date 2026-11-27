@@ -827,16 +827,12 @@ class BaseModelSelector(ABC):
         run_method = getattr(agent, "run", None)
         self._is_async_run = inspect.iscoroutinefunction(run_method)
 
-        if tracker is not None:
-            self._tracker = tracker
-        else:
-            self._tracker = LLMTracker()
+        self._tracker = tracker
         self._stop_requested = Event()
         self._selection_lock = Lock()
         self._external_stop_event = None
         self._on_update = None
         self._latest_results = None
-        self._tracker.start()
 
     # ------------------------------------------------------------------
     # Combo generation
@@ -1455,13 +1451,17 @@ class BaseModelSelector(ABC):
         self._latest_results = None
         self._selection_started = time.monotonic()
         try:
+            if self._tracker is None:
+                self._tracker = LLMTracker()
+            self._tracker.start()
             self._selection_record_offset = len(self._tracker.get_records())
             result = self._run_selection(parallel, max_concurrent, **run_options)
             # Read the ledger before stop() archives tracker sessions.
             return self._publish_update(result, final=True)
         finally:
             try:
-                self._tracker.stop()
+                if self._tracker is not None:
+                    self._tracker.stop()
             finally:
                 self._on_update = None
                 self._external_stop_event = None

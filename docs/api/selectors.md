@@ -147,17 +147,17 @@ These deployment weights are separate from Gittins' **search-cost coefficient** 
 
 Each configuration receives a seeded independent permutation of question indices and a uniform warm start. The live tracker supplies token attribution and pricing. Every evaluation must have tracked token usage and all recorded calls must have known nonnegative prices; supply `model_prices` for custom models. Evaluation or pricing failures abort selection and stop tracking.
 
-`parallel=True` runs up to `batch_size` questions concurrently within the selected adaptive batch (default four). An optional `max_concurrent` caps both warm-up and adaptive concurrency. Gittins defaults to eight rolling warm-up slots across configurations. Each completion frees a slot for another cell. Calibration and adaptive batches wait for the entire warm start. A dollar cap starts warm-up with one probe, then reserves estimated charges for in-flight cells; the actual total may exceed this soft limit. Async agents work in both modes.
+`parallel=True` runs up to `batch_size` questions concurrently within the selected adaptive batch (default four). An optional `max_concurrent` caps both warm-up and adaptive concurrency. Each configuration receives one warm-up batch. Warm-up defaults to `batch_size` rolling slots across configurations; set `warm_start_max_concurrent` in `select_best()` to change only this concurrency. Each completion frees a slot for another cell. Calibration and adaptive batches wait for the entire warm start. A dollar cap starts warm-up with one probe, then reserves estimated charges for in-flight cells; the actual total may exceed this soft limit. Async agents work in both modes.
 
 ### Parameters
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `objective_mode` | `"single"` | One scalar winner or a two-objective recommendation set. |
-| `batch_size` | `4` | Questions evaluated per adaptive visit. |
+| `batch_size` | `4` | Questions per configuration in warm-up and per adaptive visit, limited to available questions. |
 | `checkpoint_path` | Automatic | Saves each successful cell in `.agentopt_cache/checkpoints/` under the working directory. Pass `None` to opt out. |
 | `checkpoint_id` | Derived from the workflow and scorer | Supply a stable version for external workflow settings or stateful callables. A custom checkpoint path requires an explicit ID. |
-| `warm_start_batch_size` | `4` | Questions per configuration before adaptation, clamped to dataset size. |
+| `warm_start_batch_size` | Alias for `batch_size` | Legacy constructor spelling. If both sizes are supplied, they must match. |
 | `observation_budget_fraction` | `1.0` | Maximum fraction of configuration–question cells, including warm start. |
 | `max_total_question_evaluations` | `None` | Absolute cell limit, combined with the fraction cap. |
 | `max_search_cost_usd` | `None` | Soft cap on new non-cached token charges, including warm start. |

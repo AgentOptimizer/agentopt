@@ -81,7 +81,7 @@ def test_default_refills_one_slot_before_slow_first_cell_and_waits_for_last(monk
     models = {str(i): 0.5 for i in range(6)}
     selector, _ = make_selector(count=4, outcomes=models, tokens=dict.fromkeys(models, 100))
     original = selector._evaluate_cell
-    ninth_started = asyncio.Event()
+    third_started_in_warmup = asyncio.Event()
     other_warm_cells_done = asyncio.Event()
     warm_started = warm_done = warm_active = peak = 0
     adaptive_active = adaptive_peak = 0
@@ -99,10 +99,10 @@ def test_default_refills_one_slot_before_slow_first_cell_and_waits_for_last(monk
             warm_active += 1
             peak = max(peak, warm_active)
             if position == 1:
-                # A barrier after the first eight would deadlock here.
-                await asyncio.wait_for(ninth_started.wait(), 5)
-            if position == 9:
-                ninth_started.set()
+                # A barrier after the first two would deadlock here.
+                await asyncio.wait_for(third_started_in_warmup.wait(), 5)
+            if position == 3:
+                third_started_in_warmup.set()
             if position == 12:
                 await asyncio.wait_for(other_warm_cells_done.wait(), 5)
         try:
@@ -120,7 +120,7 @@ def test_default_refills_one_slot_before_slow_first_cell_and_waits_for_last(monk
     monkeypatch.setattr(selector, "_evaluate_cell", probe)
     result = selector.select_best()
     assert result.total_evaluations == 24
-    assert (peak, adaptive_peak) == (8, 2)
+    assert (peak, adaptive_peak) == (2, 2)
 
 def test_budgeted_warmup_retries_waiting_cell_after_cheaper_settlement(monkeypatch):
     selector, tracker = make_selector(max_search_cost_usd=.010)
@@ -154,7 +154,7 @@ def test_budgeted_warmup_retries_waiting_cell_after_cheaper_settlement(monkeypat
 
     monkeypatch.setattr(tracker, "record", charge)
     monkeypatch.setattr(selector, "_evaluate_cell", timed)
-    result = selector.select_best()
+    result = selector.select_best(warm_start_max_concurrent=4)
     assert result.stop_reason == "warm_start_budget"
     assert result.total_evaluations == len(set(started)) == 4
     assert result.selection_cost == pytest.approx(.044)
@@ -185,7 +185,7 @@ def test_cap_overshoot_restores_late_settlements_and_missing_warm_cell(tmp_path,
     monkeypatch.setattr(tracker, "record", lambda model, _: record(model, 1000 if not tracker.records else 10000))
     monkeypatch.setattr(selector, "_evaluate_cell", fail_one)
     with pytest.raises(RuntimeError, match="interruption"):
-        selector.select_best(max_concurrent=3)
+        selector.select_best(warm_start_max_concurrent=3, max_concurrent=3)
     same, calls = make_selector(max_search_cost_usd=.005, **options)
     limited = same.select_best()
     assert limited.total_evaluations == same.restored_cells == 3
@@ -197,10 +197,10 @@ def test_cap_overshoot_restores_late_settlements_and_missing_warm_cell(tmp_path,
 
 
 @pytest.mark.parametrize("show_ui", [True, False])
-@pytest.mark.parametrize("cap,expected", [(None, (16, 12)), (5, (5, 5))])
-def test_independent_phase_widths(monkeypatch, show_ui, cap, expected):
+@pytest.mark.parametrize("warm_slots,cap,expected", [(None, None, (12, 12)), (16, None, (16, 12)), (16, 5, (5, 5))])
+def test_independent_phase_widths(monkeypatch, show_ui, warm_slots, cap, expected):
     models = {str(i): .5 for i in range(8)}
-    selector, _ = make_selector(count=14, batch_size=12, outcomes=models,
+    selector, _ = make_selector(count=24, batch_size=12, outcomes=models,
                                 tokens=dict.fromkeys(models, 100))
     if show_ui:
         from agentopt.visualization import LiveParetoPlot
@@ -212,10 +212,13 @@ def test_independent_phase_widths(monkeypatch, show_ui, cap, expected):
         monkeypatch.setattr(LiveParetoPlot, "__init__", offscreen)
     active = [0, 0]
     peaks = [0, 0]
+    warm_cells = [0] * len(models)
     evaluate = selector._evaluate_cell
 
     async def measured(*args):
         phase = int(selector._calibrated)
+        if not phase:
+            warm_cells[args[0]] += 1
         active[phase] += 1
         peaks[phase] = max(peaks[phase], active[phase])
         try:
@@ -225,5 +228,6 @@ def test_independent_phase_widths(monkeypatch, show_ui, cap, expected):
             active[phase] -= 1
 
     monkeypatch.setattr(selector, "_evaluate_cell", measured)
-    selector.select_best(show_ui=show_ui, warm_start_max_concurrent=16, max_concurrent=cap)
+    selector.select_best(show_ui=show_ui, warm_start_max_concurrent=warm_slots, max_concurrent=cap)
+    assert warm_cells == [12] * len(models)
     assert tuple(peaks) == expected

@@ -84,7 +84,7 @@ def make_selector(*, mode="multi", count=8, tracker=None, outcomes=None, tokens=
                              dataset=[(i, None) for i in range(count)],
                              method="gittins", objective_mode=mode,
                              tracker=tracker, model_prices={m: {"input_price": 1, "output_price": 0} for m in outcomes},
-                             batch_size=batch_size, warm_start_batch_size=2, grid_size=33,
+                             batch_size=batch_size, grid_size=33,
                              **kwargs)
     return selector, tracker
 
@@ -451,3 +451,14 @@ def test_real_tracker_http_calls_produce_costs_and_recommendations(mock_upstream
     assert result.recommendations[0].accuracy == 1
     assert len({r.data_id for r in tracker.get_records()}) == 2
     assert mock_upstream.request_count == 2
+
+
+def test_warm_size_compatibility_alias():
+    options = dict(agent=object, models={"solver": ["cheap"]}, dataset=[(i, None) for i in range(5)],
+                   eval_fn=lambda expected, actual: 1, tracker=RecordingTracker(), checkpoint_path=None)
+    for sizes in ({"batch_size": 3}, {"warm_start_batch_size": 3},
+                  {"batch_size": 3, "warm_start_batch_size": 3}):
+        selector = ModelSelector(**options, **sizes)
+        assert selector.warm_size == selector.batch_size == 3
+    with pytest.raises(ValueError, match="must match batch_size"):
+        ModelSelector(**options, batch_size=3, warm_start_batch_size=5)

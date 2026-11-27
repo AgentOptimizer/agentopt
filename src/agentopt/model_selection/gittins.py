@@ -32,7 +32,7 @@ from .gittins_statistics import (
 )
 
 
-DEFAULT_GITTINS_CONCURRENCY = 8
+DEFAULT_GITTINS_BATCH_SIZE = 4
 
 
 def _ordered_prices(prices):
@@ -195,7 +195,7 @@ class GittinsModelSelector(BaseModelSelector):
     _journal = None
 
     def __init__(self, agent=None, models=None, eval_fn=None, dataset=None, *,
-                 objective_mode="single", batch_size=4, warm_start_batch_size=4,
+                 objective_mode="single", batch_size=None, warm_start_batch_size=None,
                  observation_budget_fraction=1.0, max_total_question_evaluations=None,
                  max_search_cost_usd=None, recommendation_beta=None,
                  recommendation_min_samples=0, score_bounds=(0.0, 1.0),
@@ -231,8 +231,15 @@ class GittinsModelSelector(BaseModelSelector):
                 raise ValueError(f"{name} must be finite and nonnegative")
         if objective_mode == "multi" and (lambda_cost or lambda_latency):
             raise ValueError("multi mode keeps accuracy and cost separate; lambda weights require single mode")
-        self.batch_size = _integer(batch_size, "batch_size")
-        self.warm_start_batch_size = _integer(warm_start_batch_size, "warm_start_batch_size")
+        if warm_start_batch_size is not None:
+            legacy_size = _integer(warm_start_batch_size, "warm_start_batch_size")
+            if batch_size is None:
+                batch_size = legacy_size
+            elif legacy_size != batch_size:
+                raise ValueError("warm_start_batch_size must match batch_size. Use warm_start_max_concurrent "
+                                 "in select_best() to change warm-up concurrency.")
+        self.batch_size = _integer(DEFAULT_GITTINS_BATCH_SIZE if batch_size is None else batch_size, "batch_size")
+        self.warm_start_batch_size = self.batch_size  # Preserve the normalized checkpoint settings.
         self.grid_size = _integer(grid_size, "grid_size", 17)
         self.seed = _integer(seed, "seed", 0)
         self.min_samples = _integer(recommendation_min_samples, "recommendation_min_samples", 0)
@@ -341,7 +348,7 @@ class GittinsModelSelector(BaseModelSelector):
                     on_update=None, stop_event=None, _warm_resume=None):
         """Run once, optionally opening the multi-objective live view.
 
-        Gittins defaults to eight rolling warm-up slots. Use parallel=False
+        Gittins defaults to batch_size rolling warm-up slots. Use parallel=False
         for a serial run, or warm_start_max_concurrent to change warm-up only.
         Each adaptive batch can run all its questions together. An explicit
         max_concurrent limits both phases. A dollar cap reserves estimated spend
@@ -355,7 +362,7 @@ class GittinsModelSelector(BaseModelSelector):
         if parallel is None:
             parallel = has_warmup
         if warm_start_max_concurrent is None:
-            warm_start_max_concurrent = DEFAULT_GITTINS_CONCURRENCY if has_warmup else 1
+            warm_start_max_concurrent = self.batch_size if has_warmup else 1
         if show_ui is False:
             return self._select_with_tracking(parallel, max_concurrent, on_update, stop_event,
                                               warm_start_max_concurrent=warm_start_max_concurrent,

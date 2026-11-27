@@ -205,9 +205,9 @@ def make_parser():
                         help="Automatically stop single Gittins on its stopping advice; default is advice only")
     parser.add_argument("--seed", type=int, help="Seed for Gittins, random, or UCB; Bayesian has no seed option")
     parser.add_argument("--warm-start-max-concurrent", type=int, default=None,
-                        help="Gittins initial concurrency (default 8), capped by --max-concurrent; "
+                        help="Gittins initial concurrency (defaults to --batch-size), capped by --max-concurrent; "
                              "a dollar budget reserves estimated in-flight spend")
-    parser.add_argument("--batch-size", type=int, help="Questions per adaptive Gittins batch (default: 4)")
+    parser.add_argument("--batch-size", type=int, help="Questions per configuration at warm-up and per adaptive Gittins batch (default: 4)")
     parser.add_argument("--max-concurrent", type=int,
                         help="Shared concurrency limit (optional for Gittins; other methods default to 4)")
     parser.add_argument("--output", type=Path, default=Path("results.json"), help="Result JSON path (default results.json)")

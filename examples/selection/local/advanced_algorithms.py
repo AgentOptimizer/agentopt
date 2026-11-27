@@ -97,7 +97,7 @@ def run_selection(method="auto", objective_mode="single", max_search_cost_usd=No
                   stop_on_recommendation=False):
     options = {}
     if method in ("auto", "gittins"):
-        options.update(warm_start_batch_size=2, batch_size=2,
+        options.update(batch_size=2,
                        observation_budget_fraction=evaluation_fraction,
                        max_search_cost_usd=max_search_cost_usd)
         if objective_mode == "single":

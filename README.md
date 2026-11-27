@@ -69,6 +69,8 @@ The routing API runs the same in-process or through the `agentopt serve` daemon,
 
 ## Installation
 
+Install the user branch for the Gittins selector, live UI, and checkpoint support.
+
 ```bash
 pip install "agentopt-py @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
 ```

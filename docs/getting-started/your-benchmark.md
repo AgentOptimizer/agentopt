@@ -63,8 +63,9 @@ selection and a separate held-out set when reporting generalization performance.
 
 The repository includes
 [`benchmark_runner.py`](https://github.com/AgentOptimizer/agentopt/blob/gittins-objective-modes/examples/selection/benchmark_runner.py)
-and a small illustrative dataset. From the repository root, install the checkout
-and the OpenAI SDK in a Python 3.12+ environment. For a fresh checkout:
+and a small illustrative dataset. With Python 3.12 or newer, clone the user branch
+and install it alongside the OpenAI SDK. If you already have that branch checked
+out, start with the install command from its repository root.
 
 ```bash
 git clone --branch gittins-objective-modes https://github.com/AgentOptimizer/agentopt.git
@@ -367,11 +368,11 @@ Format 4 records both total limits. A failed evaluation with measured charges
 or missing usage adds a separate attempt ledger and promotes the file to format 5.
 Retries count known non-cached charges from earlier attempts toward the cumulative
 budget, while only successful cells count toward evaluation coverage. If
-`unmeasured_failed_attempts` is positive, reported spend is a lower bound;
-the count is per evaluation attempt with unknown charges, even when multiple HTTP requests time out in that attempt. This includes a request that timed out while waiting for the provider's response,
-even if a retry subsequently succeeded. The final result and checkpoint retain
-this information. A hard crash before recording the
-attempt may leave charges unknown. Older binaries reject format 5; checkpoints
+`unmeasured_failed_attempts` is positive, reported spend is a lower bound.
+The final result and checkpoint count each evaluation attempt with unknown
+charges once, even if several HTTP requests time out during that attempt or a
+retry succeeds. A hard crash before the attempt is recorded can leave charges
+unknown. Older binaries reject format 5; checkpoints
 predating format 4 require a fresh path.
 Finish saves the report and stops this run; it does not discard the checkpoint.
 Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to

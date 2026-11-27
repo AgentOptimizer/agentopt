@@ -77,7 +77,9 @@ class GittinsSelectionResults(SelectionResults):
     """
 
     objective_mode: str
-    unmeasured_failed_attempts: int = 0
+    unmeasured_failed_attempts: int = Field(
+        default=0, description="Evaluation attempts with unknown charges, counted once per attempt even after multiple HTTP timeouts."
+    )
     pending_batch_evaluations: int = 0
     recommendations: list[GittinsRecommendation] = Field(default_factory=list)
     stop_reason: str
@@ -634,7 +636,7 @@ class GittinsModelSelector(BaseModelSelector):
         if self._should_stop():
             snapshot.stop_reason = "user_stopped"
             raise _RestoredBatchStopped(snapshot)
-        if self._failed_spend and self.max_spend is not None:
+        if self.max_spend is not None:
             remaining = snapshot.pending_batch_evaluations
             if self._budget_stop(remaining, expected_charge * remaining) == "search_cost_budget":
                 snapshot.stop_reason = "search_cost_budget" if self._calibrated else "warm_start_budget"

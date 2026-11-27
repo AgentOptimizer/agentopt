@@ -23,7 +23,7 @@ They're orthogonal and compose: a `ModelSelector` could evaluate combinations th
 Most examples need:
 
 ```bash
-pip install "agentopt-py[examples]"
+pip install "agentopt-py[examples] @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
 export OPENAI_API_KEY=...   # or the relevant provider key
 ```
 

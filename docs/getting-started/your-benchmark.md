@@ -62,11 +62,13 @@ selection and a separate held-out set when reporting generalization performance.
 ## Try a complete terminal run
 
 The repository includes
-[`benchmark_runner.py`](https://github.com/AgentOptimizer/agentopt/blob/main/examples/selection/benchmark_runner.py)
+[`benchmark_runner.py`](https://github.com/AgentOptimizer/agentopt/blob/gittins-objective-modes/examples/selection/benchmark_runner.py)
 and a small illustrative dataset. From the repository root, install the checkout
-and the OpenAI SDK in a Python 3.12+ environment:
+and the OpenAI SDK in a Python 3.12+ environment. For a fresh checkout:
 
 ```bash
+git clone --branch gittins-objective-modes https://github.com/AgentOptimizer/agentopt.git
+cd agentopt
 python -m pip install -e . openai
 ```
 
@@ -366,7 +368,7 @@ or missing usage adds a separate attempt ledger and promotes the file to format 
 Retries count known non-cached charges from earlier attempts toward the cumulative
 budget, while only successful cells count toward evaluation coverage. If
 `unmeasured_failed_attempts` is positive, reported spend is a lower bound;
-this includes a request that timed out while waiting for the provider's response,
+the count is per evaluation attempt with unknown charges, even when multiple HTTP requests time out in that attempt. This includes a request that timed out while waiting for the provider's response,
 even if a retry subsequently succeeded. The final result and checkpoint retain
 this information. A hard crash before recording the
 attempt may leave charges unknown. Older binaries reject format 5; checkpoints
@@ -397,7 +399,7 @@ rule.
 
 `random` is a single-mode alias for `random_configurations`; `matrix_ucb` is an
 alias for `ucb`. Bayesian optimization requires `python -m pip install
-"agentopt-py[bayesian]"` (or `python -m pip install -e '.[bayesian]'` in a checkout).
+"agentopt-py[bayesian] @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"` (or `python -m pip install -e '.[bayesian]'` in a checkout).
 Gittins, random, and UCB are included in the standard installation.
 
 ### Set an evaluation allowance or dollar limit

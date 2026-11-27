@@ -373,3 +373,23 @@ def test_atomic_result_write_keeps_existing_file_if_serialization_fails(tmp_path
         runner.save_json(output, {"invalid": float("nan")})
     assert output.read_text() == "previous complete result"
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_sdk_guide_records_each_cell_once_on_reopen(tmp_path, mock_upstream, monkeypatch):
+    import sqlite3
+    pytest.importorskip("openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-placeholder")
+    monkeypatch.setenv("OPENAI_BASE_URL", mock_upstream.base_url + "/v1")
+    monkeypatch.chdir(tmp_path)
+    dataset = tmp_path / "one.jsonl"
+    dataset.write_text(json.dumps({"input": "Capital of France?", "expected": "Paris"}))
+    args = ["--dataset", str(dataset), "--models", "gpt-4o-mini", "gpt-4.1-nano",
+            "--output", str(tmp_path / "result.json")]
+    first = runner.main(args)
+    assert first.total_evaluations == mock_upstream.request_count == 2
+    assert first.selection_cost > 0
+    with sqlite3.connect(tmp_path / "result.json.checkpoint.sqlite3") as db:
+        assert db.execute("SELECT COUNT(*) FROM cells").fetchone() == (2,)
+    resumed = runner.main(args)
+    assert resumed.selection_cost == first.selection_cost
+    assert resumed.total_evaluations == mock_upstream.request_count == 2

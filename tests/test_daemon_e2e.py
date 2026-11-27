@@ -136,16 +136,18 @@ def test_daemon_health(daemon):
     assert r.json() == {"ok": True}
 
 
-def test_remote_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
+@pytest.mark.parametrize("transport_name", ["httpx", "httpx2"])
+def test_remote_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch, transport_name):
     """An in-process httpx LLM call is forwarded through the daemon and
     appears in the daemon's records — same shape as local mode."""
+    library = pytest.importorskip(transport_name)
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
 
     tracker = LLMTracker()
     tracker.start()
     try:
         with tracker.track(data_id="dp_1", combo_id="c"):
-            client = httpx.Client(base_url=mock_upstream.base_url)
+            client = library.Client(base_url=mock_upstream.base_url)
             resp = client.post(
                 "/v1/chat/completions",
                 json={
@@ -248,12 +250,13 @@ def test_remote_handler_lazy_async_client(daemon, monkeypatch):
         proxy_url="http://127.0.0.1:1",  # arbitrary; never sent to
         ca_bundle_path=certifi.where(),  # any valid PEM; never verified
     )
-    assert h._async_client is None
+    assert not h._async_clients
     h.close()  # must not raise
-    assert h._async_client is None  # still uncreated — no leak
+    assert not h._async_clients  # still uncreated — no leak
 
 
-def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
+@pytest.mark.parametrize("transport_name", ["httpx", "httpx2"])
+def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch, transport_name):
     """Async (``httpx.AsyncClient``) LLM call records cleanly through the daemon.
 
     Also exercises the async-cleanup path in ``RemoteHandler.close()`` —
@@ -262,13 +265,14 @@ def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeyp
     """
     import asyncio
 
+    library = pytest.importorskip(transport_name)
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
     tracker = LLMTracker()
     tracker.start()
     try:
 
         async def make_call():
-            async with httpx.AsyncClient(base_url=mock_upstream.base_url) as client:
+            async with library.AsyncClient(base_url=mock_upstream.base_url) as client:
                 resp = await client.post(
                     "/v1/chat/completions",
                     json={

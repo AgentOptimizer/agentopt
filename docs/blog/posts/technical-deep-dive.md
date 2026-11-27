@@ -166,7 +166,7 @@ Arm Elimination consistently achieves near-optimal accuracy while using signific
 ## Get Started
 
 ```bash
-pip install agentopt-py
+pip install "agentopt-py @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
 ```
 
 ```python

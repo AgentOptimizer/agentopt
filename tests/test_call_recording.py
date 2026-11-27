@@ -180,22 +180,24 @@ def test_rate_limit_is_recorded(upstream):
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_buffered_event_stream_can_be_consumed_and_cached(asynchronous):
+@pytest.mark.parametrize("transport_name", ["httpx", "httpx2"])
+def test_buffered_event_stream_can_be_consumed_and_cached(asynchronous, transport_name):
+    library = pytest.importorskip(transport_name)
     body = b'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":3}}\n\ndata: [DONE]\n\n'
     wire = gzip.compress(body)
     calls = []
 
     def upstream(request):
         calls.append(request.url)
-        return httpx.Response(200, headers={"Content-Encoding": "gzip", "Content-Type": "text/event-stream"},
-                              stream=httpx.ByteStream(wire))
+        return library.Response(200, headers={"Content-Encoding": "gzip", "Content-Type": "text/event-stream"},
+                              stream=library.ByteStream(wire))
 
     url = "https://test.invalid/v1/chat/completions"
     request = {"model": "gpt-4o-mini", "stream": True, "stream_options": {"include_usage": True}}
-    transport = httpx.MockTransport(upstream)
+    transport = library.MockTransport(upstream)
 
     async def read_async():
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with library.AsyncClient(transport=transport) as client:
             async with client.stream("POST", url, json=request) as response:
                 assert b"".join([chunk async for chunk in response.aiter_raw()]) == wire
             async with client.stream("POST", url, json=request) as response:
@@ -206,7 +208,7 @@ def test_buffered_event_stream_can_be_consumed_and_cached(asynchronous):
             if asynchronous:
                 asyncio.run(read_async())
             else:
-                with httpx.Client(transport=transport) as client:
+                with library.Client(transport=transport) as client:
                     with client.stream("POST", url, json=request) as response:
                         assert b"".join(response.iter_raw()) == wire
                     with client.stream("POST", url, json=request) as response:

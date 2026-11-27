@@ -5,13 +5,13 @@
 === "pip"
 
     ```bash
-    pip install agentopt-py
+    pip install "agentopt-py @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
     ```
 
 === "uv"
 
     ```bash
-    uv add agentopt-py
+    uv add "agentopt-py @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
     ```
 
 Gittins, UCB, and random selection are included in the standard installation.
@@ -25,13 +25,13 @@ and numerical root finding.
     Requires PyTorch and BoTorch:
 
     ```bash
-    pip install "agentopt-py[bayesian]"
+    pip install "agentopt-py[bayesian] @ git+https://github.com/AgentOptimizer/agentopt.git@gittins-objective-modes"
     ```
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/AgentOptimizer/agentopt.git
+git clone --branch gittins-objective-modes https://github.com/AgentOptimizer/agentopt.git
 cd agentopt
 uv sync --extra dev
 uv run pytest

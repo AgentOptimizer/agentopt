@@ -457,3 +457,53 @@ def test_parallel_failed_attempts_each_count_once(tmp_path):
         assert result.total_evaluations == 6
         assert attempts == len(tracker.records) == 8
         assert result.selection_cost == pytest.approx(.008)
+
+
+def test_partial_batch_known_spend_blocks_new_dispatch_until_budget_extension(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "partial.sqlite3"
+    calls = []
+    def run(limit):
+        selector, tracker = make_selector(count=6, batch_size=2, outcomes={"paid": .6}, tokens={"paid": 1000},
+                                         max_search_cost_usd=limit, checkpoint_id="partial",
+                                         checkpoint_path=checkpoint)
+        record = tracker.record
+        def charge(model, _):
+            calls.append(tracker.active.get())
+            record(model, 1000 if len(calls) <= 2 else 10000)
+        tracker.record = charge
+        return selector.select_best(parallel=False)
+
+    original = EvaluationCheckpoint.save_cell_at
+    def interrupt(journal, batch, question, data):
+        original(journal, batch, question, data)
+        if len(calls) == 3:
+            raise InterruptedError("after commit")
+    with monkeypatch.context() as patch:
+        patch.setattr(EvaluationCheckpoint, "save_cell_at", interrupt)
+        with pytest.raises(InterruptedError, match="after commit"):
+            run(.004)
+    for _ in range(2):
+        result = run(.004)
+        assert result.stop_reason == "search_cost_budget"
+        assert result.total_evaluations == len(calls) == 3
+        assert result.pending_batch_evaluations == 1
+        assert result.selection_cost == pytest.approx(.012)
+    result = run(.1)
+    assert result.total_evaluations == len(calls) == 6
+    assert result.selection_cost == pytest.approx(.042)
+
+
+def test_indirect_score_dependency_and_mutual_recursion():
+    from types import ModuleType
+    from agentopt.model_selection.checkpoint import workflow_identity
+    module = ModuleType("metrics")
+    exec("def first(n): return second(n-1) if n else 1\n"
+         "def second(n): return first(n-1) if n else 1", module.__dict__)
+    namespace = {"metrics": module, "first": module.first}
+    exec("def score(a, b): return metrics.first(a) + first(b)", namespace)
+    def identity():
+        return workflow_identity(DefaultAgent, namespace["score"])
+    before = identity()
+    assert identity() == before
+    exec("def second(n): return first(n-1) if n else 0", module.__dict__)
+    assert identity() != before

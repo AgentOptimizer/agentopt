@@ -171,11 +171,11 @@ selector = ModelSelector(
     eval_fn=eval_fn,
     method="gittins",
     objective_mode="multi",
-    batch_size=12,                # questions per adaptive batch (default 4)
+    batch_size=4,                 # questions per configuration in warm-up and per search batch
 )
 results = selector.select_best(
     show_ui=True,                 # False runs the same selection without a window
-    warm_start_max_concurrent=16, # rolling warm-up slots (default 8)
+    warm_start_max_concurrent=12, # optional warm-up slots across configurations (default: batch_size)
 )
 ```
 
@@ -414,7 +414,7 @@ only start whole units that fit, so some allowance may remain unused.
 
 Gittins and random methods also accept `max_total_question_evaluations`, combined
 with the fractional cap. Gittins must have enough cells for its warm start:
-K × `min(warm_start_batch_size, N)`. Random methods require enough cells for at
+K × `min(batch_size, N)`. Random methods require enough cells for at
 least one whole configuration or shared-question sweep. A tiny dollar limit can
 stop Gittins during warm start, before any recommendation is available.
 
@@ -436,7 +436,7 @@ Pass selector parameters to `ModelSelector(...)`; pass execution controls to
 | Gittins `cost_scaling_factor` | `1e-4`, single mode only. Scales raw USD search evaluation cost in its index/stopping calculation; it is not a dollar cap. |
 | `lambda_cost`, `lambda_latency` | Both `0.0`, single mode only. Penalize normalized deployment cost/latency in the final scalar objective. These are separate from `cost_scaling_factor`. |
 | Gittins `stop_on_recommendation` | `False`. Set `True` for automatic stopping on single-objective advice. |
-| Gittins `warm_start_batch_size`, `batch_size` | Both `4`: initial questions per configuration, then questions per adaptive visit. A smaller adaptive batch gives more frequent updates and stop checks. |
+| Gittins `batch_size` | Defaults to `4` for both initial questions per configuration and questions per adaptive visit. A smaller adaptive batch gives more frequent updates and stop checks. |
 | `select_best(parallel=False, max_concurrent=20)` | Execution defaults. The runner uses parallel evaluation with a limit of four. UCB uses `max_concurrent` for both its batch size and concurrency and ignores `parallel`. |
 | `seed` | Gittins/random default `42`; UCB defaults to `None`. Controls selection sampling, not model-provider randomness. Bayesian optimization has no selector `seed` argument. |
 | `score_bounds` | Gittins/random default `(0.0, 1.0)`. Must contain every score returned by the scorer. |

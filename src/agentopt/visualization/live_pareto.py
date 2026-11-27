@@ -766,12 +766,12 @@ class LiveParetoPlot:
         if self.output is not None and checkpoint is not None:
             from ..model_selection.checkpoint import checkpoint_paths, require_distinct_paths
             require_distinct_paths({"plot output": self.output, **checkpoint_paths(checkpoint)})
-        from ..model_selection.gittins import DEFAULT_GITTINS_CONCURRENCY, GittinsModelSelector, _integer
+        from ..model_selection.gittins import GittinsModelSelector, _integer
         rolling = isinstance(selector, GittinsModelSelector) and hasattr(selector, "warm_size")
         if max_concurrent is None and not rolling:
             max_concurrent = 4
         if warm_start_max_concurrent is None:
-            warm_start_max_concurrent = DEFAULT_GITTINS_CONCURRENCY if rolling else 1
+            warm_start_max_concurrent = selector.batch_size if rolling else 1
         warm_start_max_concurrent = _integer(warm_start_max_concurrent, "warm_start_max_concurrent")
         self._budget_limited_warmup = (parallel and warm_start_max_concurrent > 1
                                        and getattr(selector, "max_spend", None) is not None)

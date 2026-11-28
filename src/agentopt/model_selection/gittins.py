@@ -43,7 +43,7 @@ def _ordered_prices(prices):
     return {model: dict(sorted(rates.items())) for model, rates in sorted(prices.items())}
 
 
-class _RestoredBatchStopped(Exception):
+class _PartialBatchStopped(Exception):
     def __init__(self, result):
         self.result = result
 
@@ -442,7 +442,10 @@ class GittinsModelSelector(BaseModelSelector):
                 raise CheckpointError("Checkpoint inputs changed after selector construction; create a new selector for the changed dataset or models")
             self._run_combos = deepcopy(self._all_combos())
         if self.checkpoint_path is None:
-            return asyncio.run(self._select(parallel, concurrency))
+            try:
+                return asyncio.run(self._select(parallel, concurrency))
+            except _PartialBatchStopped as stopped:
+                return stopped.result
         with EvaluationCheckpoint(self.checkpoint_path, self._identity_for_limits,
                                   limits=(self.cell_cap, self.max_spend)) as journal:
             journal.validate(names=[self._combo_name(combo) for combo in self._run_combos],
@@ -458,7 +461,7 @@ class GittinsModelSelector(BaseModelSelector):
                         f"selection ended ({result.stop_reason}) before all saved batches could be replayed"
                     )
                 return result
-            except _RestoredBatchStopped as stopped:
+            except _PartialBatchStopped as stopped:
                 # Partial restores are only published on the last saved batch.
                 return stopped.result
             finally:
@@ -560,9 +563,9 @@ class GittinsModelSelector(BaseModelSelector):
                    if record.data_id in dp_ids and not record.cached]
         charge = float(sum(self._record_charge(record) for record in records
                            if not getattr(record, "request_not_sent", False)
-                           and not getattr(record, "transport_charge_unknown", False)))
+                           and not self._charge_unknown(record)))
         # A provider SDK can retry a timed-out call inside an otherwise successful cell.
-        if any(getattr(record, "transport_charge_unknown", False) for record in records):
+        if any(self._charge_unknown(record) for record in records):
             self._save_attempt_charge(dp_ids[0], 0, True)
         return dp, cost, charge
 
@@ -585,13 +588,15 @@ class GittinsModelSelector(BaseModelSelector):
         """Persist each successful cell before advancing the adaptive batch."""
         saved = self._journal.begin_batch(self._names[arm], question_ids) if self._journal else {}
         if self._journal and self._journal.batch_index <= self._journal.saved_batches and len(saved) < len(question_ids):
-            self._publish_partial_restore(arm, question_ids, saved, expected_charge)
+            self._publish_partial_batch(arm, question_ids, saved, expected_charge)
         # Constructing an agent can itself initialize clients; avoid it entirely
         # when every cell in the batch already exists.
         agent = self.agent(deepcopy(self._combos[arm]) if self._journal else self._combos[arm]) if len(saved) < len(question_ids) else None
         async def evaluate(question):
             if question in saved:
                 return self._restored_cell(saved[question])
+            if self._unknown_cost_stop():
+                return None
             observation = await self._evaluate_cell(arm, question, agent, parallel)
             if self._journal:
                 self._journal.save_cell(question, self._cell_data(observation))
@@ -610,13 +615,16 @@ class GittinsModelSelector(BaseModelSelector):
                     raise item
         else:
             evaluated = [await evaluate(q) for q in question_ids]
+        if any(observation is None for observation in evaluated):
+            completed = {q: self._cell_data(obs) for q, obs in zip(question_ids, evaluated) if obs is not None}
+            self._publish_partial_batch(arm, question_ids, completed, expected_charge, stop_reason="search_cost_unknown")
         before = self._spent
         for observation in evaluated:
             self._record_cell(arm, observation, len(self._datapoints[arm]))
         return self._spent - before
 
-    def _publish_partial_restore(self, arm, question_ids, saved, expected_charge):
-        """Expose durable partial work before authorizing any missing requests."""
+    def _publish_partial_batch(self, arm, question_ids, saved, expected_charge, *, stop_reason=None):
+        """Include the measured part of a batch in a restore or final snapshot."""
         count = len(saved)
         before_spent = self._spent
         posterior = deepcopy(self._posteriors[arm]) if self._calibrated else None
@@ -637,17 +645,22 @@ class GittinsModelSelector(BaseModelSelector):
             self._posteriors[arm].update(observations.mean(axis=0), self._calibration.question_noise, count)
             values = self._scalar_observations(arm)[-count:]
             self._scalar_posteriors[arm].update(np.array([np.mean(values)]), np.array([self._scalar_noise]), count)
-        snapshot = self._results("restoring_batch", self._active_eta, calibrated=self._calibrated)
+        snapshot = self._results(stop_reason or "restoring_batch", self._active_eta, calibrated=self._calibrated)
         snapshot.pending_batch_evaluations = len(question_ids) - count
+        if stop_reason is not None:
+            raise _PartialBatchStopped(snapshot)
         self._publish_update(snapshot)
         if self._should_stop():
             snapshot.stop_reason = "user_stopped"
-            raise _RestoredBatchStopped(snapshot)
+            raise _PartialBatchStopped(snapshot)
         if self.max_spend is not None:
             remaining = snapshot.pending_batch_evaluations
+            if self._unknown_cost_stop():
+                snapshot.stop_reason = "search_cost_unknown"
+                raise _PartialBatchStopped(snapshot)
             if self._budget_stop(remaining, expected_charge * remaining) == "search_cost_budget":
                 snapshot.stop_reason = "search_cost_budget" if self._calibrated else "warm_start_budget"
-                raise _RestoredBatchStopped(snapshot)
+                raise _PartialBatchStopped(snapshot)
         # The algorithm will incorporate the entire batch once; this temporary
         # view must not update its posterior twice when the missing cells finish.
         if count:
@@ -659,12 +672,17 @@ class GittinsModelSelector(BaseModelSelector):
         if self._calibrated:
             self._posteriors[arm], self._scalar_posteriors[arm] = posterior, scalar
 
+    def _unknown_cost_stop(self):
+        return self.max_spend is not None and (self._unmeasured_attempts > 0 or self._live_unknown_charge_attempts() > 0)
+
     def _budget_stop(self, count, predicted_charge=0):
         # Reconstruct the prefix before honoring a new stop request. The original
         # scheduling budgets still apply to each batch, including a partial one.
         restoring = self._journal is not None and self._journal.batch_index < self._journal.saved_batches
         if not restoring and self._should_stop():
             return "user_stopped"
+        if not restoring and self._unknown_cost_stop():
+            return "search_cost_unknown"
         cell_cap, max_spend = self._journal.saved_limits if restoring else (self.cell_cap, self.max_spend)
         if self._evaluations + count > cell_cap:
             return "question_budget"
@@ -868,7 +886,7 @@ class GittinsModelSelector(BaseModelSelector):
         warm_charges = [Fraction(0) for _ in range(n_arms)]
         reason = await self._warm_up(warm_charges, eta)
         if reason:
-            return self._results("user_stopped" if reason == "user_stopped" else "warm_start_budget",
+            return self._results(reason if reason in ("user_stopped", "search_cost_unknown") else "warm_start_budget",
                                  eta, calibrated=False)
         self._calibration = fit_warm_start(self._scores, self._costs, score_bounds=self.score_bounds,
                                           prior_variance=self.prior_variance,
@@ -924,7 +942,7 @@ class GittinsModelSelector(BaseModelSelector):
             unfinished = [i for i in range(n_arms) if self._positions[i] < n_questions]
             if not unfinished:
                 self._stop_recommended = single
-                reason = "all_arms_completed"
+                reason = "search_cost_unknown" if self._unknown_cost_stop() else "all_arms_completed"
                 break
             # Single mode recomputes its advice for the current observations,
             # including when a budget ends the run after the preceding batch.

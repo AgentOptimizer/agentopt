@@ -311,7 +311,7 @@ choice. `auto` does not infer the objective from the dataset or budget.
 |---|---|---|
 | `"auto"` / `"gittins"` | Gittins winner using a finite-dataset posterior | Two-axis Gittins accuracy/cost recommendation set |
 | `"random"` | Evaluate randomly ordered configurations | — |
-| `"ucb"` | UCB-E over configurations and questions | CoHV-UCB with an observed quality/cost Pareto frontier |
+| `"ucb"` | UCB exploration over configurations and questions | — |
 | `"bayesian"` | Gaussian-process optimization; requires `pip install "agentopt-py[bayesian]"` | — |
 | `"random_configurations"` | Evaluate randomly ordered configurations | Evaluate randomly ordered configurations |
 | `"random_questions"` | Evaluate every configuration on shared randomly ordered questions | Evaluate every configuration on shared randomly ordered questions |

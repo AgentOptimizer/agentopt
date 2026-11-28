@@ -112,8 +112,7 @@ Useful variations, appended to the command above:
 | Accuracy/cost alternatives | `--objective-mode multi` |
 | Random shared questions, about 20% of the dataset | `--method random_questions --evaluation-fraction 0.2` |
 | Random complete configurations, about half of the candidates | `--method random_configurations --evaluation-fraction 0.5` |
-| Two-objective CoHV-UCB with a live Pareto frontier | `--method ucb --objective-mode multi --batch-size 4` |
-| Single-objective UCB with an evaluation allowance | `--method ucb --evaluation-fraction 0.5` |
+| UCB with an evaluation allowance | `--method ucb --evaluation-fraction 0.5` |
 | Gittins with a soft search-dollar limit | `--max-search-cost-usd 1.0` |
 | End automatically on single-objective Gittins advice | `--stop-on-recommendation` |
 
@@ -152,7 +151,7 @@ Scroll or drag the scrollbar in the recommendations panel to browse longer lists
 resumes it; **Finish** requests a final result after scheduled work completes.
 Closing the window also requests a finish. The saved JSON contains the final
 selection results. These controls do not cancel calls already in flight, and
-the JSON report is not a restart file. Gittins or multi-objective UCB saves each successful
+the JSON report is not a restart file. Gittins separately saves each successful
 cell to a SQLite checkpoint. Re-running the same command restores saved work;
 Finish and window close keep that checkpoint. Add `--plot-output frontier.png`
 to save the final figure as well.
@@ -181,7 +180,7 @@ results = selector.select_best(
 )
 ```
 
-Multi-objective Gittins or UCB opens a window by default when called at a local Python
+Multi-objective Gittins opens a window by default when called at a local Python
 prompt with a desktop backend. Python scripts run without a window even when
 launched from a terminal. Single-objective runs, headless jobs, and worker
 threads also default to no window. Use `selector.select_best(show_ui=False)`
@@ -262,11 +261,11 @@ mechanism. `selector.latest_results` provides a copy of the latest snapshot for
 polling. A callback can also request a stop by returning `False`.
 
 The package supplies progress callbacks, result objects, and the desktop
-`LiveParetoPlot` view for multi-objective Gittins and UCB searches. A web dashboard or
+`LiveParetoPlot` view for multi-objective Gittins searches. A web dashboard or
 notebook interface can connect the same callbacks to its own controls.
 
 Updates happen after completed evaluations or batches, not while a model streams
-tokens. Gittins or multi-objective UCB needs its uniform warm start before it can recommend a
+tokens. Gittins needs its uniform warm start before it can recommend a
 configuration. Random configurations require a completed configuration; random
 questions require a completed sweep across every configuration. Stopping earlier
 still returns observed records but can leave the recommendation empty. UCB
@@ -322,7 +321,7 @@ modes restore saved scores, token counts, latencies, spend and search decisions
 without calling the agent or scorer for those cells. The first progress update
 shows the restored state rather than replaying old progress on screen.
 
-Python also checkpoints Gittins (both objective modes) and multi-objective UCB automatically, with or
+Python also checkpoints Gittins automatically in both objective modes, with or
 without a live window. Run from the same working directory and inspect
 `selector.checkpoint_path` for the database under `.agentopt_cache/checkpoints/`.
 The default key includes the Python agent and scoring definitions and serializable class settings. Give external
@@ -397,22 +396,13 @@ rule.
 | `auto`, `gittins` | Gittins winner | Gittins accuracy/cost recommendation set |
 | `random_configurations` | Random complete configurations | Same sampling, empirical accuracy/cost alternatives |
 | `random_questions` | Shared random questions across all configurations | Same sampling, empirical accuracy/cost alternatives |
-| `ucb` | UCB-E adaptive evaluations | CoHV-UCB, empirical quality/cost Pareto frontier |
+| `ucb` | UCB adaptive evaluations | Unsupported |
 | `bayesian` | Bayesian optimization of complete configurations | Unsupported |
 
 `random` is a single-mode alias for `random_configurations`; `matrix_ucb` is an
-alias for single-objective `ucb`. Bayesian optimization requires `python -m pip install
+alias for `ucb`. Bayesian optimization requires `python -m pip install
 "agentopt-py[bayesian]"` (or `python -m pip install -e '.[bayesian]'` in a checkout).
 Gittins, random, and UCB are included in the standard installation.
-
-To switch a quality/cost run to CoHV-UCB, use
-`ModelSelector(..., method="ucb", objective_mode="multi")`. Each configuration
-gets one initial batch (default four questions). After warm-up, each step
-selects one configuration and evaluates its next batch of unseen questions.
-The frontier shows the observed average quality and deployment cost. The live
-window, batch concurrency and checkpoint controls work as for Gittins. Each
-algorithm has its own checkpoint identity. When using the runner, choose a
-different output path for each algorithm so their checkpoint files stay separate.
 
 ### Set an evaluation allowance or dollar limit
 
@@ -434,14 +424,14 @@ configuration; for `random_configurations`, approximately 20% of configurations,
 each evaluated on every question. Fractions round up to cells, and random methods
 only start whole units that fit, so some allowance may remain unused.
 
-Gittins, multi-objective UCB and random methods also accept `max_total_question_evaluations`, combined
-with the fractional cap. Gittins and multi-objective UCB require enough cells for their warm start:
+Gittins and random methods also accept `max_total_question_evaluations`, combined
+with the fractional cap. Gittins must have enough cells for its warm start:
 K × `min(batch_size, N)`. Random methods require enough cells for at
 least one whole configuration or shared-question sweep. A tiny dollar limit can
-stop Gittins or CoHV-UCB during warm start, before any recommendation is available.
+stop Gittins during warm start, before any recommendation is available.
 
 Dollar limits apply to new non-cached search charges and are **soft**: scheduled
-work can overshoot. Gittins and CoHV-UCB compare recorded cell charges and the next batch
+work can overshoot. Gittins compares recorded cell charges and its next batch
 estimate in decimal USD. A batch whose estimated cost exactly matches the
 remaining positive budget can start. Inspect `selection_cost` and `search_cost_overshoot_usd`.
 Random methods do not accept `max_search_cost_usd`. All methods can use user
@@ -458,14 +448,14 @@ Pass selector parameters to `ModelSelector(...)`; pass execution controls to
 | Gittins `cost_scaling_factor` | `1e-4`, single mode only. Scales raw USD search evaluation cost in its index/stopping calculation; it is not a dollar cap. |
 | `lambda_cost`, `lambda_latency` | Both `0.0`, single mode only. Penalize normalized deployment cost/latency in the final scalar objective. These are separate from `cost_scaling_factor`. |
 | Gittins `stop_on_recommendation` | `False`. Set `True` for automatic stopping on single-objective advice. |
-| Gittins / multi-objective UCB `batch_size` | Defaults to `4` for both initial questions per configuration and questions per adaptive visit. A smaller adaptive batch gives more frequent updates and stop checks. |
-| `select_best(parallel=False, max_concurrent=20)` | Execution defaults. The runner uses parallel evaluation with a limit of four. Single-objective UCB uses `max_concurrent` for both its batch size and concurrency and ignores `parallel`. |
-| `seed` | Gittins, multi-objective UCB and random default to `42`; single-objective UCB defaults to `None`. Controls selection sampling, not model-provider randomness. Bayesian optimization has no selector `seed` argument. |
-| `score_bounds` | Gittins, CoHV-UCB and random selectors default to `(0.0, 1.0)`. Must contain every score returned by the scorer. |
+| Gittins `batch_size` | Defaults to `4` for both initial questions per configuration and questions per adaptive visit. A smaller adaptive batch gives more frequent updates and stop checks. |
+| `select_best(parallel=False, max_concurrent=20)` | Execution defaults. The runner uses parallel evaluation with a limit of four. UCB uses `max_concurrent` for both its batch size and concurrency and ignores `parallel`. |
+| `seed` | Gittins/random default `42`; UCB defaults to `None`. Controls selection sampling, not model-provider randomness. Bayesian optimization has no selector `seed` argument. |
+| `score_bounds` | Gittins/random default `(0.0, 1.0)`. Must contain every score returned by the scorer. |
 | `model_prices` | Optional mapping of model name to `input_price` and `output_price`, in USD per million tokens. Supply it for unknown models or price overrides. |
 | `tracker` | Optional `LLMTracker`, for example with a `cache_dir` for disk caching. |
 
-Gittins, CoHV-UCB and random selectors require tracked token usage and known nonnegative
+Gittins and random selectors require tracked token usage and known nonnegative
 prices for every evaluated workflow. Changing the scorer or agent must preserve
 that tracking. The [selector API reference](../api/selectors.md) also documents
 Gittins' prior/noise settings, recommendation conservatism, multi-objective

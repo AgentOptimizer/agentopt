@@ -34,12 +34,12 @@ print(results.get_best_combo())
 |---|---|---|
 | `auto`, `gittins` | Gittins finite-dataset winner | CC-Gittins two-axis recommendation set |
 | `random` | Random complete configurations | — |
-| `ucb` | UCB-E over configuration–question observations | CoHV-UCB over quality and deployment cost |
+| `ucb` | UCB-E over configuration–question observations | — |
 | `bayesian` | Categorical GP with Log Expected Improvement | — |
 | `random_configurations` | Random complete configurations | Random complete configurations |
 | `random_questions` | Shared random questions across all configurations | Shared random questions across all configurations |
 
-`random` is the single-mode alias for `random_configurations`. `matrix_ucb` is an alias for single-objective `ucb`. Bayesian optimization requires the optional `agentopt-py[bayesian]` dependencies; the other methods are available in the standard installation.
+`random` is the single-mode alias for `random_configurations`. `matrix_ucb` is an alias for `ucb`. Bayesian optimization requires the optional `agentopt-py[bayesian]` dependencies; the other methods are available in the standard installation.
 
 ## Live recommendations and user stopping
 
@@ -88,8 +88,7 @@ Progress and stopping checks occur at these boundaries:
 | Gittins | Coalesced warm-up progress, then each adaptive batch | No recommendation until the uniform warm start finishes; subsequent recommendations use finite-dataset predictions. |
 | Random configurations | Each sequential evaluation or concurrent chunk of questions | Only complete configurations are eligible. |
 | Random questions | Each configuration evaluation within a shared-question sweep | Only complete sweeps contribute to recommendations. |
-| Multi-objective UCB | After uniform warm-up, then each acquisition batch | Pareto frontier of empirical mean score and deployment USD per question. |
-| Single-objective UCB | Each acquisition batch | Ranks observed configurations by their current empirical scalar means; these are partial-data estimates without calibrated uncertainty. |
+| UCB | Each acquisition batch | Ranks observed configurations by their current empirical scalar means; these are partial-data estimates without calibrated uncertainty. |
 | Bayesian optimization | Each complete configuration, or completed parallel acquisition batch | Ranks fully evaluated configurations. |
 
 A snapshot can contain observations but no eligible recommendation. Further
@@ -239,11 +238,9 @@ Random baselines do not accept `max_search_cost_usd`. They allocate an evaluatio
 
 ## UCB and Bayesian optimization
 
-Single-objective UCB (`ucb`, alias `matrix_ucb`) uses `mean + sqrt(a/n)`, with `a=1.0`, and samples unseen questions on the selected configuration. `observation_budget_fraction=1.0` caps cells; `sample_fraction` is an alias that takes precedence. `seed` controls question sampling. `max_concurrent` controls both the batch size and concurrency, and `parallel` is ignored. If an entire acquisition batch fails to yield an observation, UCB stops with `stop_reason="evaluation_failed"`.
+UCB (`ucb`, alias `matrix_ucb`) uses `mean + sqrt(a/n)`, with `a=1.0`, and samples unseen questions on the selected configuration. `observation_budget_fraction=1.0` caps cells; `sample_fraction` is an alias that takes precedence. `seed` controls question sampling. `max_concurrent` controls both the batch size and concurrency, and `parallel` is ignored. If an entire acquisition batch fails to yield an observation, UCB stops with `stop_reason="evaluation_failed"`.
 
 Bayesian optimization uses a categorical `MixedSingleTaskGP` and Log Expected Improvement. Each selected configuration is evaluated over the complete dataset. If some questions fail, successful observations remain in the results, but that configuration is excluded from GP training and recommendations. `sample_fraction=0.25` caps the number of configurations (at least two if available); `batch_size=1` controls configurations per GP iteration. Both baselines support scalar deployment weights, single-objective recommendations, evaluation fractions, anytime user stopping, and `max_search_cost_usd=None`.
-
-For multi-objective UCB, the exploration horizon is the dollar cap divided by the smallest warm-up mean deployment price (rounded up), or the cell allowance when no dollar cap is set. Increasing a budget preserves saved decisions and applies the new horizon to future batches.
 
 Their dollar cap counts new non-cached token charges, including evaluation and judge calls. Costs must be known when a cap is requested. The cap is checked before scheduling further work: UCB can exceed it by the current acquisition batch; Bayesian optimization can exceed it by the current complete configuration, or by all configurations in the current parallel acquisition batch. Smaller batches reduce the work between spending checks. These are soft spending limits, not guarantees of an exact dollar total.
 

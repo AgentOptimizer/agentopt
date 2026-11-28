@@ -114,7 +114,7 @@ def test_terminal_sigint_saves_real_partial_run(monkeypatch, tmp_path, capsys, m
 
 @pytest.mark.parametrize("flags", [
     ["--method", "random_questions", "--max-search-cost-usd", "1"],
-    ["--objective-mode", "multi", "--method", "bayesian"],
+    ["--objective-mode", "multi", "--method", "ucb"],
     ["--method", "ucb", "--stop-on-recommendation"],
     ["--method", "bayesian", "--seed", "42"],
     ["--evaluation-fraction", "nan"],
@@ -130,7 +130,7 @@ def test_invalid_options_fail_before_loading_sdk_or_constructing_selector(monkey
     assert constructed == []
 
 
-@pytest.mark.parametrize("flags, expected_window", [([], True), (["--no-live-plot"], False), (["--method", "ucb"], True)])
+@pytest.mark.parametrize("flags, expected_window", [([], True), (["--no-live-plot"], False)])
 def test_multi_objective_runner_saves_actual_frontier(monkeypatch, tmp_path, flags, expected_window):
     pytest.importorskip("matplotlib")
     import matplotlib

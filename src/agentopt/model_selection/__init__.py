@@ -3,7 +3,6 @@
 from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResults
 from .matrix_ucb import MatrixUCBModelSelector
 from .gittins import GittinsModelSelector, GittinsRecommendation, GittinsSelectionResults
-from .cohv_ucb import CoHVUCBModelSelector
 from .random_search import RandomSearchModelSelector, RandomSelectionResults
 
 # Bayesian is optional (requires torch/botorch)
@@ -15,7 +14,6 @@ except ImportError:
 __all__ = [
     "BaseModelSelector",
     "MatrixUCBModelSelector",
-    "CoHVUCBModelSelector",
     "RandomSearchModelSelector",
     "RandomSelectionResults",
     "GittinsModelSelector",

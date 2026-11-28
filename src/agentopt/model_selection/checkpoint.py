@@ -347,13 +347,6 @@ class EvaluationCheckpoint:
         if self.saved_limits != self.limits and not batches:
             self._save_extended_limits()
 
-    def next_saved_arm(self):
-        """Recover an admitted policy decision when a larger budget changes its index."""
-        if self.batch_index >= self.saved_batches:
-            return None
-        with self._operation("read"):
-            return self.db.execute("SELECT arm FROM batches WHERE id=?", (self.batch_index + 1,)).fetchone()[0]
-
     def begin_batch(self, arm, questions):
         with self._operation("read/write"):
             self.batch_index += 1

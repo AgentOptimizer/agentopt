@@ -375,6 +375,12 @@ charges once, even if several HTTP requests time out during that attempt or a
 retry succeeds. A hard crash before the attempt is recorded can leave charges
 unknown. Older binaries reject format 5; checkpoints
 predating format 4 require a fresh path.
+
+With a dollar limit, Gittins, UCB-E and Bayesian search stop scheduling new
+evaluations once a dispatched request has an unknown charge. In-flight cells
+can finish; the result reports `search_cost_unknown` and the known spend.
+Gittins also applies this rule on resume, even after a budget increase, if its
+checkpoint still contains an unknown charge.
 Finish saves the report and stops this run; it does not discard the checkpoint.
 Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
 disable saving and reuse. Other selection algorithms do not yet support this.

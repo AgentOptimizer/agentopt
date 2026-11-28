@@ -901,6 +901,8 @@ class BaseModelSelector(ABC):
         evaluation_tasks: Dataset,
         label: str = "",
         dp_offset: int = 0,
+        *,
+        stop_before_cell: Optional[Callable[[], bool]] = None,
     ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent against tasks.
 
@@ -912,6 +914,8 @@ class BaseModelSelector(ABC):
         total = len(evaluation_tasks)
 
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
+            if stop_before_cell is not None and stop_before_cell():
+                break
             dp_id = f"{label}::dp_{dp_offset + i}"
             try:
                 with self._tracker.track(data_id=dp_id, combo_id=label) as session:
@@ -955,6 +959,8 @@ class BaseModelSelector(ABC):
         label: str = "",
         max_concurrent: int = 20,
         dp_offset: int = 0,
+        *,
+        stop_before_cell: Optional[Callable[[], bool]] = None,
     ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent asynchronously.
 
@@ -971,6 +977,8 @@ class BaseModelSelector(ABC):
         async def _eval_single(idx: int, input_data: Any, expected_answer: Any) -> None:
             dp_id = f"{label}::dp_{dp_offset + idx + 1}"
             async with semaphore:
+                if stop_before_cell is not None and stop_before_cell():
+                    return
                 try:
                     with self._tracker.track(data_id=dp_id, combo_id=label) as session:
                         start_time = time.monotonic()
@@ -1384,6 +1392,20 @@ class BaseModelSelector(ABC):
     def _selection_cost_so_far(self) -> Optional[float]:
         return self._cost_of_selection_records(self._tracker.get_records()[self._selection_record_offset:])
 
+    @staticmethod
+    def _charge_unknown(record) -> bool:
+        return not record.cached and not getattr(record, "request_not_sent", False) and (
+            getattr(record, "transport_charge_unknown", False) or getattr(record, "usage_unavailable", False)
+        )
+
+    def _live_unknown_charge_attempts(self) -> int:
+        records = self._tracker.get_records()
+        self._unknown_charge_ids.update(
+            r.data_id for r in records[self._unknown_record_cursor:] if self._charge_unknown(r)
+        )
+        self._unknown_record_cursor = len(records)
+        return len(self._unknown_charge_ids)
+
     def _cost_of_selection_records(self, records) -> Optional[float]:
         input_tokens: Dict[str, int] = {}
         output_tokens: Dict[str, int] = {}
@@ -1462,6 +1484,8 @@ class BaseModelSelector(ABC):
                 self._tracker = LLMTracker()
             self._tracker.start()
             self._selection_record_offset = len(self._tracker.get_records())
+            self._unknown_record_cursor = self._selection_record_offset
+            self._unknown_charge_ids = set()
             result = self._run_selection(parallel, max_concurrent, **run_options)
             # Read the ledger before stop() archives tracker sessions.
             return self._publish_update(result, final=True)

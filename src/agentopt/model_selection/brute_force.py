@@ -64,7 +64,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     combo, self.dataset, label=combo_name
                 )
                 result = self._build_combo_result(
-                    combo_name, scores, latencies, dp_ids,
+                    combo_name, scores, latencies, dp_ids, combo=combo,
                 )
                 print(f"  {result}")
                 all_results.append(result)
@@ -122,7 +122,7 @@ class BruteForceModelSelector(BaseModelSelector):
                     combo, self.dataset, label=combo_name, max_concurrent=dp_concurrent
                 )
                 result = self._build_combo_result(
-                    combo_name, scores, latencies, dp_ids,
+                    combo_name, scores, latencies, dp_ids, combo=combo,
                 )
                 print(f"  {result}")
                 return combo_name, result

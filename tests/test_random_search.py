@@ -119,3 +119,38 @@ def test_invalid_random_budget_does_not_start_tracking():
     with pytest.raises(ValueError,match="complete sampling unit"):
         make_random(tracker=tracker,max_total_question_evaluations=1)
     assert not tracker.started
+
+
+@pytest.mark.parametrize("method", ["random_questions", "random_configurations"])
+def test_random_attempt_cost_belongs_to_current_run(method):
+    from agentopt.proxy.models import CallRecord
+    tracker = RecordingTracker()
+    attempts = 0
+    class Agent:
+        def __init__(self, models):
+            self.model = models["solver"]
+        def run(self, question):
+            nonlocal attempts
+            attempts += 1
+            tracker.record(self.model, 1000)
+            if attempts == 1:
+                raise RuntimeError("failed after measured call")
+            if attempts == 2:
+                data_id, combo_id = tracker.active.get()
+                tracker.records.append(CallRecord(data_id=data_id, combo_id=combo_id, agent_id=None,
+                    model=self.model, prompt_tokens=0, completion_tokens=0, latency_seconds=.1,
+                    request_url="http://localhost", status_code=0, error="read timeout"))
+            return 1
+
+    selector = ModelSelector(agent=Agent, models={"solver": ["paid"]}, dataset=[(0, 1)],
+                             eval_fn=lambda expected, actual: actual, method=method, tracker=tracker,
+                             model_prices={"paid": {"input_price": 1, "output_price": 0}})
+    with pytest.raises(RuntimeError, match="Evaluation failed"):
+        selector.select_best()
+    for count in [1, 0]:
+        updates = []
+        result = selector.select_best(on_update=updates.append)
+        assert result.total_evaluations == 1
+        assert result.selection_cost == pytest.approx(.001)
+        assert result.unmeasured_failed_attempts == count
+        assert updates[-1].unmeasured_failed_attempts == count

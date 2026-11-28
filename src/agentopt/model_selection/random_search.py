@@ -92,7 +92,8 @@ class RandomSearchModelSelector(GittinsModelSelector):
         self._datapoints = [[] for _ in range(n_arms)]
         self._positions = np.zeros(n_arms, dtype=int)
         self._record_cursor = len(self._tracker.get_records())
-        self._spent, self._evaluations = 0.0, 0
+        self._spent, self._evaluations = 0, 0
+        self._failed_spend = self._unmeasured_attempts = 0
         eligible = np.zeros(n_arms, dtype=int)
         rng = np.random.default_rng(self.seed)
         units = rng.permutation(n_arms if self.sampling == "configurations" else n_questions)
@@ -151,7 +152,7 @@ class RandomSearchModelSelector(GittinsModelSelector):
                     for model, count in tokens.items():
                         target[model] = target.get(model, 0) + count
             records.append(self._make_result(
-                model_name=name, accuracy=float(np.mean(self._scores[arm])),
+                model_name=name, combo=self._combos[arm], accuracy=float(np.mean(self._scores[arm])),
                 latency_seconds=float(np.mean(self._latencies[arm])),
                 input_tokens=input_tokens, output_tokens=output_tokens,
                 attribute="combination", datapoint_results=dps,
@@ -181,5 +182,6 @@ class RandomSearchModelSelector(GittinsModelSelector):
             results=records, recommendations=recommendations, objective_mode=self.objective_mode,
             stop_reason=reason, sampling=self.sampling, completed_units=completed_units,
             total_evaluations=self._evaluations,
+            unmeasured_failed_attempts=self._unmeasured_attempts,
             search_cost_overshoot_usd=0.0,
         )

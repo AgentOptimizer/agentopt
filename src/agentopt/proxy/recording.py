@@ -56,8 +56,9 @@ class Recorder:
         is_streaming: bool,
         status_code: int = 200,
         error: Optional[str] = None,
-    ) -> None:
-        """Build a ``CallRecord`` and add it to the session.
+        request_not_sent: bool = False,
+    ) -> bool:
+        """Add a call to the session and return whether its usage was measured.
 
         ``response_body`` is ``None`` only on the connection-failure path,
         where the caller already supplied an ``error`` message.  On any
@@ -70,12 +71,12 @@ class Recorder:
 
         if response_body is not None:
             try:
-                if is_streaming and status_code == 200:
+                if is_streaming and status_code == 200 and not response_body.lstrip().startswith(b"["):
                     usage = extract_usage_streaming(
                         response_body, request_body_json, request_url,
                     )
                 else:
-                    usage = extract_usage(response_body)
+                    usage = extract_usage(response_body, request_model=request_body_json.get("model"))
             except UsageExtractionError as exc:
                 parse_err = str(exc)
 
@@ -120,8 +121,10 @@ class Recorder:
                 cached=cached,
                 status_code=status_code,
                 error=record_error,
+                request_not_sent=request_not_sent,
             ),
         )
+        return usage is not None
 
     def _maybe_warn(self, request_url: str, reason: str, model: Optional[str],) -> None:
         host = urlparse(request_url).hostname or request_url

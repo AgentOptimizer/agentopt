@@ -5,10 +5,14 @@ Base classes and result types for model selection.
 import asyncio
 import inspect
 import itertools
+import json
 import logging
 import math
+import os
+import tempfile
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 from threading import Event, Lock
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
@@ -28,6 +32,22 @@ from ..model_price import compute_price
 logger = logging.getLogger(__name__)
 
 
+def save_json(path, payload):
+    """Replace a result only after a complete JSON write succeeds."""
+    path = Path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, indent=2, ensure_ascii=False, allow_nan=False)
+            handle.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+
+
 class DatapointResult(BaseModel):
     """Metrics for a single datapoint evaluation."""
 
@@ -42,6 +62,7 @@ class ModelResult(BaseModel):
     """Result of evaluating a single model combination."""
 
     model_name: str
+    combo: Optional[Dict[str, str]] = None
     accuracy: float
     latency_seconds: float
     input_tokens: Dict[str, int] = Field(default_factory=dict)
@@ -130,16 +151,22 @@ class SelectionResults(BaseModel):
     def get_best_combo(self) -> Optional[Dict[str, str]]:
         """Get the best model combination as a dict of node_name -> model_name.
 
-        Parses the combo_name format ``"node1=model1 + node2=model2"``.
+        Older saved results may contain only a display label.
         """
         best = self.get_best()
         if best is None:
             return None
+        if best.combo is not None:
+            return dict(best.combo)
         combo = {}
+        previous_node = None
         for part in best.model_name.split(" + "):
             if "=" in part:
                 node, model = part.split("=", 1)
                 combo[node] = model
+                previous_node = node
+            elif previous_node is not None:
+                combo[previous_node] += " + " + part
             else:
                 combo[part] = part
         return combo
@@ -222,7 +249,7 @@ class SelectionResults(BaseModel):
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for result in self.results:
-                row = result.model_dump()
+                row = result.model_dump(include=set(fieldnames))
                 row["input_tokens"] = json.dumps(row["input_tokens"])
                 row["output_tokens"] = json.dumps(row["output_tokens"])
                 p = result.price
@@ -800,16 +827,12 @@ class BaseModelSelector(ABC):
         run_method = getattr(agent, "run", None)
         self._is_async_run = inspect.iscoroutinefunction(run_method)
 
-        if tracker is not None:
-            self._tracker = tracker
-        else:
-            self._tracker = LLMTracker()
+        self._tracker = tracker
         self._stop_requested = Event()
         self._selection_lock = Lock()
         self._external_stop_event = None
         self._on_update = None
         self._latest_results = None
-        self._tracker.start()
 
     # ------------------------------------------------------------------
     # Combo generation
@@ -878,6 +901,8 @@ class BaseModelSelector(ABC):
         evaluation_tasks: Dataset,
         label: str = "",
         dp_offset: int = 0,
+        *,
+        stop_before_cell: Optional[Callable[[], bool]] = None,
     ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent against tasks.
 
@@ -889,12 +914,14 @@ class BaseModelSelector(ABC):
         total = len(evaluation_tasks)
 
         for i, (input_data, expected_answer) in enumerate(evaluation_tasks, 1):
+            if stop_before_cell is not None and stop_before_cell():
+                break
             dp_id = f"{label}::dp_{dp_offset + i}"
             try:
                 with self._tracker.track(data_id=dp_id, combo_id=label) as session:
-                    start_time = time.time()
+                    start_time = time.monotonic()
                     actual_result = self._invoke_agent(agent, input_data)
-                    wall_clock = time.time() - start_time
+                    wall_clock = time.monotonic() - start_time
                     # Add back time saved by cache hits so latency
                     # reflects what a real (uncached) run would cost.
                     cached_latency = self._tracker.get_cached_latency(data_id=dp_id)
@@ -932,6 +959,8 @@ class BaseModelSelector(ABC):
         label: str = "",
         max_concurrent: int = 20,
         dp_offset: int = 0,
+        *,
+        stop_before_cell: Optional[Callable[[], bool]] = None,
     ) -> Tuple[List[float], List[float], List[str]]:
         """Evaluate a pre-built agent asynchronously.
 
@@ -948,9 +977,11 @@ class BaseModelSelector(ABC):
         async def _eval_single(idx: int, input_data: Any, expected_answer: Any) -> None:
             dp_id = f"{label}::dp_{dp_offset + idx + 1}"
             async with semaphore:
+                if stop_before_cell is not None and stop_before_cell():
+                    return
                 try:
                     with self._tracker.track(data_id=dp_id, combo_id=label) as session:
-                        start_time = time.time()
+                        start_time = time.monotonic()
                         if is_async:
                             actual_result = await self._invoke_agent(agent, input_data)
                         else:
@@ -959,7 +990,7 @@ class BaseModelSelector(ABC):
                             actual_result = await loop.run_in_executor(
                                 None, ctx.run, self._invoke_agent, agent, input_data
                             )
-                        wall_clock = time.time() - start_time
+                        wall_clock = time.monotonic() - start_time
                         # Add back time saved by cache hits so latency
                         # reflects what a real (uncached) run would cost.
                         cached_latency = self._tracker.get_cached_latency(data_id=dp_id)
@@ -1161,9 +1192,10 @@ class BaseModelSelector(ABC):
     # Result helpers
     # ------------------------------------------------------------------
 
-    def _make_result(self, **kwargs: Any) -> ModelResult:
+    def _make_result(self, *, combo: Optional[Dict[str, ModelCandidate]] = None, **kwargs: Any) -> ModelResult:
         """Create a :class:`ModelResult` with instance-level custom prices."""
-        result = ModelResult(**kwargs)
+        labels = None if combo is None else {node: self._candidate_label(model) for node, model in combo.items()}
+        result = ModelResult(combo=labels, **kwargs)
         result._custom_prices = self._custom_prices
         return result
 
@@ -1176,6 +1208,9 @@ class BaseModelSelector(ABC):
         costs: Optional[List[Optional[float]]] = None,
         attribute: str = "combination",
         is_best: bool = False,
+        combo: Optional[Dict[str, ModelCandidate]] = None,
+        *,
+        datapoint_indices: Optional[List[int]] = None,
     ) -> ModelResult:
         """Build a :class:`ModelResult` and absorb the samples into the normalizer.
 
@@ -1191,7 +1226,8 @@ class BaseModelSelector(ABC):
         accuracy, _ = self._compute_stats(scores)
         avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
         dp_results = (
-            self._build_datapoint_results(scores, latencies, dp_ids) if dp_ids else []
+            self._build_datapoint_results(scores, latencies, dp_ids, datapoint_indices=datapoint_indices)
+            if dp_ids else []
         )
         if costs is None:
             costs = self._observe_combo(scores, latencies, dp_ids)
@@ -1199,6 +1235,7 @@ class BaseModelSelector(ABC):
             self._absorb_observations(latencies, costs)
         combined = self._mean_objective(scores, latencies, costs)
         return self._make_result(
+            combo=combo,
             model_name=combo_name,
             accuracy=accuracy,
             latency_seconds=avg_latency,
@@ -1212,6 +1249,7 @@ class BaseModelSelector(ABC):
 
     def _build_datapoint_results(
         self, scores: List[float], latencies: List[float], datapoint_ids: List[str],
+        *, datapoint_indices: Optional[List[int]] = None,
     ) -> List[DatapointResult]:
         """Build per-datapoint result objects with token attribution."""
         dp_tokens = self._fetch_tokens_by_datapoint(datapoint_ids)
@@ -1220,7 +1258,7 @@ class BaseModelSelector(ABC):
             inp_tok, out_tok = dp_tokens.get(dp_id, ({}, {}))
             results.append(
                 DatapointResult(
-                    datapoint_index=j,
+                    datapoint_index=j if datapoint_indices is None else datapoint_indices[j],
                     score=scores[j],
                     latency_seconds=latencies[j],
                     input_tokens=inp_tok,
@@ -1352,11 +1390,30 @@ class BaseModelSelector(ABC):
         )
 
     def _selection_cost_so_far(self) -> Optional[float]:
+        return self._cost_of_selection_records(self._tracker.get_records()[self._selection_record_offset:])
+
+    @staticmethod
+    def _charge_unknown(record) -> bool:
+        return not record.cached and not getattr(record, "request_not_sent", False) and (
+            getattr(record, "transport_charge_unknown", False) or getattr(record, "usage_unavailable", False)
+        )
+
+    def _live_unknown_charge_attempts(self) -> int:
+        records = self._tracker.get_records()
+        self._unknown_charge_ids.update(
+            r.data_id for r in records[self._unknown_record_cursor:] if self._charge_unknown(r)
+        )
+        self._unknown_record_cursor = len(records)
+        return len(self._unknown_charge_ids)
+
+    def _cost_of_selection_records(self, records) -> Optional[float]:
         input_tokens: Dict[str, int] = {}
         output_tokens: Dict[str, int] = {}
-        for record in self._tracker.get_records()[self._selection_record_offset:]:
+        for record in records:
             if record.cached:
                 continue
+            if getattr(record, "usage_unavailable", False):
+                return None
             input_tokens[record.model] = input_tokens.get(record.model, 0) + record.prompt_tokens
             output_tokens[record.model] = output_tokens.get(record.model, 0) + record.completion_tokens
         return compute_price(input_tokens, output_tokens, custom_prices=self._custom_prices)
@@ -1413,6 +1470,9 @@ class BaseModelSelector(ABC):
         cancel requests already scheduled. Read :attr:`latest_results` to
         inspect progress without a callback.
         """
+        return self._select_with_tracking(parallel, max_concurrent, on_update, stop_event)
+
+    def _select_with_tracking(self, parallel, max_concurrent, on_update, stop_event, **run_options):
         if not self._selection_lock.acquire(blocking=False):
             raise RuntimeError("This selector already has an active selection run")
         self._on_update = on_update
@@ -1420,13 +1480,19 @@ class BaseModelSelector(ABC):
         self._latest_results = None
         self._selection_started = time.monotonic()
         try:
+            if self._tracker is None:
+                self._tracker = LLMTracker()
+            self._tracker.start()
             self._selection_record_offset = len(self._tracker.get_records())
-            result = self._run_selection(parallel, max_concurrent)
+            self._unknown_record_cursor = self._selection_record_offset
+            self._unknown_charge_ids = set()
+            result = self._run_selection(parallel, max_concurrent, **run_options)
             # Read the ledger before stop() archives tracker sessions.
             return self._publish_update(result, final=True)
         finally:
             try:
-                self._tracker.stop()
+                if self._tracker is not None:
+                    self._tracker.stop()
             finally:
                 self._on_update = None
                 self._external_stop_event = None

@@ -325,6 +325,7 @@ class ArmEliminationModelSelector(BaseModelSelector):
                         combo_latencies[idx],
                         combo_dp_ids[idx],
                         costs=combo_costs[idx],
+                        combo=combo,
                     )
                 )
             else:

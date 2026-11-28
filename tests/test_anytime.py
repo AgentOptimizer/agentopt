@@ -23,7 +23,7 @@ def test_gittins_callback_stops_during_warmup_or_after_calibration(mode, stop_at
         if result.total_evaluations >= stop_at and (stop_at != 8 or result.recommendations):
             return False
 
-    final = selector.select_best(on_update=update)
+    final = selector.select_best(warm_start_max_concurrent=1, on_update=update)
     assert final.stop_reason == "user_stopped"
     assert final.total_evaluations == stop_at
     assert bool(final.recommendations) == (stop_at >= 8)

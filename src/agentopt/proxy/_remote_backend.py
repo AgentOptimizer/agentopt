@@ -36,10 +36,12 @@ if TYPE_CHECKING:
     from agentopt.routing.base import Router
 
 from ._backend import _Backend
+from .usage import UsageExtractionError
 from .interceptor import (
     ActiveSession,
     CallHandler,
     _active_session_var,
+    http_transport,
     forward_async,
     forward_sync,
     install_redirect,
@@ -123,7 +125,7 @@ class RemoteHandler(CallHandler):
     ``AGENTOPT_GATEWAY_URL`` is set; subprocess agents use
     ``HTTPS_PROXY`` directly and never hit this code.
 
-    The sync client is created eagerly; the async client is created on
+    The proxy clients for each HTTP library are created on
     first use.  This keeps the common (sync-only) path leak-free without
     making the async path more expensive than necessary — and it gives
     :meth:`close` a clear signal for when async cleanup is needed.
@@ -132,46 +134,35 @@ class RemoteHandler(CallHandler):
     def __init__(self, proxy_url: str, ca_bundle_path: str) -> None:
         self._proxy_url = proxy_url
         self._ca_bundle_path = ca_bundle_path
-        self._sync_client: httpx.Client = _make_httpx_client(
-            httpx.Client, proxy_url, ca_bundle_path,
-        )
-        # Lazy: only created if handle_async is ever called.  Avoids
-        # leaking a connection pool when only sync paths are exercised.
-        self._async_client: Optional[httpx.AsyncClient] = None
+        self._client_lock = threading.Lock()
+        self._sync_clients = {}
+        self._async_clients = {}
 
-    def handle_sync(
-        self, client: httpx.Client, request: httpx.Request, *, stream: bool, **kwargs,
-    ) -> httpx.Response:
-        # Use our proxy-configured client; bypass the patch via forward_sync.
-        return forward_sync(self._sync_client, request, stream=stream, **kwargs)
+    def handle_sync(self, client, request, *, stream, **kwargs):
+        transport = http_transport(request)
+        with self._client_lock:
+            if transport not in self._sync_clients:
+                self._sync_clients[transport] = _make_httpx_client(
+                    transport.Client, self._proxy_url, self._ca_bundle_path)
+        return forward_sync(self._sync_clients[transport], request, stream=stream, **kwargs)
 
-    async def handle_async(
-        self,
-        client: httpx.AsyncClient,
-        request: httpx.Request,
-        *,
-        stream: bool,
-        **kwargs,
-    ) -> httpx.Response:
-        if self._async_client is None:
-            self._async_client = _make_httpx_client(
-                httpx.AsyncClient, self._proxy_url, self._ca_bundle_path,
-            )
-        return await forward_async(
-            self._async_client, request, stream=stream, **kwargs,
-        )
+    async def handle_async(self, client, request, *, stream, **kwargs):
+        transport = http_transport(request)
+        if transport not in self._async_clients:
+            self._async_clients[transport] = _make_httpx_client(
+                transport.AsyncClient, self._proxy_url, self._ca_bundle_path)
+        return await forward_async(self._async_clients[transport], request, stream=stream, **kwargs)
 
     def close(self) -> None:
-        try:
-            self._sync_client.close()
-        except Exception:
-            logger.debug("ignored exception closing sync client", exc_info=True)
-        # Only attempt async cleanup if we actually built an async client.
-        # AsyncClient has no synchronous ``close`` — must drive ``aclose``
-        # on a loop.
-        if self._async_client is not None:
-            self._close_async_client(self._async_client)
-            self._async_client = None
+        for client in self._sync_clients.values():
+            try:
+                client.close()
+            except Exception:
+                logger.debug("ignored exception closing sync client", exc_info=True)
+        self._sync_clients.clear()
+        for client in self._async_clients.values():
+            self._close_async_client(client)
+        self._async_clients.clear()
 
     @staticmethod
     def _close_async_client(client: httpx.AsyncClient) -> None:
@@ -492,6 +483,8 @@ class RemoteBackend(_Backend):
             f"{self._gateway_url}/usage",
             params=self._query_params(data_id, combo_id, agent_id),
         )
+        if resp.status_code == 422:
+            raise UsageExtractionError(resp.json()["error"])
         resp.raise_for_status()
         return {k: (int(v[0]), int(v[1])) for k, v in resp.json().items()}
 

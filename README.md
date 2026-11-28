@@ -34,7 +34,7 @@
 
 [Watch the walkthrough](https://agentoptimizer.github.io/agentopt/demo/) · [Download the video](https://agentoptimizer.github.io/agentopt/assets/video/agentopt-demo.mp4)
 
-The HotpotQA segment visualizes a recorded CC-Gittins run using real evaluation records. Its presentation layout is designed for the video rather than captured from the current product interface.
+The HotpotQA segment visualizes a recorded CC-Gittins run using real evaluation records. Its presentation layout is designed for the video rather than captured from the current product interface. To watch your own search as evaluations finish, [run the live Pareto view](docs/getting-started/your-benchmark.md#watch-the-estimated-pareto-frontier).
 
 <sub>Video by Yueli He and Yucheng Pan. Thank you for creating this walkthrough.</sub>
 
@@ -60,7 +60,12 @@ AgentOpt uses Gittins selection by default to allocate evaluation effort using e
 
 ### Offline model selection — find the best fixed combination
 
-Same accuracy band, 20–100x cost difference — just by picking the right model combination:
+Give AgentOpt your agent, candidate models, benchmark questions and a scorer. It runs the agent on those questions before deployment. Choose the result you need:
+
+- **Single-objective selection** recommends one combination for your scoring objective. This is the default.
+- **Offline Pareto recommendations** compare estimated quality and deployment cost. Set `objective_mode="multi"` to see the frontier and choose a combination within your budget per question.
+
+For example, these benchmark runs found combinations with similar accuracy at very different costs:
 
 | Benchmark | Expensive Combo | Acc | Cost | Budget Combo | Acc | Cost | Savings |
 |-----------|----------------|-----|------|-------------|-----|------|---------|
@@ -68,7 +73,7 @@ Same accuracy band, 20–100x cost difference — just by picking the right mode
 | HotpotQA | Opus + Opus | ~73% | $2.71 | Qwen3 Next + gpt-oss-120b | 71.3% | $0.13 | **21x** |
 | MathQA | Opus + Opus | ~98.5% | $5.89 | Ministral + C3 Haiku | 94.0% | $0.05 | **118x** |
 
-Run it once against a small evaluation dataset; ship the winner. Read more in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-combo-optimizer-not-just-a-model/).
+Read more about these benchmarks in our [blog post](https://agentoptimizer.github.io/agentopt/blog/2026/03/22/why-your-agent-needs-a-model-combo-optimizer-not-just-a-model/).
 
 ### Online model routing — pick a different model per call
 
@@ -86,18 +91,25 @@ The routing API runs the same in-process or through the `agentopt serve` daemon,
 ```bash
 pip install agentopt-py
 ```
+
+This command installs the published PyPI release. The examples below describe the code in this checkout. To run them from source with the OpenAI SDK and the optional live chart, install from the repository root:
+
+```bash
+python -m pip install -e ".[plot]" openai
+```
+
 ## Quick Start
 
 Two axes determine which entry point you reach for:
 
-- **Selection vs routing** — find one fixed model combination *offline* (selection), or pick a model *per LLM call* at runtime (routing).
+- **Selection vs routing** — evaluate fixed model combinations before deployment (selection), or pick a model *per LLM call* at runtime (routing).
 - **In-process vs subprocess** — does your agent live in the same Python process as your script (LangChain, OpenAI SDK, …), or run as an external CLI / Docker container (Gemini CLI, Terminal Bench, Claude Code, …)?
 
 A third deployment axis — **local proxy vs `agentopt serve` daemon** — is just an env-var flip; the code below is byte-identical between modes. The four canonical setups follow.
 
 ### 1. In-process agent + offline model selection
 
-The base case. Your agent uses an LLM SDK directly; you search a `{planner, solver}` combination space to pick the cheapest combo that hits the accuracy band.
+This example uses the OpenAI SDK and makes model API calls. Set `OPENAI_API_KEY` before running it. Each combination assigns one model to the planner and one to the solver.
 
 ```python
 from openai import OpenAI
@@ -134,21 +146,17 @@ dataset = [
 def eval_fn(expected, actual):
     return 1.0 if expected.lower() in str(actual).lower() else 0.0
 
-selector = ModelSelector(
-    agent=MyAgent,
-    models={
-        "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-        "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
-    },                                  # → 3 × 3 = 9 combinations
-    eval_fn=eval_fn,
-    dataset=dataset,
-    method="auto",                      # Gittins; single objective by default
-)
-results = selector.select_best(parallel=True, max_concurrent=50)
+models = {
+    "planner": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+    "solver":  ["gpt-4o", "gpt-4o-mini", "gpt-4.1-nano"],
+}
+selector = ModelSelector(agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset)
+results = selector.select_best()  # single-objective Gittins
+print(results.get_best_combo())
 results.print_summary()
 ```
 
-Output:
+Example summary (scores, costs and latency depend on the run):
 ```
     Model Selection Results
     ----------------------------------------------------------------------------
@@ -160,7 +168,21 @@ Output:
     ...
 ```
 
-With `method="auto"`, AgentOpt uses Gittins selection to decide which combination to evaluate next and recommend when further evaluation is no longer worth its cost. LLM-as-judge is supported — call your judge LLM inside `eval_fn`; tracked judge calls count toward search spending.
+To explore **quality and cost** on the same agent and dataset, keep the same `models` dictionary and replace the lines starting at `selector = ModelSelector(...)` with the following:
+
+```python
+selector = ModelSelector(
+    agent=MyAgent, models=models, eval_fn=eval_fn, dataset=dataset, objective_mode="multi",
+)
+results = selector.select_best()
+chosen = results.choose(max_cost_usd=0.01)  # deployment budget in USD per question
+if chosen is not None:
+    print(chosen.combo)
+```
+
+At a local interactive Python prompt with a graphical Matplotlib backend, multi-objective Gittins opens the live Pareto chart automatically. A Python script runs without a window by default, even when launched from a terminal. In a desktop script, use `selector.select_best(show_ui=True)` to open the chart. Use `show_ui=False` for a terminal-only run.
+
+The three-question example fits entirely within the warm-up. To watch adaptive search, use a larger [benchmark dataset](docs/getting-started/your-benchmark.md). LLM-as-judge is supported — call your judge LLM inside `eval_fn`; tracked judge calls count toward search spending.
 
 ### 2. Subprocess agent + offline model selection
 
@@ -291,9 +313,9 @@ Working examples for the frameworks and CLI agents named above. Examples are org
 | OpenAI Agents SDK | in-process | [openai_sdk.py](examples/selection/local/openai_sdk.py) | [openai_sdk.py](examples/routing/local/openai_sdk.py) |
 | LangChain | in-process | [langchain.py](examples/selection/local/langchain.py) | [langchain.py](examples/routing/local/langchain.py) |
 | LangGraph | in-process | [langgraph.py](examples/selection/local/langgraph.py) | [langgraph.py](examples/routing/local/langgraph.py) |
-| CrewAI | in-process | [crewai.py](examples/selection/local/crewai.py) | [crewai.py](examples/routing/local/crewai.py) |
+| CrewAI | in-process | [crewai_workflow.py](examples/selection/local/crewai_workflow.py) | [crewai.py](examples/routing/local/crewai.py) |
 | LlamaIndex | in-process | [llamaindex.py](examples/selection/local/llamaindex.py) | [llamaindex.py](examples/routing/local/llamaindex.py) |
-| AG2 | in-process | [ag2.py](examples/selection/local/ag2.py) | [ag2.py](examples/routing/local/ag2.py) |
+| AG2 | in-process | [AG2 1.x example](examples/selection/local/ag2_workflow.py) | [ag2.py](examples/routing/local/ag2.py) |
 | OpenAI-Compatible API | in-process | [custom_agent.py](examples/selection/local/custom_agent.py) | [custom_agent.py](examples/routing/local/custom_agent.py) |
 | Gemini CLI | subprocess | [gemini_cli.py](examples/selection/local/gemini_cli.py) | [gemini_cli.py](examples/routing/local/gemini_cli.py) |
 | OpenHarness | subprocess | [openharness.py](examples/selection/local/openharness.py) | [openharness.py](examples/routing/local/openharness.py) |
@@ -305,7 +327,12 @@ Working examples for the frameworks and CLI agents named above. Examples are org
 `method="auto"` uses **Gittins**, included in the standard installation.
 Choose the output with `objective_mode`: `"single"` (default) returns one
 combination; `"multi"` returns accuracy/cost tradeoffs for an explicit deployment
-choice. `auto` does not infer the objective from the dataset or budget.
+choice. By default Gittins evaluates up to four questions per combination during
+warm-up and uses batches of four for adaptive search. Both phases run in parallel
+with up to four evaluations at once by default. The default allowance covers the
+full combination–question grid, with no dollar cap. Set `max_search_cost_usd`
+to limit total search spend (a soft cap). After a multi-objective run, use
+`results.choose(max_cost_usd=...)` to set a deployment budget per question.
 
 | `method=` | Single objective | Multiple objectives |
 |---|---|---|
@@ -361,7 +388,9 @@ The [Run Your Benchmark guide](docs/getting-started/your-benchmark.md) walks thr
 loading your examples, choosing settings, displaying recommendations, stopping,
 and saving results. For a complete terminal workflow, run
 [`benchmark_runner.py`](examples/selection/benchmark_runner.py) with your JSONL
-file; it prints live recommendations and saves the final result after Ctrl+C.
+file. Add `--objective-mode multi` for the quality–cost view. The runner opens
+the window automatically in a supported local interactive session. Use
+`--no-live-plot` for terminal output only or `--live-plot` to request the window.
 
 Both random methods work in single and multi mode; `random` is the single-mode
 alias for `random_configurations`. Every method accepts a fraction of evaluations
@@ -491,6 +520,14 @@ combo = results.get_best_combo()      # {"planner": "gpt-4o", "solver": "gpt-4o-
 results.to_csv("results.csv")         # export all results
 results.export_config("config.yaml")  # export best combo as YAML
 ```
+
+For multi-objective results, inspect `results.get_recommendations()` or use the
+per-question budget example in [Quick Start](#quick-start). In the live desktop
+view, **Finish** or closing the window requests a stop after in-flight work.
+The Python-created window exports the result JSON and frontier PNG under
+`.agentopt_cache/exports/`. Gittins saves progress separately in a SQLite
+checkpoint for resumable runs. Repeat the same configuration from the same
+working directory to continue. See [checkpoint settings](docs/getting-started/your-benchmark.md#continue-after-closing-the-window).
 
 ## Advanced Usage
 

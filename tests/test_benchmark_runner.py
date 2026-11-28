@@ -10,13 +10,21 @@ from types import SimpleNamespace
 import pytest
 
 import agentopt
-from tests.test_gittins import RecordingTracker
+from tests.test_gittins import RecordingTracker, make_selector
 
 
 SCRIPT = Path(__file__).parents[1] / "examples" / "selection" / "benchmark_runner.py"
 spec = importlib.util.spec_from_file_location("benchmark_runner", SCRIPT)
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
+
+
+def test_progress_displays_model_alias_verbatim(capsys):
+    alias = "local + review"
+    selector, _ = make_selector(mode="single", count=2, outcomes={alias: .9}, tokens={alias: 10})
+    result = selector.select_best()
+    runner.show_progress(result, total_questions=2)
+    assert str({"solver": alias}) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("contents,detail", [
@@ -110,6 +118,8 @@ def test_terminal_sigint_saves_real_partial_run(monkeypatch, tmp_path, capsys, m
     ["--method", "ucb", "--stop-on-recommendation"],
     ["--method", "bayesian", "--seed", "42"],
     ["--evaluation-fraction", "nan"],
+    ["--live-plot"],
+    ["--plot-output", "frontier.png"],
 ])
 def test_invalid_options_fail_before_loading_sdk_or_constructing_selector(monkeypatch, tmp_path, flags):
     constructed = []
@@ -118,6 +128,54 @@ def test_invalid_options_fail_before_loading_sdk_or_constructing_selector(monkey
         runner.main(["--dataset", str(tmp_path / "missing.jsonl"), "--models", "first", *flags])
     assert error.value.code == 2
     assert constructed == []
+
+
+@pytest.mark.parametrize("flags, expected_window", [([], True), (["--no-live-plot"], False)])
+def test_multi_objective_runner_saves_actual_frontier(monkeypatch, tmp_path, flags, expected_window):
+    pytest.importorskip("matplotlib")
+    import matplotlib
+    matplotlib.use("Agg", force=True)
+    from agentopt.visualization import LiveParetoPlot
+    monkeypatch.setattr("agentopt.visualization.live_pareto.local_desktop_available", lambda *, cli: cli)
+    initialize = LiveParetoPlot.__init__
+    windows = []
+    def offscreen(plot, *, show_window, **kwargs):
+        windows.append(show_window)
+        initialize(plot, show_window=False, **kwargs)
+    monkeypatch.setattr(LiveParetoPlot, "__init__", offscreen)
+
+    tracker = RecordingTracker()
+    source = SCRIPT.with_name("benchmark_sample.jsonl")
+    answers = dict(runner.load_dataset(source))
+
+    class FakeOpenAI:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, *, model, messages):
+            tracker.record(model, 1000)
+            answer = answers[messages[-1]["content"]]
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+    factory = agentopt.ModelSelector
+    monkeypatch.setattr(agentopt, "ModelSelector", lambda **kwargs: factory(
+        **kwargs, tracker=tracker,
+        model_prices={name: {"input_price": 1, "output_price": 0} for name in ("first", "second")},
+    ))
+    output = tmp_path / "results.json"
+    figure = tmp_path / "frontier.png"
+    result = runner.main([
+        "--dataset", str(source), "--models", "first", "second",
+        "--objective-mode", "multi", "--plot-output", str(figure), *flags,
+        "--output", str(output),
+    ])
+
+    assert result.is_final
+    assert json.loads(output.read_text())["total_evaluations"] == result.total_evaluations
+    assert windows == [expected_window]
+    assert figure.read_bytes().startswith(b"\x89PNG")
+    assert len(tracker.records) == result.total_evaluations
 
 
 def test_stop_handler_restored_if_selection_fails(tmp_path):
@@ -325,3 +383,23 @@ def test_atomic_result_write_keeps_existing_file_if_serialization_fails(tmp_path
         runner.save_json(output, {"invalid": float("nan")})
     assert output.read_text() == "previous complete result"
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_sdk_guide_records_each_cell_once_on_reopen(tmp_path, mock_upstream, monkeypatch):
+    import sqlite3
+    pytest.importorskip("openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-placeholder")
+    monkeypatch.setenv("OPENAI_BASE_URL", mock_upstream.base_url + "/v1")
+    monkeypatch.chdir(tmp_path)
+    dataset = tmp_path / "one.jsonl"
+    dataset.write_text(json.dumps({"input": "Capital of France?", "expected": "Paris"}))
+    args = ["--dataset", str(dataset), "--models", "gpt-4o-mini", "gpt-4.1-nano",
+            "--output", str(tmp_path / "result.json")]
+    first = runner.main(args)
+    assert first.total_evaluations == mock_upstream.request_count == 2
+    assert first.selection_cost > 0
+    with sqlite3.connect(tmp_path / "result.json.checkpoint.sqlite3") as db:
+        assert db.execute("SELECT COUNT(*) FROM cells").fetchone() == (2,)
+    resumed = runner.main(args)
+    assert resumed.selection_cost == first.selection_cost
+    assert resumed.total_evaluations == mock_upstream.request_count == 2

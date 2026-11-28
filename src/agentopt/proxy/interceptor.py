@@ -40,6 +40,14 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, Optional
 
 import httpx
 
+try:
+    import httpx2
+except ModuleNotFoundError as exc:
+    if exc.name != "httpx2":
+        raise
+    httpx2 = None
+
+
 from .cache import CacheEntry, ResponseCache, _make_cache_key
 from .recording import Recorder
 from .session import SessionInfo
@@ -52,6 +60,13 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Path-pattern detection
 # ---------------------------------------------------------------------------
+
+
+def http_transport(message):
+    """Return the HTTP library that owns the request or response."""
+    if httpx2 is not None and isinstance(message, (httpx2.Request, httpx2.Response)):
+        return httpx2
+    return httpx
 
 
 def _is_llm_request(request: httpx.Request, patterns: FrozenSet[str]) -> bool:
@@ -67,16 +82,29 @@ def _is_llm_request(request: httpx.Request, patterns: FrozenSet[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _make_cached_response(request: httpx.Request, entry: CacheEntry,) -> httpx.Response:
+def _make_cached_response(request: httpx.Request, entry: CacheEntry, *, stream: bool = False) -> httpx.Response:
     """Build an ``httpx.Response`` from a cache entry, attached to *request*."""
+    transport = http_transport(request)
     headers = {
         k: v
         for k, v in entry.response_headers.items()
-        if k.lower() not in ("transfer-encoding", "content-encoding")
+        if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")
     }
-    return httpx.Response(
+    headers["content-length"] = str(len(entry.response_bytes))
+    if stream:
+        return transport.Response(200, headers=headers, stream=transport.ByteStream(entry.response_bytes), request=request)
+    return transport.Response(
         status_code=200, headers=headers, content=entry.response_bytes, request=request,
     )
+
+
+def _prepare_buffered_stream(response: httpx.Response, wire: bytes) -> bytes:
+    """Keep raw iteration and content decoding available to the caller after recording."""
+    transport = http_transport(response)
+    response.stream = transport.ByteStream(wire)
+    if "content-encoding" in response.headers:
+        return transport.Response(response.status_code, headers=response.headers, content=wire).content
+    return wire
 
 
 # ---------------------------------------------------------------------------
@@ -149,24 +177,32 @@ class LocalHandler(CallHandler):
 
         # Cache lookup (post-routing — key reflects the actual model)
         if self._cache is not None and json_body:
-            entry = self._cache.get(_make_cache_key(json_body, str(request.url.path)))
+            entry = self._cache.get(_make_cache_key(json_body, str(request.url), request.headers))
             if entry is not None:
-                resp = _make_cached_response(request, entry)
+                resp = _make_cached_response(request, entry, stream=stream)
                 self._record(
-                    request, resp, None, entry.latency_seconds, cached=True,
+                    request, resp, None, entry.latency_seconds, cached=True, body_bytes=entry.response_bytes,
                 )
                 return resp
 
-        assert _original_sync_send is not None  # set by install_redirect
-        t0 = time.monotonic()
+        transport = http_transport(request)
+        t0 = time.perf_counter()
+        body = None
         try:
-            response = _original_sync_send(client, request, stream=stream, **kwargs)
+            response = forward_sync(client, request, stream=stream, **kwargs)
+            if stream and not response.is_stream_consumed:
+                try:
+                    wire = b"".join(response.stream)
+                finally:
+                    response.stream.close()
+                body = _prepare_buffered_stream(response, wire)
         except Exception as exc:
-            latency = time.monotonic() - t0
-            self._record(request, None, str(exc), latency, cached=False)
+            latency = time.perf_counter() - t0
+            self._record(request, None, str(exc), latency, cached=False,
+                         request_not_sent=isinstance(exc, (transport.ConnectError, transport.ConnectTimeout, transport.PoolTimeout)))
             raise
-        latency = time.monotonic() - t0
-        self._record(request, response, None, latency, cached=False)
+        latency = time.perf_counter() - t0
+        self._record(request, response, None, latency, cached=False, body_bytes=body)
         return response
 
     # -- async --------------------------------------------------------
@@ -183,26 +219,34 @@ class LocalHandler(CallHandler):
         request = self._maybe_route(request, json_body)
 
         if self._cache is not None and json_body:
-            entry = self._cache.get(_make_cache_key(json_body, str(request.url.path)))
+            entry = self._cache.get(_make_cache_key(json_body, str(request.url), request.headers))
             if entry is not None:
-                resp = _make_cached_response(request, entry)
+                resp = _make_cached_response(request, entry, stream=stream)
                 self._record(
-                    request, resp, None, entry.latency_seconds, cached=True,
+                    request, resp, None, entry.latency_seconds, cached=True, body_bytes=entry.response_bytes,
                 )
                 return resp
 
-        assert _original_async_send is not None
-        t0 = time.monotonic()
+        transport = http_transport(request)
+        t0 = time.perf_counter()
+        body = None
         try:
-            response = await _original_async_send(
+            response = await forward_async(
                 client, request, stream=stream, **kwargs,
             )
+            if stream and not response.is_stream_consumed:
+                try:
+                    wire = b"".join([chunk async for chunk in response.stream])
+                finally:
+                    await response.stream.aclose()
+                body = _prepare_buffered_stream(response, wire)
         except Exception as exc:
-            latency = time.monotonic() - t0
-            self._record(request, None, str(exc), latency, cached=False)
+            latency = time.perf_counter() - t0
+            self._record(request, None, str(exc), latency, cached=False,
+                         request_not_sent=isinstance(exc, (transport.ConnectError, transport.ConnectTimeout, transport.PoolTimeout)))
             raise
-        latency = time.monotonic() - t0
-        self._record(request, response, None, latency, cached=False)
+        latency = time.perf_counter() - t0
+        self._record(request, response, None, latency, cached=False, body_bytes=body)
         return response
 
     # -- routing ------------------------------------------------------
@@ -233,10 +277,11 @@ class LocalHandler(CallHandler):
             return request
 
         new_bytes = json.dumps(json_body, separators=(",", ":")).encode("utf-8")
-        new_headers = httpx.Headers(request.headers)
+        transport = http_transport(request)
+        new_headers = transport.Headers(request.headers)
         # Let httpx recompute Content-Length from the new body.
         new_headers.pop("content-length", None)
-        return httpx.Request(
+        return transport.Request(
             method=request.method,
             url=request.url,
             headers=new_headers,
@@ -254,6 +299,8 @@ class LocalHandler(CallHandler):
         latency: float,
         *,
         cached: bool,
+        body_bytes: Optional[bytes] = None,
+        request_not_sent: bool = False,
     ) -> None:
         """Convert a completed (or failed) httpx exchange into a CallRecord."""
         json_body = decode_json_body(request.content)
@@ -270,15 +317,17 @@ class LocalHandler(CallHandler):
                 cached=False,
                 is_streaming=is_streaming,
                 status_code=0,
+                request_not_sent=request_not_sent,
                 error=error or "upstream error",
             )
             return
 
         status = response.status_code
-        body_bytes = response.content  # forces buffering for streamed bodies
+        if body_bytes is None:
+            body_bytes = response.content
         record_error = None if status == 200 else f"HTTP {status}"
 
-        self._recorder.record(
+        usage_measured = self._recorder.record(
             self._session,
             json_body,
             body_bytes,
@@ -291,9 +340,9 @@ class LocalHandler(CallHandler):
         )
 
         # Cache successful 200s on the miss path only.
-        if not cached and status == 200 and self._cache is not None and json_body:
+        if not cached and status == 200 and usage_measured and self._cache is not None and json_body:
             self._cache.put(
-                _make_cache_key(json_body, str(request.url.path)),
+                _make_cache_key(json_body, str(request.url), request.headers),
                 CacheEntry(
                     response_bytes=body_bytes,
                     response_headers=dict(response.headers),
@@ -343,8 +392,8 @@ _active_session_var: ContextVar[Optional[ActiveSession]] = ContextVar(
 # Install / uninstall
 # ---------------------------------------------------------------------------
 
-_original_sync_send: Optional[Callable] = None
-_original_async_send: Optional[Callable] = None
+_original_sync_send: dict = {}
+_original_async_send: dict = {}
 _installed = False
 # Refcount so multiple coexisting ``LLMTracker`` instances don't tear
 # down each other's httpx patch.  Only the first install actually
@@ -359,21 +408,18 @@ def install_redirect() -> None:
     ``install_redirect`` is paired with one ``uninstall_redirect``;
     the patch is restored only when the count drops back to zero.
     """
-    global _original_sync_send, _original_async_send, _installed
+    global _installed
     global _install_refcount
     _install_refcount += 1
     if _installed:
         return
-
-    _original_sync_send = httpx.Client.send
-    _original_async_send = httpx.AsyncClient.send
 
     def _patched_sync_send(
         self: Any, request: httpx.Request, *, stream: bool = False, **kwargs: Any,
     ) -> httpx.Response:
         active = _active_session_var.get()
         if active is None or not _is_llm_request(request, active.path_patterns):
-            return _original_sync_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+            return forward_sync(self, request, stream=stream, **kwargs)
         return active.handler.handle_sync(self, request, stream=stream, **kwargs)
 
     async def _patched_async_send(
@@ -381,11 +427,15 @@ def install_redirect() -> None:
     ) -> httpx.Response:
         active = _active_session_var.get()
         if active is None or not _is_llm_request(request, active.path_patterns):
-            return await _original_async_send(self, request, stream=stream, **kwargs)  # type: ignore[misc]
+            return await forward_async(self, request, stream=stream, **kwargs)
         return await active.handler.handle_async(self, request, stream=stream, **kwargs)
 
-    httpx.Client.send = _patched_sync_send  # type: ignore[assignment]
-    httpx.AsyncClient.send = _patched_async_send  # type: ignore[assignment]
+    transports = (httpx,) if httpx2 is None else (httpx, httpx2)
+    for transport in transports:
+        _original_sync_send[transport] = transport.Client.send
+        _original_async_send[transport] = transport.AsyncClient.send
+        transport.Client.send = _patched_sync_send
+        transport.AsyncClient.send = _patched_async_send
     _installed = True
 
 
@@ -403,8 +453,7 @@ def forward_sync(
     import time (the value is ``None`` until :func:`install_redirect`
     runs).
     """
-    assert _original_sync_send is not None, "install_redirect() not called"
-    return _original_sync_send(client, request, stream=stream, **kwargs)
+    return _original_sync_send[http_transport(request)](client, request, stream=stream, **kwargs)
 
 
 async def forward_async(
@@ -415,8 +464,7 @@ async def forward_async(
     **kwargs: Any,
 ) -> httpx.Response:
     """Async counterpart of :func:`forward_sync`."""
-    assert _original_async_send is not None, "install_redirect() not called"
-    return await _original_async_send(client, request, stream=stream, **kwargs)
+    return await _original_async_send[http_transport(request)](client, request, stream=stream, **kwargs)
 
 
 def uninstall_redirect() -> None:
@@ -427,20 +475,18 @@ def uninstall_redirect() -> None:
     so coexisting ``LLMTracker`` instances don't tear down each
     other's patch on exit.
     """
-    global _original_sync_send, _original_async_send, _installed
+    global _installed
     global _install_refcount
     if _install_refcount > 0:
         _install_refcount -= 1
     if _install_refcount > 0 or not _installed:
         return
 
-    if _original_sync_send is not None:
-        httpx.Client.send = _original_sync_send  # type: ignore[assignment]
-    if _original_async_send is not None:
-        httpx.AsyncClient.send = _original_async_send  # type: ignore[assignment]
-
-    _original_sync_send = None
-    _original_async_send = None
+    for transport, original in _original_sync_send.items():
+        transport.Client.send = original
+        transport.AsyncClient.send = _original_async_send[transport]
+    _original_sync_send.clear()
+    _original_async_send.clear()
     _installed = False
 
 

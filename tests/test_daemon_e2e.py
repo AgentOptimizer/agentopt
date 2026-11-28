@@ -136,16 +136,18 @@ def test_daemon_health(daemon):
     assert r.json() == {"ok": True}
 
 
-def test_remote_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
+@pytest.mark.parametrize("transport_name", ["httpx", "httpx2"])
+def test_remote_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch, transport_name):
     """An in-process httpx LLM call is forwarded through the daemon and
     appears in the daemon's records — same shape as local mode."""
+    library = pytest.importorskip(transport_name)
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
 
     tracker = LLMTracker()
     tracker.start()
     try:
         with tracker.track(data_id="dp_1", combo_id="c"):
-            client = httpx.Client(base_url=mock_upstream.base_url)
+            client = library.Client(base_url=mock_upstream.base_url)
             resp = client.post(
                 "/v1/chat/completions",
                 json={
@@ -173,6 +175,20 @@ def test_remote_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
         assert usage == {"gpt-4o-mini": (10, 5)}
     finally:
         tracker.stop()
+
+
+def test_remote_reports_missing_usage(daemon, mock_upstream, monkeypatch):
+    from tests.conftest import MOCK_RESPONSE_BODY
+    monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
+    monkeypatch.delitem(MOCK_RESPONSE_BODY, "usage")
+    with LLMTracker() as tracker:
+        with tracker.track(data_id="missing-usage", combo_id="budget"):
+            with httpx.Client(base_url=mock_upstream.base_url) as client:
+                response = client.post("/v1/chat/completions", json={"model": "paid", "messages": []})
+                assert response.status_code == 200
+        with pytest.raises(ValueError, match="Token usage is unavailable"):
+            tracker.get_usage(data_id="missing-usage")
+        assert tracker.get_records(data_id="missing-usage")[0].usage_unavailable
 
 
 def test_remote_get_session_env_points_at_daemon(daemon, monkeypatch):
@@ -234,12 +250,13 @@ def test_remote_handler_lazy_async_client(daemon, monkeypatch):
         proxy_url="http://127.0.0.1:1",  # arbitrary; never sent to
         ca_bundle_path=certifi.where(),  # any valid PEM; never verified
     )
-    assert h._async_client is None
+    assert not h._async_clients
     h.close()  # must not raise
-    assert h._async_client is None  # still uncreated — no leak
+    assert not h._async_clients  # still uncreated — no leak
 
 
-def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch):
+@pytest.mark.parametrize("transport_name", ["httpx", "httpx2"])
+def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeypatch, transport_name):
     """Async (``httpx.AsyncClient``) LLM call records cleanly through the daemon.
 
     Also exercises the async-cleanup path in ``RemoteHandler.close()`` —
@@ -248,13 +265,14 @@ def test_remote_async_in_process_call_is_recorded(daemon, mock_upstream, monkeyp
     """
     import asyncio
 
+    library = pytest.importorskip(transport_name)
     monkeypatch.setenv("AGENTOPT_GATEWAY_URL", daemon)
     tracker = LLMTracker()
     tracker.start()
     try:
 
         async def make_call():
-            async with httpx.AsyncClient(base_url=mock_upstream.base_url) as client:
+            async with library.AsyncClient(base_url=mock_upstream.base_url) as client:
                 resp = await client.post(
                     "/v1/chat/completions",
                     json={
@@ -491,7 +509,7 @@ class FixedRouter(Router):
 
     def _config_kwargs(self):
         return {"target": self.target}
-"""
+""", encoding="utf-8"
     )
 
     daemon_url = daemon_factory(["--policy-module", str(user_module)])

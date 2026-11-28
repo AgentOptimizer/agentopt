@@ -116,6 +116,88 @@ Useful variations, appended to the command above:
 | Gittins with a soft search-dollar limit | `--max-search-cost-usd 1.0` |
 | End automatically on single-objective Gittins advice | `--stop-on-recommendation` |
 
+## Watch the estimated Pareto frontier
+
+For an accuracy/cost search, install the plotting extra. With
+`--objective-mode multi`, a local interactive terminal opens the window
+automatically when a desktop Matplotlib backend is available. Use
+`--no-live-plot` for terminal output only, or request the window explicitly:
+
+```bash
+python -m pip install -e ".[plot]" openai
+python examples/selection/benchmark_runner.py \
+  --dataset my_benchmark.jsonl \
+  --models gpt-4o-mini gpt-4.1-nano \
+  --objective-mode multi --live-plot \
+  --output results.json
+```
+
+This command calls the selected model APIs. The window shows completed
+evaluations as a percentage of all model combinations × benchmark questions,
+along with cumulative evaluation spend. The Pareto chart and recommendation
+cards show conservative estimates for quality and deployment cost in USD per
+1,000 queries. Each card includes its evaluated question count.
+
+The header names the selection algorithm. Click a point or its number to
+highlight the corresponding recommendation and bring its card into view.
+The chart automatically fits the frontier. Short lines connect crowded labels
+to their points. Click a recommendation card to highlight its point and number.
+When five or more combinations share identical cost and quality estimates,
+click the count above their point to see the matching cards. **Show all**
+returns to the full list.
+Scroll or drag the scrollbar in the recommendations panel to browse longer lists.
+
+**Pause** holds the search after the current evaluation batch; **Continue**
+resumes it; **Finish** requests a final result after scheduled work completes.
+Closing the window also requests a finish. The saved JSON contains the final
+selection results. These controls do not cancel calls already in flight, and
+the JSON report is not a restart file. Gittins separately saves each successful
+cell to a SQLite checkpoint. Re-running the same command restores saved work;
+Finish and window close keep that checkpoint. Add `--plot-output frontier.png`
+to save the final figure as well.
+
+For an agent with multiple model roles, use the same view with your own
+`ModelSelector`. With a `MyAgent` class from the
+[Quick Start](quickstart.md), and the `dataset` and `eval_fn` above:
+
+```python
+from agentopt import ModelSelector
+
+selector = ModelSelector(
+    agent=MyAgent,
+    models={
+        "planner": ["gpt-4o-mini", "gpt-4.1-nano"],
+        "solver": ["gpt-4o-mini", "gpt-4.1-nano"],
+    },
+    dataset=dataset,
+    eval_fn=eval_fn,
+    method="gittins",
+    objective_mode="multi",
+    batch_size=4,                 # questions per configuration in warm-up and per search batch
+)
+results = selector.select_best(
+    warm_start_max_concurrent=12, # optional warm-up slots across configurations (default: batch_size)
+)
+```
+
+Multi-objective Gittins opens a window by default when called at a local Python
+prompt with a desktop backend. Python scripts run without a window even when
+launched from a terminal. Single-objective runs, headless jobs, and worker
+threads also default to no window. Use `selector.select_best(show_ui=False)`
+to disable it, or `show_ui=True` to request it explicitly. Both UI modes honor
+the same execution settings. The existing `LiveParetoPlot.run(selector, ...)`
+API remains available for custom views. The automatically created window
+offers **Open results** and **Open folder** for the JSON and frontier PNG saved
+in a new `.agentopt_cache/exports/` subdirectory for each run.
+
+Warm-up samples the same seeded questions at every concurrency level. Parallel
+warm-up fills each free slot across configurations and saves completed cells
+individually when checkpointing is enabled. Pause and Finish take effect at the
+next safe boundary after in-flight cells finish. Adaptive search starts only after all warm-up cells finish. With a dollar limit, warm-up starts with a single probe and reserves the observed average charge for each in-flight cell (per configuration when available, otherwise pooled). Actual charges can exceed the estimates. Later, each adaptive batch can evaluate all its questions concurrently.
+Set `max_concurrent` in `select_best()` to limit both phases, for example when sharing a provider quota.
+The recommendations use the agent's actual calls and the supplied benchmark;
+they are estimates until the benchmark is fully evaluated.
+
 Small datasets can make a fraction too small to fund a warm start or even one
 complete random sampling unit. See the allowance rules below. Run `python
 examples/selection/benchmark_runner.py --help` for the runner's options; the
@@ -178,9 +260,9 @@ selection thread: send snapshots to your UI using that framework's thread-safe
 mechanism. `selector.latest_results` provides a copy of the latest snapshot for
 polling. A callback can also request a stop by returning `False`.
 
-The package supplies progress callbacks and result objects. The terminal runner
-provides a ready-to-use display; a web dashboard or notebook interface needs to
-connect these callbacks to its own controls.
+The package supplies progress callbacks, result objects, and the desktop
+`LiveParetoPlot` view for multi-objective Gittins searches. A web dashboard or
+notebook interface can connect the same callbacks to its own controls.
 
 Updates happen after completed evaluations or batches, not while a model streams
 tokens. Gittins needs its uniform warm start before it can recommend a
@@ -230,11 +312,81 @@ if results.get_best_combo() is not None:
     results.export_config("selected_models.yaml")
 ```
 
-**Stopping does not create a resumable checkpoint.** There is no pause/resume API
-for restoring the selector's search state. A new run starts selection again.
-[Disk caching](../concepts/caching.md), enabled locally at `.agentopt_cache` by
-default, can reuse saved responses for identical LLM requests. It does not restore
-the selection state or guarantee that every request in the new run is cached.
+### Continue after closing the window
+
+The benchmark runner automatically enables checkpoints for `auto`/`gittins`.
+Its default path is `<output>.checkpoint.sqlite3`; set `--checkpoint PATH` to
+choose another location. Run the same command again to continue. Both objective
+modes restore saved scores, token counts, latencies, spend and search decisions
+without calling the agent or scorer for those cells. The first progress update
+shows the restored state rather than replaying old progress on screen.
+
+Python also checkpoints Gittins automatically in both objective modes, with or
+without a live window. Run from the same working directory and inspect
+`selector.checkpoint_path` for the database under `.agentopt_cache/checkpoints/`.
+The default key includes the Python agent and scoring definitions and serializable class settings. Give external
+prompts, tool settings and custom provider endpoints a stable `checkpoint_id`
+and update it when they change. When a callable captures opaque runtime state,
+AgentOpt saves a fresh checkpoint and reports the ID to use on restart. For
+non-serializable datasets or model specifications it warns before evaluation
+and runs without persistence. For a specific location and workflow version:
+
+```python
+selector = ModelSelector(
+    agent=MyAgent, models=models, dataset=dataset, eval_fn=eval_fn,
+    method="gittins", objective_mode="multi", seed=42,
+    checkpoint_path="selection.sqlite3",
+    checkpoint_id="my-workflow-and-evaluator-v1",
+)
+results = selector.select_best()
+```
+
+The checkpoint checks dataset contents and order, ordered model specifications,
+seed, prices and algorithm settings. `checkpoint_id` identifies your workflow:
+change it when prompts, tools, evaluator code or provider settings change.
+Pass `checkpoint_path=None` to disable saving and reuse in Python.
+Dataset entries and model specifications must contain plain Python JSON values
+or tuples. The checkpoint identity distinguishes tuples from lists, as well as
+key and scalar types. With checkpoints enabled, algorithm settings (including
+cost/latency weights) cannot be changed on the selector after construction.
+To extend a run, create a new selector with the same checkpoint path and
+raise the total spending limit (`max_search_cost_usd`), the effective cell
+limit (`max_total_question_evaluations` or `observation_budget_fraction`), or
+both. For example, raising the cell limit from 400 to 500 allows up to 100
+additional cells after 400 have been saved. Previous charges count toward
+the new spending limit. Keep the other settings and limits the same. Lowering
+either limit or changing the experiment requires a new checkpoint path.
+The command-line example derives its workflow ID from its agent/scorer code
+and provider base URL. It will reject a changed workflow automatically.
+
+Each successful cell is saved immediately, including cells in an unfinished
+batch. An in-flight request whose result was not saved may run again after a
+crash. One checkpoint can be used by only one process at a time; its `.lock`
+sidecar releases automatically on exit. Symlinks resolve to the same canonical
+path; hard-linked checkpoint files are rejected. Keep the SQLite file to continue later.
+
+Format 4 records both total limits. A failed evaluation with measured charges
+or missing usage adds a separate attempt ledger and promotes the file to format 5.
+Retries count known non-cached charges from earlier attempts toward the cumulative
+budget, while only successful cells count toward evaluation coverage. If
+`unmeasured_failed_attempts` is positive, reported spend is a lower bound.
+The final result and checkpoint count each evaluation attempt with unknown
+charges once, even if several HTTP requests time out during that attempt or a
+retry succeeds. A hard crash before the attempt is recorded can leave charges
+unknown. Older binaries reject format 5; checkpoints
+predating format 4 require a fresh path.
+
+With a dollar limit, Gittins, UCB-E and Bayesian search stop scheduling new
+evaluations once a dispatched request has an unknown charge. In-flight cells
+can finish; the result reports `search_cost_unknown` and the known spend.
+Gittins also applies this rule on resume, even after a budget increase, if its
+checkpoint still contains an unknown charge.
+Finish saves the report and stops this run; it does not discard the checkpoint.
+Use a different output/checkpoint path for a fresh run, or `--no-checkpoint` to
+disable saving and reuse. Other selection algorithms do not yet support this.
+
+[Disk caching](../concepts/caching.md) is separate: it reuses identical LLM
+responses, whereas a checkpoint restores evaluated cells and selection state.
 
 ## Choose an algorithm and change defaults
 
@@ -280,12 +432,14 @@ only start whole units that fit, so some allowance may remain unused.
 
 Gittins and random methods also accept `max_total_question_evaluations`, combined
 with the fractional cap. Gittins must have enough cells for its warm start:
-K × `min(warm_start_batch_size, N)`. Random methods require enough cells for at
+K × `min(batch_size, N)`. Random methods require enough cells for at
 least one whole configuration or shared-question sweep. A tiny dollar limit can
 stop Gittins during warm start, before any recommendation is available.
 
 Dollar limits apply to new non-cached search charges and are **soft**: scheduled
-work can overshoot. Inspect `selection_cost` and `search_cost_overshoot_usd`.
+work can overshoot. Gittins compares recorded cell charges and its next batch
+estimate in decimal USD. A batch whose estimated cost exactly matches the
+remaining positive budget can start. Inspect `selection_cost` and `search_cost_overshoot_usd`.
 Random methods do not accept `max_search_cost_usd`. All methods can use user
 stopping with or without an evaluation allowance.
 
@@ -300,7 +454,7 @@ Pass selector parameters to `ModelSelector(...)`; pass execution controls to
 | Gittins `cost_scaling_factor` | `1e-4`, single mode only. Scales raw USD search evaluation cost in its index/stopping calculation; it is not a dollar cap. |
 | `lambda_cost`, `lambda_latency` | Both `0.0`, single mode only. Penalize normalized deployment cost/latency in the final scalar objective. These are separate from `cost_scaling_factor`. |
 | Gittins `stop_on_recommendation` | `False`. Set `True` for automatic stopping on single-objective advice. |
-| Gittins `warm_start_batch_size`, `batch_size` | Both `4`: initial questions per configuration, then questions per adaptive visit. A smaller adaptive batch gives more frequent updates and stop checks. |
+| Gittins `batch_size` | Defaults to `4` for both initial questions per configuration and questions per adaptive visit. A smaller adaptive batch gives more frequent updates and stop checks. |
 | `select_best(parallel=False, max_concurrent=20)` | Execution defaults. The runner uses parallel evaluation with a limit of four. UCB uses `max_concurrent` for both its batch size and concurrency and ignores `parallel`. |
 | `seed` | Gittins/random default `42`; UCB defaults to `None`. Controls selection sampling, not model-provider randomness. Bayesian optimization has no selector `seed` argument. |
 | `score_bounds` | Gittins/random default `(0.0, 1.0)`. Must contain every score returned by the scorer. |

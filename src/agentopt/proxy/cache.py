@@ -21,7 +21,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Set, Union
+from typing import Dict, Mapping, Optional, Set, Union
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +32,22 @@ _DEFAULT_FLUSH_INTERVAL = 10.0
 _DB_FILENAME = "cache.db"
 
 
-def _make_cache_key(request_body: dict, request_path: Optional[str] = None) -> str:
-    """Deterministic hash of the request payload.
-
-    Includes every field that affects the response (model, messages,
-    temperature, etc.) but excludes ephemeral metadata like ``stream``.
-
-    ``request_path`` is folded into the hash so providers that key the
-    model in the URL (e.g. Gemini's ``/v1beta/models/{model}:generateContent``)
-    don't collide across models that produce byte-identical request bodies.
-    """
-    body = {k: v for k, v in request_body.items() if k not in ("stream",)}
-    canonical = json.dumps(body, sort_keys=True, ensure_ascii=True)
-    path_part = request_path or ""
-    return hashlib.sha256(f"{path_part}\n{canonical}".encode()).hexdigest()
+def _make_cache_key(request_body: dict, request_url: str = "",
+                    headers: Optional[Mapping[str, str]] = None) -> str:
+    """Scope stored response bytes to their endpoint, format and provider context."""
+    body = dict(request_body)
+    if body.get("stream") is False:
+        del body["stream"]  # Omitted and false both request a non-streamed reply.
+    vary = {}
+    if headers is not None:
+        for name in ("accept", "authorization", "api-key", "x-api-key", "x-goog-api-key",
+                     "openai-project", "openai-organization", "openai-beta", "anthropic-version",
+                     "anthropic-beta"):
+            if name in headers:
+                vary[name] = headers[name]
+    # Old keys omit the host and response format; they cannot be safely reused.
+    canonical = json.dumps(["response-v2", request_url, body, vary], sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 @dataclass

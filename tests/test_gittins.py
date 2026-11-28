@@ -59,7 +59,7 @@ class RecordingTracker:
 
 
 def make_selector(*, mode="multi", count=8, tracker=None, outcomes=None, tokens=None,
-                  async_agent=False, **kwargs):
+                  async_agent=False, batch_size=2, **kwargs):
     tracker = tracker or RecordingTracker()
     outcomes = outcomes or {"cheap": 0.6, "middle": 0.8, "expensive": 0.9, "dominated": 0.5}
     tokens = tokens or {"cheap": 1000, "middle": 3000, "expensive": 10000, "dominated": 4000}
@@ -77,13 +77,14 @@ def make_selector(*, mode="multi", count=8, tracker=None, outcomes=None, tokens=
         async def run(self, question):
             return super().run(question)
 
+    kwargs.setdefault("checkpoint_path", None)  # Independent mock runs unless the test requests persistence.
     selector = ModelSelector(agent=AsyncAgent if async_agent else Agent,
                              models={"solver": list(outcomes)},
                              eval_fn=lambda expected, actual: actual,
                              dataset=[(i, None) for i in range(count)],
                              method="gittins", objective_mode=mode,
                              tracker=tracker, model_prices={m: {"input_price": 1, "output_price": 0} for m in outcomes},
-                             batch_size=2, warm_start_batch_size=2, grid_size=33,
+                             batch_size=batch_size, grid_size=33,
                              **kwargs)
     return selector, tracker
 
@@ -196,11 +197,11 @@ def test_warm_budget_exhaustion_returns_records_without_inventing_recommendation
     selector, tracker = make_selector(max_search_cost_usd=0.0015)
     result = selector.select_best()
     assert result.stop_reason == "warm_start_budget"
-    assert result.total_evaluations == 2
+    assert result.total_evaluations == 1
     assert result.recommendations == []
     assert result.get_best() is None
-    assert result.selection_cost == pytest.approx(0.002)
-    assert result.search_cost_overshoot_usd == pytest.approx(0.0005)
+    assert result.selection_cost == pytest.approx(0.001)
+    assert result.search_cost_overshoot_usd == 0
     assert tracker.stopped
 
 
@@ -330,6 +331,74 @@ def test_untracked_llm_usage_is_rejected_instead_of_assuming_zero_spend():
     assert tracker.stopped
 
 
+@pytest.mark.parametrize("failure, retry_in_agent, expected_unknown, expected_calls, expected_cells", [
+    ("missing_usage", False, 1, 1, 0), ("read_timeout", False, 1, 1, 0),
+    ("read_timeout", True, 1, 2, 1), ("connect_timeout", False, 0, 2, 1),
+])
+def test_unmeasured_attempts_across_retry_and_resume(tmp_path, failure, retry_in_agent, expected_unknown,
+                                                    expected_calls, expected_cells):
+    import sqlite3
+    import httpx
+    from agentopt.proxy import LLMTracker
+
+    requests = []
+
+    def upstream(request):
+        requests.append(request)
+        if len(requests) == 1 and failure.endswith("timeout"):
+            exception = httpx.ReadTimeout if failure == "read_timeout" else httpx.ConnectTimeout
+            raise exception("mock transport timeout", request=request)
+        body = {"model": "paid", "answer": "OK"}
+        if len(requests) > 1:
+            body["usage"] = {"prompt_tokens": 10, "completion_tokens": 10}
+        return httpx.Response(200, json=body)
+
+    with httpx.Client(transport=httpx.MockTransport(upstream)) as client:
+        class Agent:
+            def __init__(self, models):
+                self.model = models["answer"]
+
+            def run(self, q):
+                payload = {"model": self.model, "messages": [{"role": "user", "content": str(q)}]}
+                url = "https://billing.invalid/v1/chat/completions"
+                try:
+                    response = client.post(url, json=payload)
+                except httpx.ReadTimeout:
+                    if not retry_in_agent:
+                        raise
+                    response = client.post(url, json=payload)
+                return response.json()["answer"]
+
+        checkpoint = tmp_path / "run.db"
+
+        def selector():
+            return ModelSelector(
+                agent=Agent, models={"answer": ["paid"]}, dataset=[(q, "OK") for q in range(6)],
+                eval_fn=lambda expected, answer: float(expected == answer),
+                model_prices={"paid": {"input_price": 2, "output_price": 8}}, max_search_cost_usd=.000001,
+                tracker=LLMTracker(cache=True, cache_dir=tmp_path / "cache"),
+                checkpoint_path=checkpoint, checkpoint_id="billing-test",
+            )
+
+        if not retry_in_agent:
+            error = ValueError if failure == "missing_usage" else RuntimeError
+            message = "Token usage is unavailable" if failure == "missing_usage" else "Evaluation failed"
+            with pytest.raises(error, match=message):
+                selector().select_best()
+            assert len(requests) == 1
+            with sqlite3.connect(checkpoint) as db:
+                assert db.execute("SELECT count(*) FROM cells").fetchone()[0] == 0
+        result = selector().select_best()
+        assert len(requests) == expected_calls and result.total_evaluations == expected_cells
+        assert result.selection_cost == pytest.approx(.0001 * expected_cells)
+        assert result.model_dump(mode="json")["unmeasured_failed_attempts"] == expected_unknown
+        assert result.stop_reason == ("search_cost_unknown" if expected_unknown else "warm_start_budget")
+        restored = selector().select_best()
+        assert len(requests) == expected_calls and restored.unmeasured_failed_attempts == expected_unknown
+        assert restored.total_evaluations == expected_cells and restored.stop_reason == result.stop_reason
+        assert restored.selection_cost == result.selection_cost
+
+
 def test_unpriced_usage_stops_tracker():
     selector, tracker = make_selector()
     original = tracker.record
@@ -395,6 +464,7 @@ def test_real_tracker_http_calls_produce_costs_and_recommendations(mock_upstream
                              eval_fn=lambda expected, actual: float(actual == expected),
                              dataset=[("capital", "Paris"), ("another", "Paris")],
                              method="gittins", objective_mode=mode, tracker=tracker,
+                             checkpoint_path=None,  # Exercise the local HTTP session on every run.
                              warm_start_batch_size=1, batch_size=1, grid_size=17,
                              model_prices={"gpt-4o-mini": {"input_price": 1, "output_price": 2}})
     result = selector.select_best(parallel=True, max_concurrent=2)
@@ -404,3 +474,14 @@ def test_real_tracker_http_calls_produce_costs_and_recommendations(mock_upstream
     assert result.recommendations[0].accuracy == 1
     assert len({r.data_id for r in tracker.get_records()}) == 2
     assert mock_upstream.request_count == 2
+
+
+def test_warm_size_compatibility_alias():
+    options = dict(agent=object, models={"solver": ["cheap"]}, dataset=[(i, None) for i in range(5)],
+                   eval_fn=lambda expected, actual: 1, tracker=RecordingTracker(), checkpoint_path=None)
+    for sizes in ({"batch_size": 3}, {"warm_start_batch_size": 3},
+                  {"batch_size": 3, "warm_start_batch_size": 3}):
+        selector = ModelSelector(**options, **sizes)
+        assert selector.warm_size == selector.batch_size == 3
+    with pytest.raises(ValueError, match="must match batch_size"):
+        ModelSelector(**options, batch_size=3, warm_start_batch_size=5)

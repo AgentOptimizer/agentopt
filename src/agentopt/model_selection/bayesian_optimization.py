@@ -17,6 +17,12 @@ from .base import BaseModelSelector, DatapointResult, ModelResult, SelectionResu
 logger = logging.getLogger(__name__)
 
 
+class BayesianSelectionResults(SelectionResults):
+    """Known spend is a lower bound when a cell has an unmeasured charge."""
+
+    unmeasured_failed_attempts: int = 0
+
+
 def _require_botorch() -> None:
     """Raise if botorch/torch are not installed."""
     try:
@@ -131,7 +137,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
 
     def _bo_record_result(
         self,
-        combo_name: str,
+        combo: Dict[str, ModelCandidate],
         accuracy: float,
         latency: float,
         input_tokens: Dict[str, int],
@@ -140,7 +146,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
         all_results: List[ModelResult],
     ) -> ModelResult:
         result = self._make_result(
-            model_name=combo_name,
+            model_name=self._combo_name(combo), combo=combo,
             accuracy=accuracy,
             latency_seconds=latency,
             input_tokens=input_tokens,
@@ -196,7 +202,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             ei = acq(cand_X.unsqueeze(1))
 
         k = min(self.batch_size, len(unseen))
-        topk = ei.squeeze(-1).topk(k=k).indices.tolist()
+        topk = ei.reshape(len(unseen)).topk(k=k).indices.tolist()
         return [unseen[i] for i in topk]
 
     def _bo_finalize(self, all_results: List[ModelResult]) -> SelectionResults:
@@ -213,7 +219,25 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     break
         else:
             logger.warning("No successful evaluations.")
-        return SelectionResults(results=all_results)
+        return BayesianSelectionResults(results=all_results, unmeasured_failed_attempts=self._live_unknown_charge_attempts())
+
+    def _unknown_cost_stop(self):
+        return self._search_cost_limit is not None and self._live_unknown_charge_attempts() > 0
+
+    def _search_budget_stop(self):
+        return "search_cost_unknown" if self._unknown_cost_stop() else super()._search_budget_stop()
+
+    def _selection_cost_so_far(self):
+        records = self._tracker.get_records()[self._selection_record_offset:]
+        return self._cost_of_selection_records(
+            r for r in records if not self._charge_unknown(r) and not getattr(r, "request_not_sent", False)
+        )
+
+    def _bo_datapoints(self, scores, latencies, dp_ids):
+        # The evaluation helpers retain the original one-based ID even when a
+        # preceding question fails. Result indices are zero-based.
+        indices = [int(dp_id.rsplit("::dp_", 1)[1]) - 1 for dp_id in dp_ids]
+        return self._build_datapoint_results(scores, latencies, dp_ids, datapoint_indices=indices)
 
     def _bo_target_from_result(self, result: ModelResult) -> float:
         """BO target: combined objective if lambdas set, else accuracy."""
@@ -273,7 +297,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 combo
             )
             result = self._bo_record_result(
-                combo_name,
+                combo_dict,
                 accuracy,
                 latency,
                 input_tokens,
@@ -347,14 +371,14 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 combo, node_names, candidate_lists, n_nodes
             )
             combo_name = self._combo_name(combo_dict)
-            scores, latencies, dp_ids = self._evaluate_combo(
-                combo_dict, self.dataset, label=combo_name
+            scores, latencies, dp_ids = self._evaluate_agent(
+                self.agent(combo_dict), self.dataset, label=combo_name, stop_before_cell=self._unknown_cost_stop
             )
             self._observe_combo(scores, latencies, dp_ids)
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
             latency = sum(latencies) / len(latencies) if latencies else 0.0
-            dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
+            dp_results = self._bo_datapoints(scores, latencies, dp_ids)
             return accuracy, latency, input_tokens, output_tokens, dp_results
 
         print(f"\n{'='*60}")
@@ -499,17 +523,18 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 combo, node_names, candidate_lists, n_nodes
             )
             combo_name = self._combo_name(combo_dict)
-            scores, latencies, dp_ids = await self._evaluate_combo_async(
-                combo_dict,
+            scores, latencies, dp_ids = await self._evaluate_agent_async(
+                self.agent(combo_dict),
                 self.dataset,
                 label=combo_name,
                 max_concurrent=dp_concurrent,
+                stop_before_cell=self._unknown_cost_stop,
             )
             self._observe_combo(scores, latencies, dp_ids)
             input_tokens, output_tokens = self._fetch_tokens(combo_name)
             accuracy, _ = self._compute_stats(scores)
             latency = sum(latencies) / len(latencies) if latencies else 0.0
-            dp_results = self._build_datapoint_results(scores, latencies, dp_ids)
+            dp_results = self._bo_datapoints(scores, latencies, dp_ids)
             return accuracy, latency, input_tokens, output_tokens, dp_results
 
         async def eval_and_record(combo: Tuple[int, ...], label: str,) -> bool:
@@ -525,7 +550,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                 dp_results,
             ) = await evaluate_combo(combo)
             result = self._bo_record_result(
-                combo_name,
+                combo_dict,
                 accuracy,
                 latency,
                 input_tokens,
@@ -640,8 +665,10 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
             bo_combo_sem = asyncio.Semaphore(n_combo_bo)
 
-            async def _throttled_eval_combo(c: Tuple[int, ...]) -> Tuple:
+            async def _throttled_eval_combo(c: Tuple[int, ...]) -> Optional[Tuple]:
                 async with bo_combo_sem:
+                    if self._unknown_cost_stop():
+                        return None
                     return await evaluate_combo(c, dp_concurrent=dp_concurrent_bo)
 
             batch_results = await asyncio.gather(
@@ -650,6 +677,8 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             )
 
             for j, (combo, res) in enumerate(zip(batch, batch_results), 1):
+                if res is None:
+                    continue
                 combo_dict = self._bo_index_combo_to_dict(
                     combo, node_names, candidate_lists, n_nodes
                 )
@@ -659,7 +688,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
                     continue
                 accuracy, latency, input_tokens, output_tokens, dp_results = res
                 result = self._bo_record_result(
-                    combo_name,
+                    combo_dict,
                     accuracy,
                     latency,
                     input_tokens,

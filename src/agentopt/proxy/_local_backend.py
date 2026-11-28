@@ -33,6 +33,7 @@ from .models import CallRecord
 from .providers import ProviderRegistry
 from .recording import Recorder
 from .session import SessionInfo, SessionManager
+from .usage import UsageExtractionError
 
 if TYPE_CHECKING:
     from agentopt.routing.base import Router
@@ -50,8 +51,6 @@ class LocalBackend(_Backend):
         cache: bool = True,
         cache_dir: Optional[Union[str, Path]] = _DEFAULT_CACHE_DIR,
     ) -> None:
-        self._records: List[CallRecord] = []
-        self._lock = threading.Lock()
         self._active = False
         self._response_cache = ResponseCache(cache_dir=cache_dir) if cache else None
         self._session_manager = SessionManager()
@@ -59,40 +58,62 @@ class LocalBackend(_Backend):
         self._recorder = Recorder(self._session_manager)
         # session_id -> SessionMaster
         self._masters: Dict[str, SessionMaster] = {}
-        self._masters_lock = threading.Lock()
+        self._unpublished: set[str] = set()
+        self._masters_lock = threading.RLock()
+        self._lifecycle = threading.Condition(self._masters_lock)
+        self._starting = 0
+        self._stopping = False
 
     # -- lifecycle ----------------------------------------------------
 
     def start(self) -> None:
         """Install httpx + subprocess redirects.  Masters spin up per-track()."""
-        if self._active:
-            return
-        install_redirect()
-        install_subprocess_redirect()
-        self._active = True
+        with self._lifecycle:
+            while self._stopping:
+                self._lifecycle.wait()
+            if self._active:
+                return
+            if self._masters:
+                raise RuntimeError("Retry stop() to close remaining sessions before restart")
+            install_redirect()
+            install_subprocess_redirect()
+            self._active = True
 
     def stop(self) -> None:
-        """Tear down all live SessionMasters, restore httpx + subprocess, flush cache."""
-        if not self._active:
-            return
-        uninstall_subprocess_redirect()
-        uninstall_redirect()
-        # Stop any masters that survived (track() should have closed them,
-        # but in test/error paths they may linger).
-        with self._masters_lock:
-            masters = list(self._masters.values())
-            self._masters.clear()
-        for m in masters:
-            try:
-                m.stop()
-            except Exception:
-                logger.debug("ignored exception in SessionMaster.stop", exc_info=True)
-        self._session_manager.force_end_all()
-        with self._lock:
-            self._records.extend(self._session_manager.get_all_records())
-        if self._response_cache is not None:
-            self._response_cache.close()
-        self._active = False
+        """Stop accepting sessions and drain all already-started registrations."""
+        with self._lifecycle:
+            while self._stopping:
+                self._lifecycle.wait()
+            if not self._active and not self._masters:
+                return
+            uninstall = self._active
+            self._stopping = True
+            self._active = False
+            self._lifecycle.notify_all()
+            while self._starting:
+                self._lifecycle.wait()
+            sessions = list(self._masters)
+        try:
+            errors = []
+            for session_id in sessions:
+                try:
+                    self.close_session(session_id)
+                except Exception as exc:
+                    errors.append(exc)
+            if errors:
+                raise RuntimeError("Proxy shutdown incomplete; retry stop()") from errors[0]
+            self._session_manager.force_end_all()
+            # SessionManager already retains ended records. Copying them to
+            # _records would make every subsequent public query count twice.
+            if self._response_cache is not None:
+                self._response_cache.close()
+        finally:
+            if uninstall:
+                uninstall_subprocess_redirect()
+                uninstall_redirect()
+            with self._lifecycle:
+                self._stopping = False
+                self._lifecycle.notify_all()
 
     # -- session management ------------------------------------------
 
@@ -113,41 +134,61 @@ class LocalBackend(_Backend):
         applies it to every subprocess request; the in-process
         ``LocalHandler`` is constructed by :meth:`track`, not here.
         """
-        assert self._active, "call backend.start() first"
-        session = self._session_manager.create_session(
-            data_id=data_id, combo_id=combo_id, agent_id=agent_id,
-        )
-        master = SessionMaster(
-            session=session,
-            registry=self._registry,
-            recorder=self._recorder,
-            cache=self._response_cache,
-            router=router,
-        )
+        with self._lifecycle:
+            if not self._active:
+                raise RuntimeError("call backend.start() before opening a session")
+            self._starting += 1
+        session = master = None
         try:
+            session = self._session_manager.create_session(
+                data_id=data_id, combo_id=combo_id, agent_id=agent_id,
+            )
+            master = SessionMaster(
+                session=session,
+                registry=self._registry,
+                recorder=self._recorder,
+                cache=self._response_cache,
+                router=router,
+            )
             port = master.start()
-            with self._masters_lock:
+            with self._lifecycle:
+                if not self._active:
+                    raise RuntimeError("tracker stopped while the session was starting")
                 self._masters[session.session_id] = master
         except Exception:
             try:
-                master.stop()
+                if master is not None:
+                    master.stop()
             except Exception:
+                with self._masters_lock:
+                    self._masters[session.session_id] = master
+                    self._unpublished.add(session.session_id)
                 logger.exception(
                     "Failed to stop SessionMaster after startup failure for session %s",
-                    session.session_id,
+                    session.session_id if session is not None else "not-created",
                 )
-            finally:
-                self._session_manager.end_session(session.session_id)
+            else:
+                if session is not None:
+                    self._session_manager.end_session(session.session_id, discard_empty=True)
             raise
+        finally:
+            with self._lifecycle:
+                self._starting -= 1
+                self._lifecycle.notify_all()
         return session, port
 
     def close_session(self, session_id: str) -> None:
         """Stop the session's ``SessionMaster`` and archive its records."""
         with self._masters_lock:
-            m = self._masters.pop(session_id, None)
-        if m is not None:
-            m.stop()
-        self._session_manager.end_session(session_id)
+            master = self._masters.get(session_id)
+            if master is not None:
+                master.stop()
+                del self._masters[session_id]
+            self._session_manager.end_session(session_id, discard_empty=session_id in self._unpublished)
+            self._unpublished.discard(session_id)
+
+    def close(self):
+        self.stop()
 
     @contextmanager
     def track(
@@ -238,10 +279,7 @@ class LocalBackend(_Backend):
 
     def _all_records(self) -> List[CallRecord]:
         """Gather records from both the local archive and live sessions."""
-        with self._lock:
-            records = list(self._records)
-        records.extend(self._session_manager.get_all_records())
-        return records
+        return self._session_manager.get_all_records()
 
     def get_records(
         self,
@@ -273,6 +311,11 @@ class LocalBackend(_Backend):
         )
         totals: Dict[str, List[int]] = {}
         for r in records:
+            if r.usage_unavailable:
+                raise UsageExtractionError(
+                    "Token usage is unavailable for a successful model call. "
+                    "Enable provider usage reporting (stream_options.include_usage for OpenAI streams)."
+                )
             if r.model not in totals:
                 totals[r.model] = [0, 0]
             totals[r.model][0] += r.prompt_tokens
@@ -293,5 +336,4 @@ class LocalBackend(_Backend):
 
     def clear(self) -> None:
         """Clear all locally archived records."""
-        with self._lock:
-            self._records.clear()
+        self._session_manager.clear_ended()

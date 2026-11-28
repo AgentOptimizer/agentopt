@@ -2,21 +2,17 @@
 Example: AG2 agent with agentopt.
 
 Prerequisites:
-    1. pip install ag2 agentopt-py
+    1. pip install "ag2[openai]>=1,<2" "agentopt-py[plot]"
     2. Set OPENAI_API_KEY environment variable
-
-Note: AG2's run() API spawns a background thread which breaks context
-propagation. This example uses initiate_chat() which blocks in the
-caller's thread and is required for agentopt.proxy compatibility.
 """
 
+from ag2 import Agent
+from ag2.config import OpenAICompletionsConfig
 from dotenv import load_dotenv
 
-load_dotenv()
-
-import autogen
-
 from agentopt import ModelSelector
+
+load_dotenv()
 
 
 # ---------------------------------------------------------------------------
@@ -30,36 +26,21 @@ class MyAgent:
     """AG2 planner+solver agent pair."""
 
     def __init__(self, models):
-        self.planner = autogen.AssistantAgent(
-            name="Planner",
-            system_message="You are a planning assistant. Create a brief plan to answer the question. End your response with PLAN_DONE.",
-            llm_config={"model": models["planner"]},
+        self.planner = Agent(
+            "Planner",
+            prompt="Create a brief plan for answering the question.",
+            config=OpenAICompletionsConfig(model=models["planner"]),
         )
-        self.solver = autogen.AssistantAgent(
-            name="Solver",
-            system_message="You are a solver. Given a plan, produce a concise final answer. End your response with TERMINATE.",
-            llm_config={"model": models["solver"]},
-        )
-        self.user_proxy = autogen.UserProxyAgent(
-            name="UserProxy",
-            human_input_mode="NEVER",
-            max_consecutive_auto_reply=4,
-            is_termination_msg=lambda x: "TERMINATE" in (x.get("content") or ""),
-            code_execution_config=False,
+        self.solver = Agent(
+            "Solver",
+            prompt="Use the plan to produce a concise final answer.",
+            config=OpenAICompletionsConfig(model=models["solver"]),
         )
 
-    def run(self, input_data):
-        # NOTE: use initiate_chat(), not run().
-        # run() spawns a background thread that breaks contextvar propagation.
-        chat_result = self.user_proxy.initiate_chat(
-            self.planner, message=f"Answer this question: {input_data}", max_turns=4,
-        )
-
-        # Extract the last non-empty assistant message as the answer
-        for msg in reversed(chat_result.chat_history):
-            if msg.get("role") == "assistant" and msg.get("content"):
-                return msg["content"].replace("TERMINATE", "").strip()
-        return ""
+    async def run(self, input_data):
+        plan = await self.planner.ask(input_data)
+        answer = await self.solver.ask(f"Question: {input_data}\nPlan: {plan.body}")
+        return answer.body
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@
 
 | Selector | Parallel behavior |
 |---|---|
-| Gittins | One configuration per adaptive visit, with at most `min(batch_size, max_concurrent)` questions in flight. Warm-start questions are sequential for dollar accounting. |
+| Gittins | One configuration per adaptive visit, with at most `min(batch_size, max_concurrent)` questions in flight. Warm-up takes one batch per configuration, with `batch_size` concurrent cells by default. Override warm-up slots with `warm_start_max_concurrent`. A dollar cap starts with a price probe before admitting more cells. |
 | Random configurations | One configuration at a time; questions run in chunks of at most `max_concurrent` when `parallel=True`. |
 | Random questions | Sequential shared-question sweeps over all configurations. |
 | UCB | `max_concurrent` controls both acquisition batch size and evaluation concurrency. The `parallel` flag is ignored. |

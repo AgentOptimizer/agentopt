@@ -85,7 +85,7 @@ Progress and stopping checks occur at these boundaries:
 
 | Method | Update boundary | Recommendation readiness |
 |---|---|---|
-| Gittins | Each warm-start evaluation, then each adaptive batch | No recommendation until the uniform warm start finishes; subsequent recommendations use finite-dataset predictions. |
+| Gittins | Coalesced warm-up progress, then each adaptive batch | No recommendation until the uniform warm start finishes; subsequent recommendations use finite-dataset predictions. |
 | Random configurations | Each sequential evaluation or concurrent chunk of questions | Only complete configurations are eligible. |
 | Random questions | Each configuration evaluation within a shared-question sweep | Only complete sweeps contribute to recommendations. |
 | UCB | Each acquisition batch | Ranks observed configurations by their current empirical scalar means; these are partial-data estimates without calibrated uncertainty. |
@@ -147,15 +147,17 @@ These deployment weights are separate from Gittins' **search-cost coefficient** 
 
 Each configuration receives a seeded independent permutation of question indices and a uniform warm start. The live tracker supplies token attribution and pricing. Every evaluation must have tracked token usage and all recorded calls must have known nonnegative prices; supply `model_prices` for custom models. Evaluation or pricing failures abort selection and stop tracking.
 
-`parallel=True` runs questions within the selected adaptive batch concurrently, up to `max_concurrent`. Warm-start questions run sequentially so a dollar cap can be checked after each evaluation. Async agents work in both modes.
+`parallel=True` runs up to `batch_size` questions concurrently within the selected adaptive batch (default four). An optional `max_concurrent` caps both warm-up and adaptive concurrency. Each configuration receives one warm-up batch. Warm-up defaults to `batch_size` rolling slots across configurations; set `warm_start_max_concurrent` in `select_best()` to change only this concurrency. Each completion frees a slot for another cell. Calibration and adaptive batches wait for the entire warm start. A dollar cap starts warm-up with one probe, then reserves estimated charges for in-flight cells; the actual total may exceed this soft limit. Async agents work in both modes.
 
 ### Parameters
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `objective_mode` | `"single"` | One scalar winner or a two-objective recommendation set. |
-| `batch_size` | `4` | Questions evaluated per adaptive visit. |
-| `warm_start_batch_size` | `4` | Questions per configuration before adaptation, clamped to dataset size. |
+| `batch_size` | `4` | Questions per configuration in warm-up and per adaptive visit, limited to available questions. |
+| `checkpoint_path` | Automatic | Saves each successful cell in `.agentopt_cache/checkpoints/` under the working directory. Pass `None` to opt out. |
+| `checkpoint_id` | Derived from the workflow and scorer | Supply a stable version for external workflow settings or stateful callables. A custom checkpoint path requires an explicit ID. |
+| `warm_start_batch_size` | Alias for `batch_size` | Legacy constructor spelling. If both sizes are supplied, they must match. |
 | `observation_budget_fraction` | `1.0` | Maximum fraction of configuration–question cells, including warm start. |
 | `max_total_question_evaluations` | `None` | Absolute cell limit, combined with the fraction cap. |
 | `max_search_cost_usd` | `None` | Soft cap on new non-cached token charges, including warm start. |
@@ -237,6 +239,8 @@ Random baselines do not accept `max_search_cost_usd`. They allocate an evaluatio
 ## UCB and Bayesian optimization
 
 UCB (`ucb`, alias `matrix_ucb`) uses `mean + sqrt(a/n)`, with `a=1.0`, and samples unseen questions on the selected configuration. `observation_budget_fraction=1.0` caps cells; `sample_fraction` is an alias that takes precedence. `seed` controls question sampling. `max_concurrent` controls both the batch size and concurrency, and `parallel` is ignored. If an entire acquisition batch fails to yield an observation, UCB stops with `stop_reason="evaluation_failed"`.
+
+Each returned observation keeps its zero-based dataset index. If a transport failure leaves a charge unknown, `selection_cost` reports the known spend and `unmeasured_failed_attempts` counts affected cell attempts, including attempts that eventually succeeded after a retry. With a dollar cap, UCB finishes the dispatched batch and returns `stop_reason="search_cost_unknown"` before sending another batch.
 
 Bayesian optimization uses a categorical `MixedSingleTaskGP` and Log Expected Improvement. Each selected configuration is evaluated over the complete dataset. If some questions fail, successful observations remain in the results, but that configuration is excluded from GP training and recommendations. `sample_fraction=0.25` caps the number of configurations (at least two if available); `batch_size=1` controls configurations per GP iteration. Both baselines support scalar deployment weights, single-objective recommendations, evaluation fractions, anytime user stopping, and `max_search_cost_usd=None`.
 

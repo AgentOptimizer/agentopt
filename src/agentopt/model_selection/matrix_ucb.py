@@ -29,6 +29,7 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from pydantic import Field
 
 from ..base_models import Dataset, EvalFn, ModelCandidate
 from .base import BaseModelSelector, ModelResult, SelectionResults
@@ -103,12 +104,19 @@ def _ucb_plain_next_batch(
     return np.stack([combos, dps.astype(np.int64)])
 
 
-def _build_selection_results(
+class UCBSelectionResults(SelectionResults):
+    unmeasured_failed_attempts: int = Field(
+        default=0, description="Cell attempts with unknown charges. When positive, selection_cost is a lower bound.",
+    )
+
+
+def _build_model_results(
     selector: BaseModelSelector,
     all_combos: List[Dict[str, ModelCandidate]],
     cell_data: Dict[Tuple[int, int], Tuple[float, float, Optional[float], str]],
     n_datapoints: int,
-) -> SelectionResults:
+    *, preserve_cell_indices: bool = False,
+) -> List[ModelResult]:
     all_results: List[ModelResult] = []
     for combo_idx, combo in enumerate(all_combos):
         combo_name = selector._combo_name(combo)
@@ -116,9 +124,11 @@ def _build_selection_results(
         latencies: List[float] = []
         costs: List[Optional[float]] = []
         dp_ids: List[str] = []
+        indices: List[int] = []
         for datapoint_idx in range(n_datapoints):
             t = cell_data.get((combo_idx, datapoint_idx))
             if t:
+                indices.append(datapoint_idx)
                 scores.append(t[0])
                 latencies.append(t[1])
                 costs.append(t[2])
@@ -126,7 +136,8 @@ def _build_selection_results(
         if scores:
             all_results.append(
                 selector._build_combo_result(
-                    combo_name, scores, latencies, dp_ids, costs=costs,
+                    combo_name, scores, latencies, dp_ids, costs=costs, combo=combo,
+                    datapoint_indices=indices if preserve_cell_indices else None,
                 )
             )
 
@@ -141,7 +152,7 @@ def _build_selection_results(
     else:
         print("\n  No combinations succeeded.")
 
-    return SelectionResults(results=all_results)
+    return all_results
 
 
 def _record_cells(
@@ -261,6 +272,15 @@ class MatrixUCBModelSelector(BaseModelSelector):
     ) -> SelectionResults:
         return asyncio.run(self._select_async(max_concurrent))
 
+    def _selection_cost_so_far(self) -> Optional[float]:
+        # A transport error has no measured tokens. Sum the billed calls,
+        # including known charges from evaluations which failed to score.
+        records = self._tracker.get_records()[self._selection_record_offset:]
+        return self._cost_of_selection_records(
+            r for r in records if not getattr(r, "request_not_sent", False)
+            and not getattr(r, "transport_charge_unknown", False)
+        )
+
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         all_combos = self._all_combos()
         dataset_list = list(self.dataset)
@@ -288,6 +308,14 @@ class MatrixUCBModelSelector(BaseModelSelector):
         print(f"{'='*60}\n")
 
         sem = asyncio.Semaphore(mc)
+        unmeasured_attempts = 0
+        record_cursor = self._selection_record_offset
+
+        def snapshot():
+            return UCBSelectionResults(
+                results=_build_model_results(self, all_combos, cell_data, n_datapoints, preserve_cell_indices=True),
+                unmeasured_failed_attempts=unmeasured_attempts,
+            )
 
         async def _one(
             combo_i: int, dp_i: int,
@@ -332,6 +360,14 @@ class MatrixUCBModelSelector(BaseModelSelector):
                 *[_one(int(ci), int(di)) for ci, di in zip(combo_row, dp_row)],
                 return_exceptions=True,
             )
+            # Each scheduled cell occurs once per batch. Count SDK retries
+            # together, but count a fresh attempt in a later batch separately.
+            records = self._tracker.get_records()
+            unmeasured_attempts += len({
+                r.data_id for r in records[record_cursor:]
+                if not r.cached and getattr(r, "transport_charge_unknown", False)
+            })
+            record_cursor = len(records)
             for res in outs:
                 if isinstance(res, Exception):
                     logger.warning("Matrix UCB async cell error: %s", res)
@@ -344,14 +380,17 @@ class MatrixUCBModelSelector(BaseModelSelector):
                         sc[0], lat[0], costs[0],
                     )
             _refresh_observed_np(self, observed, cell_data)
-            self._publish_update(_build_selection_results(self, all_combos, cell_data, n_datapoints))
+            result = snapshot()
+            self._publish_update(result)
+            if self._search_cost_limit is not None and unmeasured_attempts:
+                result.stop_reason = "search_cost_unknown"
+                return result
             if not any(not isinstance(res, Exception) and res[2] for res in outs):
                 # No progress in this batch: avoid retrying failed cells forever.
-                result = _build_selection_results(self, all_combos, cell_data, n_datapoints)
                 result.stop_reason = self._search_budget_stop() or "evaluation_failed"
                 return result
 
-        result = _build_selection_results(self, all_combos, cell_data, n_datapoints)
+        result = snapshot()
         result.stop_reason = self._search_budget_stop() or (
             "all_arms_completed" if len(cell_data) == total_cells else "question_budget"
         )
@@ -579,7 +618,7 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
                     )
             _refresh_observed_t(self, observed_t, cell_data)
 
-        return _build_selection_results(self, all_combos, cell_data, n_datapoints)
+        return SelectionResults(results=_build_model_results(self, all_combos, cell_data, n_datapoints))
 
     async def _select_async(self, max_concurrent: int = 20) -> SelectionResults:
         import torch
@@ -677,4 +716,4 @@ class MatrixUCBLRFModelSelector(BaseModelSelector):
                     )
             _refresh_observed_t(self, observed_t, cell_data)
 
-        return _build_selection_results(self, all_combos, cell_data, n_datapoints)
+        return SelectionResults(results=_build_model_results(self, all_combos, cell_data, n_datapoints))

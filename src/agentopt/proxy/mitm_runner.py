@@ -13,7 +13,7 @@ Lifecycle::
 
 Embedded API surface we depend on (mitmproxy 12.x — pin in pyproject.toml):
 
-* ``mitmproxy.tools.dump.DumpMaster(options, loop=None, with_termlog=True, with_dumper=True)``
+* mitmproxy Master, default_addons and the ErrorCheck startup hook.
 * ``Master.run()`` — coroutine that drives the event loop until ``shutdown()``.
 * ``Master.shutdown()`` — sync, thread-safe.  Internally schedules
   ``should_exit.set`` via ``call_soon_threadsafe``.
@@ -32,10 +32,12 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Optional
 
-from mitmproxy import ctx
 from mitmproxy.options import Options
-from mitmproxy.tools.dump import DumpMaster
+from mitmproxy import addons
+from mitmproxy.master import Master
+from mitmproxy.addons.errorcheck import ErrorCheck, ErrorCheckHandler
 
+from ._mitm_context import session_context
 from .cache import ResponseCache
 from .mitm_addon import AgentoptAddon
 from .providers import ProviderRegistry
@@ -54,6 +56,100 @@ _STARTUP_TIMEOUT_SECONDS = 30.0
 _SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 
+class _StartupLogCapture:
+    """Observe completed records on their emitting thread during proxy startup."""
+
+    def __init__(self):
+        self.local = threading.local()
+        self.lock = threading.Lock()
+        self.users = 0
+
+    def attach(self, collector):
+        with self.lock:
+            if not self.users:
+                # Logger filters have run at this point, but handlers have not.
+                # Root-handler reconfiguration cannot interrupt this observation.
+                original = logging.Logger.callHandlers
+
+                original_handle = logging.Handler.handle
+
+                def observe(record):
+                    target = getattr(self.local, "collector", None)
+                    if target is not None and record.levelno >= logging.ERROR:
+                        if not any(previous is record for previous in target.has_errored):
+                            target.handle(record)
+
+                def dispatch(logger, record):
+                    observe(record)
+                    return original(logger, record)
+
+                def handle(handler, record):
+                    accepted = original_handle(handler, record)
+                    # A logger can retain the original callHandlers method. In
+                    # that case observe the record actually delivered by its
+                    # handler, including a replacement returned by a filter.
+                    if accepted and handler is not getattr(self.local, "collector", None):
+                        observe(accepted if isinstance(accepted, logging.LogRecord) else record)
+                    return accepted
+
+                self.original = original
+                self.dispatch = dispatch
+                self.original_handle = original_handle
+                self.handle = handle
+                logging.Handler.handle = handle
+                logging.Logger.callHandlers = dispatch
+            self.local.collector = collector
+            self.users += 1
+
+    def detach(self):
+        with self.lock:
+            if getattr(self.local, "collector", None) is None:
+                return
+            del self.local.collector
+            self.users -= 1
+            if not self.users:
+                if logging.Logger.callHandlers is self.dispatch:
+                    logging.Logger.callHandlers = self.original
+                if logging.Handler.handle is self.handle:
+                    logging.Handler.handle = self.original_handle
+                del self.original, self.dispatch, self.original_handle, self.handle
+
+
+_startup_capture = _StartupLogCapture()
+
+
+class _SessionErrorCheck(ErrorCheck):
+    name = "errorcheck"
+
+    def __init__(self):
+        self.on_startup_complete = None
+        self.repeat_errors_on_stderr = False
+        self.logger = ErrorCheckHandler()
+        _startup_capture.attach(self.logger)
+
+    def close(self):
+        _startup_capture.detach()
+
+    def finish(self):
+        self.close()
+        if self.on_startup_complete is not None:
+            self.on_startup_complete()
+
+
+class DumpMaster(Master):
+    """Embedded regular proxy with explicitly owned startup logging."""
+    def __init__(self, opts, *, loop, errorcheck):
+        try:
+            super().__init__(opts, event_loop=loop, with_termlog=False)
+            self.addons.add(*addons.default_addons())
+            self.addons.add(errorcheck)
+        except BaseException:
+            legacy = getattr(self, "_legacy_log_events", None)
+            if legacy is not None:
+                legacy.uninstall()
+            raise
+
+
 class _StartupHook:
     """Tiny addon that captures the bound port once the master is running.
 
@@ -62,18 +158,19 @@ class _StartupHook:
     ``Proxyserver.listen_addrs`` is populated.
     """
 
-    def __init__(self, ready: threading.Event, port_holder: list) -> None:
-        self._ready = ready
+    def __init__(self, port_holder: list, master: DumpMaster) -> None:
+        self._master = master
         self._port_holder = port_holder
 
     def running(self) -> None:
         # ``listen_addrs`` is a method that returns ``list[Address]``
         # where Address is ``(host, port)``.  We pass exactly one mode
         # so the list has exactly one entry.
-        addrs = ctx.master.addons.get("proxyserver").listen_addrs()
+        # ctx.master is process-global and may belong to another concurrent
+        # session. Capture the owner explicitly so ports cannot cross sessions.
+        addrs = self._master.addons.get("proxyserver").listen_addrs()
         if addrs:
             self._port_holder.append(addrs[0][1])
-        self._ready.set()
 
 
 class SessionMaster:
@@ -101,6 +198,7 @@ class SessionMaster:
         self._master: Optional[DumpMaster] = None
         self._port: Optional[int] = None
 
+        self._cancelled = threading.Event()
         self._ready = threading.Event()
         self._port_holder: list = []
         self._startup_exc: Optional[BaseException] = None
@@ -127,6 +225,7 @@ class SessionMaster:
         self._thread.start()
 
         if not self._ready.wait(timeout=_STARTUP_TIMEOUT_SECONDS):
+            self._cancelled.set()
             raise RuntimeError(
                 f"mitmproxy session master for {self._session.session_id} "
                 f"did not start within {_STARTUP_TIMEOUT_SECONDS}s"
@@ -146,14 +245,19 @@ class SessionMaster:
 
     def stop(self) -> None:
         """Signal the master to exit and join the thread."""
-        if self._master is not None:
+        self._cancelled.set()
+        master = self._master
+        if master is not None:
             try:
-                self._master.shutdown()
+                master.shutdown()
             except Exception:
                 logger.debug("ignored exception in master.shutdown", exc_info=True)
         if self._thread is not None:
             self._thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-            self._thread = None
+            if self._thread.is_alive():
+                raise RuntimeError("Proxy thread did not exit within the shutdown timeout; retry stop()")
+            else:
+                self._thread = None
 
     @property
     def port(self) -> int:
@@ -166,7 +270,13 @@ class SessionMaster:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
+        with session_context():
+            self._run_isolated()
+
+    def _run_isolated(self) -> None:
+        errorcheck = None
         try:
+            errorcheck = _SessionErrorCheck()
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loop = loop
@@ -179,20 +289,49 @@ class SessionMaster:
                 # console log noise.
                 ssl_insecure=False,
             )
-            master = DumpMaster(opts, loop=loop, with_termlog=False, with_dumper=False,)
-            master.addons.add(
-                _StartupHook(self._ready, self._port_holder), self._addon,
-            )
+            master = DumpMaster(opts, loop=loop, errorcheck=errorcheck)
             self._master = master
+            if self._cancelled.is_set():
+                return
+            errorcheck.on_startup_complete = self._ready.set
+            master.addons.add(
+                _StartupHook(self._port_holder, master), self._addon,
+            )
 
             # Drives the loop until shutdown() flips should_exit.
-            loop.run_until_complete(master.run())
+            if not self._cancelled.is_set():
+                loop.run_until_complete(master.run())
         except BaseException as exc:
             self._startup_exc = exc
             self._ready.set()  # unblock start()
         finally:
+            if errorcheck is not None:
+                errorcheck.close()
+            # Startup can fail before Master.run reaches done(). Its process-wide
+            # logging handler must never keep scheduling onto a closed loop.
+            if self._master is not None:
+                cleanups = [self._master._legacy_log_events.uninstall]
+                if self._master._termlog_addon is not None:
+                    cleanups.append(self._master._termlog_addon.uninstall)
+                for cleanup in cleanups:
+                    try:
+                        cleanup()
+                    except Exception:
+                        logger.exception("Failed to remove a mitmproxy logging handler")
             try:
                 if self._loop is not None and not self._loop.is_closed():
+                    # Master.run() can leave accept/connection tasks pending on
+                    # Windows. Drain cancellation before closing their loop.
+                    pending = asyncio.all_tasks(self._loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+                    self._loop.run_until_complete(self._loop.shutdown_default_executor(timeout=_SHUTDOWN_TIMEOUT_SECONDS))
                     self._loop.close()
             except Exception:
-                pass
+                logger.exception("Failed to clean up mitmproxy event loop")
+            finally:
+                self._master = None
+                asyncio.set_event_loop(None)

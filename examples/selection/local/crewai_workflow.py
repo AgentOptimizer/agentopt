@@ -2,7 +2,7 @@
 Example: CrewAI agent with agentopt.
 
 Prerequisites:
-    1. pip install crewai agentopt-py
+    1. pip install crewai "agentopt-py[plot]"
     2. Set OPENAI_API_KEY environment variable
 """
 
@@ -102,6 +102,8 @@ def eval_fn(expected, actual):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import matplotlib
+
     selector = ModelSelector(
         agent=MyAgent,
         models={
@@ -115,7 +117,8 @@ if __name__ == "__main__":
 
     results = selector.select_best(parallel=True)
     results.print_summary()
-    results.plot_pareto()
+    plot_path = "crewai_frontier.png" if matplotlib.get_backend().lower() == "agg" else None
+    results.plot_pareto(plot_path)
 
     best = results.get_best_combo()
     if best:

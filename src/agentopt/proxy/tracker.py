@@ -323,7 +323,7 @@ class LLMTracker:
         combo_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Dict[str, Tuple[int, int]]:
-        """Return aggregated ``{model: (input_tokens, output_tokens)}``."""
+        """Return token totals, raising ValueError if a matching successful call lacks usage."""
         return self._backend.get_usage(
             data_id=data_id, combo_id=combo_id, agent_id=agent_id,
         )

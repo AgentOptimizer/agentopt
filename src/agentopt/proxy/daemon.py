@@ -37,6 +37,7 @@ from aiohttp import web
 from ._backend import _MITMPROXY_CA_CERT
 from ._local_backend import LocalBackend
 from .models import CallRecord
+from .usage import UsageExtractionError
 
 if False:  # type-only — avoid runtime import on the proxy side
     from agentopt.routing.base import Router
@@ -136,11 +137,14 @@ async def _get_records(request: web.Request) -> web.Response:
 
 async def _get_usage(request: web.Request) -> web.Response:
     backend = request.app[_BACKEND_KEY]
-    usage = backend.get_usage(
-        data_id=request.query.get("data_id"),
-        combo_id=request.query.get("combo_id"),
-        agent_id=request.query.get("agent_id"),
-    )
+    try:
+        usage = backend.get_usage(
+            data_id=request.query.get("data_id"),
+            combo_id=request.query.get("combo_id"),
+            agent_id=request.query.get("agent_id"),
+        )
+    except UsageExtractionError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
     return web.json_response({k: list(v) for k, v in usage.items()})
 
 

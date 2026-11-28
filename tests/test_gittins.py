@@ -331,11 +331,12 @@ def test_untracked_llm_usage_is_rejected_instead_of_assuming_zero_spend():
     assert tracker.stopped
 
 
-@pytest.mark.parametrize("failure, retry_in_agent, expected_unknown", [
-    ("missing_usage", False, 1), ("read_timeout", False, 1),
-    ("read_timeout", True, 1), ("connect_timeout", False, 0),
+@pytest.mark.parametrize("failure, retry_in_agent, expected_unknown, expected_calls, expected_cells", [
+    ("missing_usage", False, 1, 1, 0), ("read_timeout", False, 1, 1, 0),
+    ("read_timeout", True, 1, 2, 1), ("connect_timeout", False, 0, 2, 1),
 ])
-def test_unmeasured_attempts_across_retry_and_resume(tmp_path, failure, retry_in_agent, expected_unknown):
+def test_unmeasured_attempts_across_retry_and_resume(tmp_path, failure, retry_in_agent, expected_unknown,
+                                                    expected_calls, expected_cells):
     import sqlite3
     import httpx
     from agentopt.proxy import LLMTracker
@@ -388,12 +389,13 @@ def test_unmeasured_attempts_across_retry_and_resume(tmp_path, failure, retry_in
             with sqlite3.connect(checkpoint) as db:
                 assert db.execute("SELECT count(*) FROM cells").fetchone()[0] == 0
         result = selector().select_best()
-        assert len(requests) == 2 and result.total_evaluations == 1
-        assert result.selection_cost == pytest.approx(.0001)
+        assert len(requests) == expected_calls and result.total_evaluations == expected_cells
+        assert result.selection_cost == pytest.approx(.0001 * expected_cells)
         assert result.model_dump(mode="json")["unmeasured_failed_attempts"] == expected_unknown
-        assert result.stop_reason == "warm_start_budget"
+        assert result.stop_reason == ("search_cost_unknown" if expected_unknown else "warm_start_budget")
         restored = selector().select_best()
-        assert len(requests) == 2 and restored.unmeasured_failed_attempts == expected_unknown
+        assert len(requests) == expected_calls and restored.unmeasured_failed_attempts == expected_unknown
+        assert restored.total_evaluations == expected_cells and restored.stop_reason == result.stop_reason
         assert restored.selection_cost == result.selection_cost
 
 

@@ -196,7 +196,7 @@ class BayesianOptimizationModelSelector(BaseModelSelector):
             ei = acq(cand_X.unsqueeze(1))
 
         k = min(self.batch_size, len(unseen))
-        topk = ei.squeeze(-1).topk(k=k).indices.tolist()
+        topk = ei.reshape(len(unseen)).topk(k=k).indices.tolist()
         return [unseen[i] for i in topk]
 
     def _bo_finalize(self, all_results: List[ModelResult]) -> SelectionResults:

@@ -8,6 +8,17 @@ from tests.test_anytime import make_basic
 from tests.test_gittins import RecordingTracker
 
 
+@pytest.mark.parametrize("parallel", [False, True])
+def test_bayesian_selects_last_remaining_candidate(parallel):
+    pytest.importorskip("botorch")
+    selector, _, observed = make_basic("bayesian", count=1, sample_fraction=1)
+    result = selector.select_best(parallel=parallel)
+
+    assert sorted(observed) == [(model, 0) for model in sorted(("first", "second", "third", "fourth", "fifth"))]
+    assert result.total_evaluations == 5
+    assert result.get_best_combo() == {"solver": "fifth"}
+
+
 def make_budget_bo(monkeypatch, *, initial=2, batch_size=2, count=2, **kwargs):
     """Keep real BO evaluation orchestration; replace only dependency/GP work."""
     monkeypatch.setattr(bo, "_require_botorch", lambda: None)

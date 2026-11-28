@@ -1,11 +1,43 @@
 """Offline regression tests for warm concurrency and the unified UI entry."""
 import asyncio
+import itertools
 import sqlite3
+import time
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 
 from tests.test_gittins import make_selector
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_cell_duration_survives_system_clock_rollback(monkeypatch, parallel):
+    from agentopt.model_selection import base
+
+    backwards = itertools.count(1000, -1)
+    monkeypatch.setattr(base, "time", SimpleNamespace(time=lambda: next(backwards), monotonic=time.monotonic))
+    selector, _ = make_selector(mode="single", count=2, outcomes={"cheap": 1.0})
+    result = selector.select_best(parallel=parallel)
+
+    assert result.total_evaluations == 2
+    assert all(cell.latency_seconds >= 0 for cell in result.get_best().datapoint_results)
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_single_slot_sync_agent_can_own_an_event_loop(parallel):
+    async def answer():
+        return 1.0
+
+    def sync_sdk_call(question):
+        return asyncio.run(answer())
+
+    selector, tracker = make_selector(mode="single", count=1, outcomes={"cheap": sync_sdk_call})
+    result = selector.select_best(parallel=parallel)
+
+    assert result.total_evaluations == len(tracker.records) == 1
+    cell = result.get_best().datapoint_results[0]
+    assert (cell.score, cell.input_tokens) == (1.0, {"cheap": 1000})
 
 
 @pytest.mark.parametrize("show_ui", [False, True])

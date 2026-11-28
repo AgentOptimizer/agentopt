@@ -57,8 +57,8 @@ callbacks, and [contributing an example](../../docs/getting-started/your-benchma
 | [`openai_sdk.py`](local/openai_sdk.py) | OpenAI Agents SDK. |
 | [`langchain.py`](local/langchain.py), [`langgraph.py`](local/langgraph.py) | LangChain / LangGraph. |
 | [`llamaindex.py`](local/llamaindex.py) | LlamaIndex. |
-| [`crewai.py`](local/crewai.py) | CrewAI. |
-| [`ag2.py`](local/ag2.py) | AG2. |
+| [`crewai_workflow.py`](local/crewai_workflow.py) | CrewAI. |
+| [`ag2_workflow.py`](local/ag2_workflow.py) | AG2 1.x planner and solver. Install `pip install "ag2[openai]>=1,<2" "agentopt-py[plot]"`. |
 | [`gemini_cli.py`](local/gemini_cli.py) | Subprocess agent (`gemini` CLI) — `HTTPS_PROXY` is set for you. |
 | [`openharness.py`](local/openharness.py) | OpenHarness subprocess. |
 | [`terminal_bench.py`](local/terminal_bench.py) | Terminal Bench subprocess. |

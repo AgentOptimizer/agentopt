@@ -915,9 +915,9 @@ class BaseModelSelector(ABC):
             dp_id = f"{label}::dp_{dp_offset + i}"
             try:
                 with self._tracker.track(data_id=dp_id, combo_id=label) as session:
-                    start_time = time.time()
+                    start_time = time.monotonic()
                     actual_result = self._invoke_agent(agent, input_data)
-                    wall_clock = time.time() - start_time
+                    wall_clock = time.monotonic() - start_time
                     # Add back time saved by cache hits so latency
                     # reflects what a real (uncached) run would cost.
                     cached_latency = self._tracker.get_cached_latency(data_id=dp_id)
@@ -973,7 +973,7 @@ class BaseModelSelector(ABC):
             async with semaphore:
                 try:
                     with self._tracker.track(data_id=dp_id, combo_id=label) as session:
-                        start_time = time.time()
+                        start_time = time.monotonic()
                         if is_async:
                             actual_result = await self._invoke_agent(agent, input_data)
                         else:
@@ -982,7 +982,7 @@ class BaseModelSelector(ABC):
                             actual_result = await loop.run_in_executor(
                                 None, ctx.run, self._invoke_agent, agent, input_data
                             )
-                        wall_clock = time.time() - start_time
+                        wall_clock = time.monotonic() - start_time
                         # Add back time saved by cache hits so latency
                         # reflects what a real (uncached) run would cost.
                         cached_latency = self._tracker.get_cached_latency(data_id=dp_id)

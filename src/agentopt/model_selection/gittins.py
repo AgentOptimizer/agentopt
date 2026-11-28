@@ -538,7 +538,9 @@ class GittinsModelSelector(BaseModelSelector):
         if parallel or self._is_async_run:
             outcome = await self._evaluate_agent_async(agent, tasks, label, max_concurrent=1, dp_offset=question)
         else:
-            outcome = self._evaluate_agent(agent, tasks, label, dp_offset=question)
+            # A synchronous SDK may run its own event loop. Await one cell at
+            # a time while keeping its tracking context in the worker thread.
+            outcome = await asyncio.to_thread(self._evaluate_agent, agent, tasks, label, dp_offset=question)
         scores, latencies, dp_ids = outcome
         if len(scores) != 1:
             raise RuntimeError(f"Evaluation failed for {self._names[arm]} at dataset index {question}")

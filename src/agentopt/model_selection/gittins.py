@@ -351,7 +351,7 @@ class GittinsModelSelector(BaseModelSelector):
             raise CheckpointError(f"Checkpoint setting '{name}' is immutable; create a new selector for changed settings")
         super().__setattr__(name, value)
 
-    def select_best(self, parallel=None, max_concurrent=None, *, show_ui=False, warm_start_max_concurrent=None,
+    def select_best(self, parallel=None, max_concurrent=None, *, show_ui=None, warm_start_max_concurrent=None,
                     on_update=None, stop_event=None, _warm_resume=None):
         """Run once, optionally opening the multi-objective live view.
 
@@ -361,6 +361,8 @@ class GittinsModelSelector(BaseModelSelector):
         max_concurrent limits both phases. A dollar cap reserves estimated spend
         for in-flight cells after an initial price probe.
 
+        By default, multi-objective Gittins opens its window at a local Python
+        prompt with a desktop backend. Scripts can opt in with show_ui=True.
         A configured LiveParetoPlot can also be supplied as show_ui for custom
         titles and exports. Its owner controls the window lifetime.
         """
@@ -370,6 +372,9 @@ class GittinsModelSelector(BaseModelSelector):
             parallel = has_warmup
         if warm_start_max_concurrent is None:
             warm_start_max_concurrent = self.batch_size if has_warmup else 1
+        if show_ui is None:
+            from ..visualization.live_pareto import local_desktop_available
+            show_ui = has_warmup and self.objective_mode == "multi" and local_desktop_available()
         if show_ui is False:
             return self._select_with_tracking(parallel, max_concurrent, on_update, stop_event,
                                               warm_start_max_concurrent=warm_start_max_concurrent,

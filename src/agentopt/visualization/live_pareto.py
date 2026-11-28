@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
@@ -23,6 +24,31 @@ FONT_MEDIUM = 11
 FONT_LARGE = 19
 _ALL_COMBINATIONS = object()
 _MIN_IDENTICAL_POINTS = 5
+
+
+def local_desktop_available(*, cli=False):
+    """Check for a native GUI in a Python prompt or a terminal-launched CLI."""
+    if current_thread() is not main_thread() or any(os.getenv(key) for key in ("SSH_CONNECTION", "SSH_TTY", "CI")):
+        return False
+    if cli:
+        if not (sys.stdin and sys.stdin.isatty() and sys.stdout and sys.stdout.isatty()):
+            return False
+    elif not hasattr(sys, "ps1"):
+        # Ordinary scripts may inherit a terminal from an unattended parent.
+        return False
+    try:
+        import matplotlib
+        from matplotlib import cbook
+        running = cbook._get_running_interactive_framework()
+        if running == "headless":
+            return False
+        backend = matplotlib.get_backend()
+        module = (backend.removeprefix("module://") if backend.startswith("module://")
+                  else "matplotlib.backends.backend_" + backend.lower())
+        framework = importlib.import_module(module).FigureCanvas.required_interactive_framework
+        return bool(framework and running in (None, framework))
+    except (ImportError, AttributeError, OSError, RuntimeError):
+        return False
 
 
 class LiveParetoPlot:
@@ -808,7 +834,7 @@ class LiveParetoPlot:
                 outcome["results"] = selector.select_best(
                     parallel=parallel, max_concurrent=max_concurrent,
                     on_update=receive, stop_event=self.stop_event,
-                    **({"warm_start_max_concurrent": warm_start_max_concurrent, "_warm_resume": self._resume}
+                    **({"show_ui": False, "warm_start_max_concurrent": warm_start_max_concurrent, "_warm_resume": self._resume}
                        if rolling else {}),
                 )
             except BaseException as exc:

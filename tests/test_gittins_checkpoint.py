@@ -288,13 +288,14 @@ def test_default_window_exports_and_resumes(monkeypatch, tmp_path):
     def offscreen(plot, **options):
         initialize(plot, show_window=False, **options)
     monkeypatch.setattr(LiveParetoPlot, "__init__", offscreen)
+    monkeypatch.setattr("agentopt.visualization.live_pareto.local_desktop_available", lambda: True)
     for expected_new in (4, 0):
         tracker = RecordingTracker()
         monkeypatch.setattr(sys.modules[__name__], "default_tracker", tracker, raising=False)
         selector = ModelSelector(agent=DefaultAgent, eval_fn=default_score, objective_mode="multi",
                                  models={"answer": ["test"]}, dataset=[(i, 1) for i in range(4)],
                                  tracker=tracker, model_prices={"test": {"input_price": 1, "output_price": 0}})
-        result = selector.select_best(show_ui=True)
+        result = selector.select_best() if expected_new else selector.select_best(show_ui=True)
         assert len(tracker.records) == expected_new
         assert selector.restored_cells + expected_new == result.total_evaluations == 4
     exports = list((tmp_path / ".agentopt_cache" / "exports").glob("*/results.json"))

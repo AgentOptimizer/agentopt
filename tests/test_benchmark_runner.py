@@ -130,10 +130,19 @@ def test_invalid_options_fail_before_loading_sdk_or_constructing_selector(monkey
     assert constructed == []
 
 
-def test_multi_objective_runner_saves_actual_frontier(monkeypatch, tmp_path):
+@pytest.mark.parametrize("flags, expected_window", [([], True), (["--no-live-plot"], False)])
+def test_multi_objective_runner_saves_actual_frontier(monkeypatch, tmp_path, flags, expected_window):
     pytest.importorskip("matplotlib")
     import matplotlib
     matplotlib.use("Agg", force=True)
+    from agentopt.visualization import LiveParetoPlot
+    monkeypatch.setattr("agentopt.visualization.live_pareto.local_desktop_available", lambda: True)
+    initialize = LiveParetoPlot.__init__
+    windows = []
+    def offscreen(plot, *, show_window, **kwargs):
+        windows.append(show_window)
+        initialize(plot, show_window=False, **kwargs)
+    monkeypatch.setattr(LiveParetoPlot, "__init__", offscreen)
 
     tracker = RecordingTracker()
     source = SCRIPT.with_name("benchmark_sample.jsonl")
@@ -158,12 +167,13 @@ def test_multi_objective_runner_saves_actual_frontier(monkeypatch, tmp_path):
     figure = tmp_path / "frontier.png"
     result = runner.main([
         "--dataset", str(source), "--models", "first", "second",
-        "--objective-mode", "multi", "--plot-output", str(figure),
+        "--objective-mode", "multi", "--plot-output", str(figure), *flags,
         "--output", str(output),
     ])
 
     assert result.is_final
     assert json.loads(output.read_text())["total_evaluations"] == result.total_evaluations
+    assert windows == [expected_window]
     assert figure.read_bytes().startswith(b"\x89PNG")
     assert len(tracker.records) == result.total_evaluations
 

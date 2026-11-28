@@ -118,8 +118,10 @@ Useful variations, appended to the command above:
 
 ## Watch the estimated Pareto frontier
 
-For an accuracy/cost search, install the plotting extra and run the example
-with `--objective-mode multi --live-plot`:
+For an accuracy/cost search, install the plotting extra. With
+`--objective-mode multi`, a local interactive terminal opens the window
+automatically when a desktop Matplotlib backend is available. Use
+`--no-live-plot` for terminal output only, or request the window explicitly:
 
 ```bash
 python -m pip install -e ".[plot]" openai
@@ -174,15 +176,16 @@ selector = ModelSelector(
     batch_size=4,                 # questions per configuration in warm-up and per search batch
 )
 results = selector.select_best(
-    show_ui=True,                 # False runs the same selection without a window
     warm_start_max_concurrent=12, # optional warm-up slots across configurations (default: batch_size)
 )
 ```
 
-Use an interactive Matplotlib backend for the multi-objective window. The Python
-Gittins API defaults to no window and parallel evaluation. Both UI modes honor the
-same execution settings. The existing `LiveParetoPlot.run(selector, ...)` API
-remains available for custom views. With `show_ui=True`, the finished window
+Multi-objective Gittins opens a window by default in a local interactive
+desktop session. Single-objective runs, headless or unattended jobs, and
+worker threads default to no window. Use `selector.select_best(show_ui=False)`
+to disable it, or `show_ui=True` to request it explicitly. Both UI modes honor
+the same execution settings. The existing `LiveParetoPlot.run(selector, ...)`
+API remains available for custom views. The automatically created window
 offers **Open results** and **Open folder** for the JSON and frontier PNG saved
 in a new `.agentopt_cache/exports/` subdirectory for each run.
 

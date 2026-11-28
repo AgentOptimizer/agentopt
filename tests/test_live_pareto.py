@@ -1,5 +1,6 @@
 """The graphical view consumes real selector snapshots without model APIs."""
 
+import sys
 import threading
 import time
 
@@ -10,8 +11,29 @@ matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg", force=True)
 
 from agentopt import ModelSelector
-from agentopt.visualization.live_pareto import LiveParetoPlot
+from agentopt.visualization.live_pareto import LiveParetoPlot, local_desktop_available
 from tests.test_gittins import RecordingTracker, make_selector
+
+
+def test_interactive_shell_with_non_gui_backend_stays_headless(monkeypatch):
+    monkeypatch.setattr(sys, "ps1", ">>> ", raising=False)
+    for key in ("CI", "SSH_TTY", "SSH_CONNECTION"):
+        monkeypatch.delenv(key, raising=False)
+    with matplotlib.rc_context({"backend": "Agg"}):
+        assert not local_desktop_available()
+
+
+@pytest.mark.parametrize("mode, desktop, options", [
+    ("single", True, {}), ("multi", False, {}), ("multi", True, {"show_ui": False}),
+])
+def test_selection_without_auto_window(monkeypatch, mode, desktop, options):
+    monkeypatch.setattr("agentopt.visualization.live_pareto.local_desktop_available", lambda: desktop)
+    def unexpected_window(*args, **kwargs):
+        pytest.fail("selection opened a window")
+    monkeypatch.setattr(LiveParetoPlot, "__init__", unexpected_window)
+    selector, tracker = make_selector(mode=mode, count=1)
+    result = selector.select_best(**options)
+    assert result.total_evaluations == len(tracker.records) == 4
 
 
 def test_live_plot_runs_user_supplied_two_role_workflow(tmp_path):

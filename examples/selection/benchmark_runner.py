@@ -215,8 +215,8 @@ def make_parser():
                         help="Gittins checkpoint to create or resume (default: output path + .checkpoint.sqlite3)")
     parser.add_argument("--no-checkpoint", action="store_true",
                         help="Disable Gittins checkpoint saving and start a fresh run")
-    parser.add_argument("--live-plot", action="store_true",
-                        help="show the estimated Pareto frontier during a real multi-objective Gittins run")
+    parser.add_argument("--live-plot", action=argparse.BooleanOptionalAction, default=None,
+                        help="show the Pareto window (default: local interactive multi-objective Gittins)")
     parser.add_argument("--plot-output", type=Path,
                         help="save the final estimated Pareto plot as an image")
     return parser
@@ -360,7 +360,7 @@ def run_selection(selector, *, max_concurrent, output, failures=None, plot=None,
         print("Press Ctrl+C to stop after the scheduled batch; its completed results will be saved.", flush=True)
         results = selector.select_best(
             parallel=True, max_concurrent=max_concurrent, on_update=update, stop_event=stop_event,
-            **({"show_ui": plot} if plot is not None else {}),
+            **({"show_ui": plot or False} if plot is not None or hasattr(selector, "warm_size") else {}),
             **({"warm_start_max_concurrent": warm_start_max_concurrent} if warm_start_max_concurrent is not None else {}),
         )
         if failures.message is not None:
@@ -402,6 +402,9 @@ def validate_output_paths(args):
 def main(argv=None):
     parser = make_parser()
     args = parser.parse_args(argv)
+    if args.live_plot is None and args.objective_mode == "multi" and args.method in ("auto", "gittins"):
+        from agentopt.visualization.live_pareto import local_desktop_available
+        args.live_plot = local_desktop_available()
     try:
         options = selector_options(args)
         validate_output_paths(args)

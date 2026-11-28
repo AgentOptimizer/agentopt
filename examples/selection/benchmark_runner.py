@@ -275,6 +275,7 @@ STOP_REASON_MESSAGES = {
     "user_stopped": "You requested a stop.",
     "question_budget": "The remaining evaluation allowance cannot cover the next batch.",
     "search_cost_budget": "The search cost limit was reached, or the next batch would exceed it.",
+    "search_cost_unknown": "A request may have incurred an unknown charge. The dollar limit prevents scheduling another batch.",
     "warm_start_budget": "The budget was reached during initial sampling; recommendations may not be available.",
     "gittins_stop": "The search ended on Gittins stopping advice.",
     "all_arms_completed": "All configurations have been evaluated on every test question.",

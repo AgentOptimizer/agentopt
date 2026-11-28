@@ -23,6 +23,19 @@ def test_interactive_shell_with_non_gui_backend_stays_headless(monkeypatch):
         assert not local_desktop_available()
 
 
+def test_script_inheriting_terminal_returns_without_a_window(monkeypatch):
+    for key in ("CI", "SSH_TTY", "SSH_CONNECTION"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delattr(sys, "ps1", raising=False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(matplotlib.cbook, "_get_running_interactive_framework", lambda: None)
+    monkeypatch.setattr(matplotlib, "get_backend", lambda: pytest.fail("script probed the GUI backend"))
+    selector, tracker = make_selector(count=1)
+    result = selector.select_best()
+    assert result.is_final and result.total_evaluations == len(tracker.records) == 4
+
+
 @pytest.mark.parametrize("mode, desktop, options", [
     ("single", True, {}), ("multi", False, {}), ("multi", True, {"show_ui": False}),
 ])

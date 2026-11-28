@@ -361,8 +361,8 @@ class GittinsModelSelector(BaseModelSelector):
         max_concurrent limits both phases. A dollar cap reserves estimated spend
         for in-flight cells after an initial price probe.
 
-        By default, multi-objective Gittins opens its window in a local
-        interactive desktop session. Pass show_ui=False to disable it.
+        By default, multi-objective Gittins opens its window at a local Python
+        prompt with a desktop backend. Scripts can opt in with show_ui=True.
         A configured LiveParetoPlot can also be supplied as show_ui for custom
         titles and exports. Its owner controls the window lifetime.
         """

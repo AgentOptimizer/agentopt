@@ -404,7 +404,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.live_plot is None and args.objective_mode == "multi" and args.method in ("auto", "gittins"):
         from agentopt.visualization.live_pareto import local_desktop_available
-        args.live_plot = local_desktop_available()
+        args.live_plot = local_desktop_available(cli=True)
     try:
         options = selector_options(args)
         validate_output_paths(args)

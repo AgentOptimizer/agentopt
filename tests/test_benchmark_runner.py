@@ -136,7 +136,7 @@ def test_multi_objective_runner_saves_actual_frontier(monkeypatch, tmp_path, fla
     import matplotlib
     matplotlib.use("Agg", force=True)
     from agentopt.visualization import LiveParetoPlot
-    monkeypatch.setattr("agentopt.visualization.live_pareto.local_desktop_available", lambda: True)
+    monkeypatch.setattr("agentopt.visualization.live_pareto.local_desktop_available", lambda *, cli: cli)
     initialize = LiveParetoPlot.__init__
     windows = []
     def offscreen(plot, *, show_window, **kwargs):

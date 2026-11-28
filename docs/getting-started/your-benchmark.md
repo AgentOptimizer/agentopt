@@ -180,9 +180,10 @@ results = selector.select_best(
 )
 ```
 
-Multi-objective Gittins opens a window by default in a local interactive
-desktop session. Single-objective runs, headless or unattended jobs, and
-worker threads default to no window. Use `selector.select_best(show_ui=False)`
+Multi-objective Gittins opens a window by default when called at a local Python
+prompt with a desktop backend. Python scripts run without a window even when
+launched from a terminal. Single-objective runs, headless jobs, and worker
+threads also default to no window. Use `selector.select_best(show_ui=False)`
 to disable it, or `show_ui=True` to request it explicitly. Both UI modes honor
 the same execution settings. The existing `LiveParetoPlot.run(selector, ...)`
 API remains available for custom views. The automatically created window

@@ -26,12 +26,15 @@ _ALL_COMBINATIONS = object()
 _MIN_IDENTICAL_POINTS = 5
 
 
-def local_desktop_available():
-    """Check for a local interactive session with a native GUI backend."""
+def local_desktop_available(*, cli=False):
+    """Check for a native GUI in a Python prompt or a terminal-launched CLI."""
     if current_thread() is not main_thread() or any(os.getenv(key) for key in ("SSH_CONNECTION", "SSH_TTY", "CI")):
         return False
-    if not (hasattr(sys, "ps1") or
-            (sys.stdin and sys.stdin.isatty() and sys.stdout and sys.stdout.isatty())):
+    if cli:
+        if not (sys.stdin and sys.stdin.isatty() and sys.stdout and sys.stdout.isatty()):
+            return False
+    elif not hasattr(sys, "ps1"):
+        # Ordinary scripts may inherit a terminal from an unattended parent.
         return False
     try:
         import matplotlib

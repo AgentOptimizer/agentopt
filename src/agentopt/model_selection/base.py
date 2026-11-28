@@ -1201,6 +1201,8 @@ class BaseModelSelector(ABC):
         attribute: str = "combination",
         is_best: bool = False,
         combo: Optional[Dict[str, ModelCandidate]] = None,
+        *,
+        datapoint_indices: Optional[List[int]] = None,
     ) -> ModelResult:
         """Build a :class:`ModelResult` and absorb the samples into the normalizer.
 
@@ -1216,7 +1218,8 @@ class BaseModelSelector(ABC):
         accuracy, _ = self._compute_stats(scores)
         avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
         dp_results = (
-            self._build_datapoint_results(scores, latencies, dp_ids) if dp_ids else []
+            self._build_datapoint_results(scores, latencies, dp_ids, datapoint_indices=datapoint_indices)
+            if dp_ids else []
         )
         if costs is None:
             costs = self._observe_combo(scores, latencies, dp_ids)
@@ -1238,6 +1241,7 @@ class BaseModelSelector(ABC):
 
     def _build_datapoint_results(
         self, scores: List[float], latencies: List[float], datapoint_ids: List[str],
+        *, datapoint_indices: Optional[List[int]] = None,
     ) -> List[DatapointResult]:
         """Build per-datapoint result objects with token attribution."""
         dp_tokens = self._fetch_tokens_by_datapoint(datapoint_ids)
@@ -1246,7 +1250,7 @@ class BaseModelSelector(ABC):
             inp_tok, out_tok = dp_tokens.get(dp_id, ({}, {}))
             results.append(
                 DatapointResult(
-                    datapoint_index=j,
+                    datapoint_index=j if datapoint_indices is None else datapoint_indices[j],
                     score=scores[j],
                     latency_seconds=latencies[j],
                     input_tokens=inp_tok,
@@ -1378,9 +1382,12 @@ class BaseModelSelector(ABC):
         )
 
     def _selection_cost_so_far(self) -> Optional[float]:
+        return self._cost_of_selection_records(self._tracker.get_records()[self._selection_record_offset:])
+
+    def _cost_of_selection_records(self, records) -> Optional[float]:
         input_tokens: Dict[str, int] = {}
         output_tokens: Dict[str, int] = {}
-        for record in self._tracker.get_records()[self._selection_record_offset:]:
+        for record in records:
             if record.cached:
                 continue
             if getattr(record, "usage_unavailable", False):

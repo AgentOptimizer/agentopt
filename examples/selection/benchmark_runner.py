@@ -24,7 +24,7 @@ from agentopt.model_selection.base import save_json
 
 METHODS = {
     "single": ("auto", "gittins", "random", "random_configurations", "random_questions", "ucb", "bayesian"),
-    "multi": ("auto", "gittins", "random_configurations", "random_questions"),
+    "multi": ("auto", "gittins", "ucb", "random_configurations", "random_questions"),
 }
 RANDOM_METHODS = ("random", "random_configurations", "random_questions")
 
@@ -205,21 +205,25 @@ def make_parser():
                         help="Automatically stop single Gittins on its stopping advice; default is advice only")
     parser.add_argument("--seed", type=int, help="Seed for Gittins, random, or UCB; Bayesian has no seed option")
     parser.add_argument("--warm-start-max-concurrent", type=int, default=None,
-                        help="Gittins initial concurrency (defaults to --batch-size), capped by --max-concurrent; "
+                        help="Initial concurrency for Gittins or multi-objective UCB (defaults to --batch-size), capped by --max-concurrent; "
                              "a dollar budget reserves estimated in-flight spend")
-    parser.add_argument("--batch-size", type=int, help="Questions per configuration at warm-up and per adaptive Gittins batch (default: 4)")
+    parser.add_argument("--batch-size", type=int, help="Questions per configuration at warm-up and per adaptive batch (default: 4)")
     parser.add_argument("--max-concurrent", type=int,
-                        help="Shared concurrency limit (optional for Gittins; other methods default to 4)")
+                        help="Shared concurrency limit (optional for batched search; other methods default to 4)")
     parser.add_argument("--output", type=Path, default=Path("results.json"), help="Result JSON path (default results.json)")
     parser.add_argument("--checkpoint", type=Path,
-                        help="Gittins checkpoint to create or resume (default: output path + .checkpoint.sqlite3)")
+                        help="Checkpoint to create or resume (default: output path + .checkpoint.sqlite3)")
     parser.add_argument("--no-checkpoint", action="store_true",
-                        help="Disable Gittins checkpoint saving and start a fresh run")
+                        help="Disable checkpoint saving and start a fresh run")
     parser.add_argument("--live-plot", action=argparse.BooleanOptionalAction, default=None,
-                        help="show the Pareto window (default: local interactive multi-objective Gittins)")
+                        help="show the Pareto window (default: local interactive multi-objective Gittins or UCB)")
     parser.add_argument("--plot-output", type=Path,
                         help="save the final estimated Pareto plot as an image")
     return parser
+
+
+def uses_batched_search(args):
+    return args.method in ("auto", "gittins") or (args.method == "ucb" and args.objective_mode == "multi")
 
 
 def selector_options(args):
@@ -227,15 +231,15 @@ def selector_options(args):
     if args.method not in METHODS[args.objective_mode]:
         raise ValueError(f"{args.method} does not support {args.objective_mode} mode")
     if (args.live_plot or args.plot_output is not None) and (
-        args.objective_mode != "multi" or args.method not in ("auto", "gittins")
+        args.objective_mode != "multi" or not uses_batched_search(args)
     ):
-        raise ValueError("Pareto plotting requires --objective-mode multi with Gittins")
-    single_gittins = args.method in ("auto", "gittins") and args.objective_mode == "single"
+        raise ValueError("Pareto plotting requires --objective-mode multi with Gittins or UCB")
+    single_gittins = uses_batched_search(args) and args.objective_mode == "single"
     if (args.cost_scaling_factor is not None or args.stop_on_recommendation) and not single_gittins:
         raise ValueError("--cost-scaling-factor and --stop-on-recommendation apply only to single Gittins")
     if args.max_search_cost_usd is not None and args.method in RANDOM_METHODS:
         raise ValueError("Random baselines use --evaluation-fraction or Ctrl+C, not a dollar cap")
-    if args.max_concurrent is None and args.method not in ("auto", "gittins"):
+    if args.max_concurrent is None and not uses_batched_search(args):
         args.max_concurrent = 4
     if args.max_concurrent is not None and args.max_concurrent < 1:
         raise ValueError("--max-concurrent must be positive")
@@ -243,16 +247,16 @@ def selector_options(args):
         raise ValueError("--seed must be nonnegative and applies only to Gittins, random, or UCB")
     if args.checkpoint is not None and args.no_checkpoint:
         raise ValueError("--checkpoint and --no-checkpoint cannot be combined")
-    if args.checkpoint is not None and args.method not in ("auto", "gittins"):
-        raise ValueError("--checkpoint currently supports Gittins only")
+    if args.checkpoint is not None and not uses_batched_search(args):
+        raise ValueError("--checkpoint requires Gittins or multi-objective UCB")
     options = {}
     if args.batch_size is not None:
-        if args.method not in ("auto", "gittins") or args.batch_size < 1:
-            raise ValueError("--batch-size requires Gittins and a positive count")
+        if not uses_batched_search(args) or args.batch_size < 1:
+            raise ValueError("--batch-size requires Gittins or multi-objective UCB and a positive count")
         options["batch_size"] = args.batch_size
     if args.warm_start_max_concurrent is not None:
-        if args.method not in ("auto", "gittins") or args.warm_start_max_concurrent < 1:
-            raise ValueError("--warm-start-max-concurrent requires Gittins and a positive count")
+        if not uses_batched_search(args) or args.warm_start_max_concurrent < 1:
+            raise ValueError("--warm-start-max-concurrent requires Gittins or multi-objective UCB and a positive count")
     if args.evaluation_fraction is not None:
         if not math.isfinite(args.evaluation_fraction) or not 0 < args.evaluation_fraction <= 1:
             raise ValueError("--evaluation-fraction must be in (0, 1]")
@@ -300,7 +304,8 @@ def show_progress(snapshot, *, total_questions):
     if getattr(snapshot, "objective_mode", "single") == "multi":
         recommendations = snapshot.get_recommendations()
         if recommendations:
-            print("Current recommendations (conservative score and USD/question):", flush=True)
+            estimate = "observed mean" if getattr(snapshot, "algorithm", None) == "cohv_ucb" else "conservative"
+            print(f"Current recommendations ({estimate} score and USD/question):", flush=True)
             for candidate in recommendations:
                 print(f"  {candidate.combo} | score={candidate.conservative_accuracy:.4f} | "
                       f"cost=${candidate.conservative_cost_usd:.6f} | "
@@ -393,7 +398,7 @@ def validate_output_paths(args):
         if not args.plot_output.suffix:
             args.plot_output = args.plot_output.with_suffix(".png")
         paths["plot output"] = args.plot_output
-    if args.method in ("auto", "gittins") and not args.no_checkpoint:
+    if uses_batched_search(args) and not args.no_checkpoint:
         checkpoint = args.checkpoint or Path(str(output) + ".checkpoint.sqlite3")
         paths.update(checkpoint_paths(checkpoint))
     require_distinct_paths(paths)
@@ -402,7 +407,7 @@ def validate_output_paths(args):
 def main(argv=None):
     parser = make_parser()
     args = parser.parse_args(argv)
-    if args.live_plot is None and args.objective_mode == "multi" and args.method in ("auto", "gittins"):
+    if args.live_plot is None and args.objective_mode == "multi" and uses_batched_search(args):
         from agentopt.visualization.live_pareto import local_desktop_available
         args.live_plot = local_desktop_available(cli=True)
     try:
@@ -423,7 +428,7 @@ def main(argv=None):
         parser.error("This example requires the OpenAI SDK: pip install openai")
     from agentopt import ModelSelector
 
-    if args.method in ("auto", "gittins") and not args.no_checkpoint:
+    if uses_batched_search(args) and not args.no_checkpoint:
         checkpoint = args.checkpoint or Path(str(args.output) + ".checkpoint.sqlite3")
         workflow = (inspect.getsource(AnswerAgent.__init__)
                     + inspect.getsource(AnswerAgent.run) + inspect.getsource(eval_fn))
@@ -431,7 +436,7 @@ def main(argv=None):
         options.update(checkpoint_path=checkpoint,
                        checkpoint_id=hashlib.sha256(workflow.encode("utf-8")).hexdigest())
         print(f"Checkpoint: {checkpoint} (saved cells are reused automatically)", flush=True)
-    elif args.method in ("auto", "gittins"):
+    elif uses_batched_search(args):
         options["checkpoint_path"] = None
     failures = FailureState()
     try:
@@ -455,6 +460,7 @@ def main(argv=None):
                 total_questions=len(dataset),
                 warm_total=len(args.models) * min(selector.warm_start_batch_size, len(dataset)),
                 output=args.plot_output,
+                algorithm=selector.algorithm_name,
                 show_window=args.live_plot,
                 stop_event=failures.stop_event,
             )

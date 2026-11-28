@@ -193,7 +193,10 @@ class GittinsModelSelector(BaseModelSelector):
     """
 
     # Random baselines reuse the observation methods without this initializer.
-    # Only Gittins itself enables persistence.
+    algorithm_name = "CC-Gittins"
+    _policy_id = "gittins"
+    _multi_directions = 2
+    _result_type = GittinsSelectionResults
     checkpoint_path = None
     _failed_spend = 0
     _unmeasured_attempts = 0
@@ -318,7 +321,7 @@ class GittinsModelSelector(BaseModelSelector):
             settings = {key: value for key, value in vars(self).items()
                         if key not in {"_journal", "restored_cells", "checkpoint_path"}}
             identity_inputs = {
-                "format": 1, "algorithm": "gittins-v1", "workflow": checkpoint_id,
+                "format": 1, "algorithm": self._policy_id + "-v1", "workflow": checkpoint_id,
                 "dataset": [dataset[i] for i in range(len(dataset))],
                 "models": list(models.items()), "settings": settings,
                 "lambda_cost": float(lambda_cost), "lambda_latency": float(lambda_latency),
@@ -380,7 +383,7 @@ class GittinsModelSelector(BaseModelSelector):
                                               warm_start_max_concurrent=warm_start_max_concurrent,
                                               warm_resume=_warm_resume)
         if self.objective_mode != "multi" or not hasattr(self, "warm_size"):
-            raise ValueError("The live UI requires multi-objective Gittins")
+            raise ValueError("The live UI requires multi-objective Gittins or UCB")
         from threading import current_thread, main_thread
         from ..visualization import LiveParetoPlot
         if current_thread() is not main_thread():
@@ -390,7 +393,7 @@ class GittinsModelSelector(BaseModelSelector):
             export_dir = Path.cwd() / ".agentopt_cache" / "exports" / uuid4().hex
             plot = LiveParetoPlot(output=export_dir / "frontier.png", total_questions=len(self.dataset),
                                   warm_total=len(self._all_combos()) * self.warm_size,
-                                  stop_event=stop_event)
+                                  stop_event=stop_event, algorithm=self.algorithm_name)
         elif isinstance(show_ui, LiveParetoPlot):
             plot = show_ui
             if stop_event is not None and stop_event is not plot.stop_event:
@@ -478,7 +481,7 @@ class GittinsModelSelector(BaseModelSelector):
     def _token_charge(self, model, input_tokens, output_tokens):
         rates = get_model_price(model, custom_prices=self._custom_prices)
         if rates is None or any(not math.isfinite(rate) or rate < 0 for rate in rates):
-            raise ValueError(f"Cannot account for Gittins search cost for {model!r}; supply model_prices")
+            raise ValueError(f"Cannot account for search cost for {model!r}; supply model_prices")
         # Rates and budget limits are decimal USD. Preserve that value through
         # aggregation and batch prediction; SDK results and saved cells use floats.
         input_rate, output_rate = (Fraction(str(rate)) for rate in rates)
@@ -488,7 +491,7 @@ class GittinsModelSelector(BaseModelSelector):
         return self._token_charge(record.model, record.prompt_tokens, record.completion_tokens)
 
     def _record_failed_attempt(self, arm, question):
-        attempt_id = f"{self._names[arm]}::gittins_{self._run_id}::dp_{question + 1}"
+        attempt_id = f"{self._names[arm]}::{self._policy_id}_{self._run_id}::dp_{question + 1}"
         charge = Fraction(0)
         unmeasured = False
         for record in self._tracker.get_records():
@@ -533,7 +536,7 @@ class GittinsModelSelector(BaseModelSelector):
             raise
 
     async def _evaluate_new_cell(self, arm, question, agent, parallel):
-        label = f"{self._names[arm]}::gittins_{self._run_id}"
+        label = f"{self._names[arm]}::{self._policy_id}_{self._run_id}"
         tasks = [deepcopy(self._run_dataset[question]) if self._journal else self._run_dataset[question]]
         if parallel or self._is_async_run:
             outcome = await self._evaluate_agent_async(agent, tasks, label, max_concurrent=1, dp_offset=question)
@@ -547,12 +550,12 @@ class GittinsModelSelector(BaseModelSelector):
         if not math.isfinite(scores[0]) or not low <= scores[0] <= high:
             raise ValueError("eval_fn score must be finite and within score_bounds")
         if cost is None or not math.isfinite(cost) or cost < 0:
-            raise ValueError("Gittins requires known nonnegative per-evaluation costs; supply model_prices")
+            raise ValueError("Selection requires known nonnegative per-evaluation costs; supply model_prices")
         if not math.isfinite(latencies[0]) or latencies[0] < 0:
             raise ValueError("Evaluation latency must be finite and nonnegative")
         dp = self._build_datapoint_results(scores, latencies, dp_ids)[0]
         if not dp.input_tokens and not dp.output_tokens:
-            raise ValueError("No LLM token usage was recorded; Gittins requires tracked evaluations")
+            raise ValueError("No LLM token usage was recorded; selection requires tracked evaluations")
         dp.datapoint_index = question
         records = [record for record in self._tracker.get_records()
                    if record.data_id in dp_ids and not record.cached]
@@ -617,8 +620,9 @@ class GittinsModelSelector(BaseModelSelector):
         """Expose durable partial work before authorizing any missing requests."""
         count = len(saved)
         before_spent = self._spent
-        posterior = deepcopy(self._posteriors[arm]) if self._calibrated else None
-        scalar = deepcopy(self._scalar_posteriors[arm]) if self._calibrated else None
+        has_posterior = self._calibrated and self._posteriors is not None
+        posterior = deepcopy(self._posteriors[arm]) if has_posterior else None
+        scalar = deepcopy(self._scalar_posteriors[arm]) if has_posterior else None
         for question in question_ids:
             if question not in saved:
                 continue
@@ -630,7 +634,7 @@ class GittinsModelSelector(BaseModelSelector):
             self._spent += Fraction(str(charge))
         self._evaluations += count
         self._positions[arm] += count
-        if count and self._calibrated:
+        if count and has_posterior:
             observations = self._calibration.observations(self._scores[arm][-count:], self._costs[arm][-count:])
             self._posteriors[arm].update(observations.mean(axis=0), self._calibration.question_noise, count)
             values = self._scalar_observations(arm)[-count:]
@@ -654,7 +658,7 @@ class GittinsModelSelector(BaseModelSelector):
         self._evaluations -= count
         self._positions[arm] -= count
         self._spent = before_spent
-        if self._calibrated:
+        if has_posterior:
             self._posteriors[arm], self._scalar_posteriors[arm] = posterior, scalar
 
     def _budget_stop(self, count, predicted_charge=0):
@@ -843,7 +847,7 @@ class GittinsModelSelector(BaseModelSelector):
         self._combos = self._run_combos
         self._names = [self._combo_name(combo) for combo in self._combos]
         if len(set(self._names)) != len(self._names):
-            raise ValueError("Gittins requires distinct combination labels")
+            raise ValueError("Selection requires distinct combination labels")
         n_arms, n_questions = len(self._combos), len(self._run_dataset)
         self._run_id = uuid4().hex
         self._scores = [[] for _ in range(n_arms)]
@@ -858,16 +862,22 @@ class GittinsModelSelector(BaseModelSelector):
         self._failed_spend = self._journal.failed_spend if self._journal else 0
         self._unmeasured_attempts = self._journal.unmeasured_attempts if self._journal else 0
         self._stop_recommended = False
-        dimensions = 1 if self.objective_mode == "single" else 2
+        dimensions = 1 if self.objective_mode == "single" else self._multi_directions
         # Completed posteriors and observed tie-break statistics never change.
         self._completed_states = [{} for _ in range(dimensions)]
         eta = [1.0] if self.objective_mode == "single" else [self.eta_initial] * dimensions
         self._active_eta, self._calibrated = eta, False
+        self._posteriors = None
         warm_charges = [Fraction(0) for _ in range(n_arms)]
         reason = await self._warm_up(warm_charges, eta)
         if reason:
             return self._results("user_stopped" if reason == "user_stopped" else "warm_start_budget",
                                  eta, calibrated=False)
+        return await self._search_after_warmup(parallel, max_concurrent, warm_charges, eta)
+
+    async def _search_after_warmup(self, parallel, max_concurrent, warm_charges, eta):
+        n_arms, n_questions = len(self._combos), len(self._run_dataset)
+        dimensions = len(eta)
         self._calibration = fit_warm_start(self._scores, self._costs, score_bounds=self.score_bounds,
                                           prior_variance=self.prior_variance,
                                           score_noise_variance=self.score_noise_variance,
@@ -1004,35 +1014,7 @@ class GittinsModelSelector(BaseModelSelector):
                                             latency_seconds=float(np.mean(self._latencies[arm])),
                                             input_tokens=input_tokens, output_tokens=output_tokens,
                                             attribute="combination", datapoint_results=dps, combined_objective=objective))
-        candidates = []
-        if calibrated:
-            low, high = self.score_bounds
-            for arm, name in enumerate(self._names):
-                if len(self._scores[arm]) < self.min_samples:
-                    continue
-                observations = self._calibration.observations(self._scores[arm], self._costs[arm])
-                mean, variance = finite_dataset_moments(self._posteriors[arm], observations.sum(axis=0),
-                                                        len(observations), len(self._run_dataset), self._calibration.question_noise)
-                std = np.sqrt(variance)
-                accuracy, score_std = low + (high - low) * mean[0], (high - low) * std[0]
-                if len(observations) == len(self._run_dataset):
-                    accuracy = float(np.mean(self._scores[arm]))
-                    mean[1] = float(np.mean(self._costs[arm]))
-                objective = conservative_objective = None
-                if self.objective_mode == "single":
-                    values = self._scalar_observations(arm)
-                    scalar_mean, scalar_var = finite_dataset_moments(self._scalar_posteriors[arm], np.array([values.sum()]),
-                                                                    len(values), len(self._run_dataset), np.array([self._scalar_noise]))
-                    objective = float(low + (high - low) * scalar_mean[0])
-                    conservative_objective = objective - self.beta * (high - low) * math.sqrt(scalar_var[0])
-                candidates.append(GittinsRecommendation(
-                    model_name=name, combo={node: self._candidate_label(model) for node, model in self._combos[arm].items()},
-                    observed_samples=len(observations), accuracy=float(accuracy), accuracy_std=float(score_std),
-                    cost_usd=float(mean[1]), cost_std_usd=float(std[1]),
-                    conservative_accuracy=float(accuracy - self.beta * score_std),
-                    conservative_cost_usd=float(mean[1] + self.beta * std[1]),
-                    objective=objective, conservative_objective=conservative_objective,
-                ))
+        candidates = self._recommendation_candidates() if calibrated else []
         if self.objective_mode == "single" and candidates:
             winner = max(candidates, key=lambda r: (r.conservative_objective, -r.conservative_cost_usd))
             recommendations = [winner]
@@ -1043,10 +1025,42 @@ class GittinsModelSelector(BaseModelSelector):
             recommendations = [candidates[i] for i in positions]
         else:
             recommendations = []
-        return GittinsSelectionResults(results=records, recommendations=recommendations,
-                                       objective_mode=self.objective_mode, stop_reason=reason,
-                                       stop_recommended=self._stop_recommended,
-                                       total_evaluations=self._evaluations,
-                                       unmeasured_failed_attempts=self._unmeasured_attempts,
-                                       search_cost_overshoot_usd=max(0.0, self._selection_cost_so_far() - self.max_spend) if self.max_spend is not None else 0.0,
-                                       direction_eta=list(eta))
+        return self._result_type(
+            results=records, recommendations=recommendations,
+            objective_mode=self.objective_mode, stop_reason=reason,
+            stop_recommended=self._stop_recommended, total_evaluations=self._evaluations,
+            unmeasured_failed_attempts=self._unmeasured_attempts,
+            search_cost_overshoot_usd=max(0.0, self._selection_cost_so_far() - self.max_spend) if self.max_spend is not None else 0.0,
+            direction_eta=list(eta),
+        )
+
+    def _recommendation_candidates(self):
+        candidates = []
+        low, high = self.score_bounds
+        for arm, name in enumerate(self._names):
+            if len(self._scores[arm]) < self.min_samples:
+                continue
+            observations = self._calibration.observations(self._scores[arm], self._costs[arm])
+            mean, variance = finite_dataset_moments(self._posteriors[arm], observations.sum(axis=0),
+                                                    len(observations), len(self._run_dataset), self._calibration.question_noise)
+            std = np.sqrt(variance)
+            accuracy, score_std = low + (high - low) * mean[0], (high - low) * std[0]
+            if len(observations) == len(self._run_dataset):
+                accuracy = float(np.mean(self._scores[arm]))
+                mean[1] = float(np.mean(self._costs[arm]))
+            objective = conservative_objective = None
+            if self.objective_mode == "single":
+                values = self._scalar_observations(arm)
+                scalar_mean, scalar_var = finite_dataset_moments(self._scalar_posteriors[arm], np.array([values.sum()]),
+                                                                len(values), len(self._run_dataset), np.array([self._scalar_noise]))
+                objective = float(low + (high - low) * scalar_mean[0])
+                conservative_objective = objective - self.beta * (high - low) * math.sqrt(scalar_var[0])
+            candidates.append(GittinsRecommendation(
+                model_name=name, combo={node: self._candidate_label(model) for node, model in self._combos[arm].items()},
+                observed_samples=len(observations), accuracy=float(accuracy), accuracy_std=float(score_std),
+                cost_usd=float(mean[1]), cost_std_usd=float(std[1]),
+                conservative_accuracy=float(accuracy - self.beta * score_std),
+                conservative_cost_usd=float(mean[1] + self.beta * std[1]),
+                objective=objective, conservative_objective=conservative_objective,
+            ))
+        return candidates

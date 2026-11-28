@@ -8,13 +8,14 @@ import pytest
 
 
 @pytest.mark.skipif(os.environ.get("AGENTOPT_TEST_TK") != "1", reason="Requires a desktop; set AGENTOPT_TEST_TK=1")
-def test_native_pause_close_resume_finish_close(tmp_path):
+@pytest.mark.parametrize("method", ["gittins", "ucb"])
+def test_native_pause_close_resume_finish_close(tmp_path, method):
     env = os.environ.copy()
     repo = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = os.pathsep.join([str(repo / "src"), str(repo), env.get("PYTHONPATH", "")])
     for phase in ("pause-close", "resume-finish-close"):
         child = subprocess.run([sys.executable, str(Path(__file__).resolve()),
-                                str(tmp_path), phase], capture_output=True, text=True, timeout=90, env=env)
+                                str(tmp_path), phase, method], capture_output=True, text=True, timeout=90, env=env)
         assert child.returncode == 0, child.stdout + child.stderr
         assert not child.stderr.strip(), child.stderr
 
@@ -60,7 +61,7 @@ def gc_worker():
     gc.enable()
 
 
-def worker(directory, phase):
+def worker(directory, phase, method):
     import json
     import matplotlib
     matplotlib.use("TkAgg", force=True)
@@ -68,7 +69,7 @@ def worker(directory, phase):
     from tests.test_gittins import make_selector
 
     root = Path(directory)
-    selector, tracker = make_selector(checkpoint_path=root / "run.sqlite3", checkpoint_id="tk-close-v1")
+    selector, tracker = make_selector(method=method, checkpoint_path=root / "run.sqlite3", checkpoint_id="tk-close-v1")
     plot = LiveParetoPlot(total_questions=8, warm_total=8, show_window=True,
                           output=root / (phase + ".png"))
     manager = plot.figure.canvas.manager
@@ -102,6 +103,9 @@ def worker(directory, phase):
     plot.update = update
     plot.pump_events = pump
     results = plot.run(selector, max_concurrent=2)
+    assert selector.algorithm_name in plot.algorithm_text.get_text()
+    if method == "ucb":
+        assert "Observed means" in plot.estimate_text.get_text()
     (root / (phase + ".json")).write_text(results.model_dump_json(), encoding="utf-8")
     if phase == "pause-close":
         assert plot._closed and results.total_evaluations == 10
@@ -123,4 +127,4 @@ if __name__ == "__main__":
     if sys.argv[2] == "gc":
         gc_worker()
     else:
-        worker(sys.argv[1], sys.argv[2])
+        worker(sys.argv[1], sys.argv[2], sys.argv[3])

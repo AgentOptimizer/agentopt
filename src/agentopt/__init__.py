@@ -83,6 +83,7 @@ from .model_selection import (
     GittinsRecommendation,
     GittinsSelectionResults,
     MatrixUCBModelSelector,
+    CoHVUCBModelSelector,
     RandomSearchModelSelector,
     RandomSelectionResults,
     ModelResult,
@@ -107,7 +108,7 @@ _METHODS = {
 }
 _MODE_METHODS = {
     "single": ("auto", "gittins", "random", "random_configurations", "random_questions", "ucb", "matrix_ucb", "bayesian"),
-    "multi": ("auto", "gittins", "random_configurations", "random_questions"),
+    "multi": ("auto", "gittins", "ucb", "random_configurations", "random_questions"),
 }
 
 
@@ -120,6 +121,7 @@ def ModelSelector(
     ``auto`` uses Gittins in both objective modes. Both modes support
     ``random_configurations`` (complete random configurations) and
     ``random_questions`` (shared random questions across all configurations).
+    Multi-objective UCB uses CoHV-UCB; single-objective UCB uses UCB-E.
     Single mode also supports ``random`` as an alias for configurations,
     ``ucb``, and ``bayesian``.
 
@@ -137,7 +139,7 @@ def ModelSelector(
             f"Method {method!r} does not support objective_mode={objective_mode!r}. "
             f"Choose from: {', '.join(supported)}"
         )
-    cls = _METHODS[method]
+    cls = CoHVUCBModelSelector if (method, objective_mode) == ("ucb", "multi") else _METHODS[method]
     if cls is None:
         raise ImportError('Bayesian optimization requires `pip install "agentopt-py[bayesian]"`')
     if cls is GittinsModelSelector:
@@ -161,6 +163,7 @@ __all__ = [
     "GittinsRecommendation",
     "GittinsSelectionResults",
     "MatrixUCBModelSelector",
+    "CoHVUCBModelSelector",
     "RandomSearchModelSelector",
     "RandomSelectionResults",
     "BayesianOptimizationModelSelector",

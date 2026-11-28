@@ -8,6 +8,7 @@ Choose the output you need with `objective_mode`, then choose how to allocate ev
 | `random` / `random_configurations` | `single` | Random configurations, each evaluated on all questions | Highest observed mean score among completed configurations |
 | `random_questions` | `single` | Shared randomly ordered questions, evaluated on every configuration | Highest observed mean score on completed shared-question sweeps |
 | `ucb` | `single` | UCB-E: mean score plus `sqrt(a / n)`; random unseen questions on the selected configuration | Highest observed mean score |
+| `ucb` | `multi` | CoHV-UCB: one warm-up batch per configuration, then optimistic quality–cost hypervolume per estimated batch dollar | Pareto frontier of observed mean scores and deployment costs |
 | `bayesian` | `single` | Categorical Gaussian process and Log Expected Improvement; complete configuration evaluations | Highest observed mean score |
 | `auto` / `gittins` | `multi` | CC-Gittins alternating deployment and quality axes | Conservative accuracy–cost recommendation set |
 | `random_configurations` | `multi` | Random configurations, each evaluated on all questions | Empirical accuracy–cost frontier among completed configurations |

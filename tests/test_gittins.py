@@ -58,7 +58,7 @@ class RecordingTracker:
         return 0.0
 
 
-def make_selector(*, mode="multi", count=8, tracker=None, outcomes=None, tokens=None,
+def make_selector(*, mode="multi", method="gittins", count=8, tracker=None, outcomes=None, tokens=None,
                   async_agent=False, batch_size=2, **kwargs):
     tracker = tracker or RecordingTracker()
     outcomes = outcomes or {"cheap": 0.6, "middle": 0.8, "expensive": 0.9, "dominated": 0.5}
@@ -78,13 +78,15 @@ def make_selector(*, mode="multi", count=8, tracker=None, outcomes=None, tokens=
             return super().run(question)
 
     kwargs.setdefault("checkpoint_path", None)  # Independent mock runs unless the test requests persistence.
+    if method == "gittins":
+        kwargs.setdefault("grid_size", 33)
     selector = ModelSelector(agent=AsyncAgent if async_agent else Agent,
                              models={"solver": list(outcomes)},
                              eval_fn=lambda expected, actual: actual,
                              dataset=[(i, None) for i in range(count)],
-                             method="gittins", objective_mode=mode,
+                             method=method, objective_mode=mode,
                              tracker=tracker, model_prices={m: {"input_price": 1, "output_price": 0} for m in outcomes},
-                             batch_size=batch_size, grid_size=33,
+                             batch_size=batch_size,
                              **kwargs)
     return selector, tracker
 

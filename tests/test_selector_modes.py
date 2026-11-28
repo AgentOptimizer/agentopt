@@ -27,7 +27,7 @@ def test_auto_uses_gittins_without_an_extra(mode):
     assert any(requirement.startswith("scipy") for requirement in metadata["project"]["dependencies"])
 
 
-@pytest.mark.parametrize("method,mode", [("ucb","multi"),("bayesian","multi"),("random","multi"),
+@pytest.mark.parametrize("method,mode", [("matrix_ucb","multi"),("bayesian","multi"),("random","multi"),
                                         ("arm_elimination","single"),
                                         ("brute_force","single"),("matrix_ucb_lrf","single"),
                                         ("auto","invalid")])

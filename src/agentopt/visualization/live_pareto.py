@@ -57,7 +57,7 @@ class LiveParetoPlot:
     def __init__(self, *, total_questions: int, warm_total: int | None = None,
                  title: str = "Model selection", output: Path | None = None,
                  total_combinations: int | None = None,
-                 algorithm: str = "CC-Gittins",
+                 algorithm: str | None = None,
                  show_window: bool = True, stop_event: Event | None = None):
         try:
             import matplotlib.pyplot as plt
@@ -117,7 +117,9 @@ class LiveParetoPlot:
             self.figure = plt.figure(figsize=(11.8, 7.2), dpi=100, facecolor=BG)
         self.figure.canvas.manager.set_window_title("AgentOpt · Model selection")
         self.figure.text(.04, .945, "AgentOpt", color=MINT, fontsize=FONT_LARGE, weight="bold", fontfamily=self.font)
-        self.figure.text(.04, .899, f"{title} · Algorithm: {algorithm}",
+        self._title = title
+        self._algorithm_override = algorithm
+        self.algorithm_text = self.figure.text(.04, .899, f"{title} · Algorithm: {algorithm or 'CC-Gittins'}",
                          color=MUTED, fontsize=FONT_MEDIUM, fontfamily=self.font)
         self.status_text = self.figure.text(.96, .942, "", ha="right", color=MINT, fontsize=FONT_MEDIUM,
                                             fontfamily=self.font, weight="bold")
@@ -132,7 +134,7 @@ class LiveParetoPlot:
                                                  fontsize=FONT_SMALL, fontfamily=self.font)
         self.figure.text(.067, .698, "Estimated Pareto frontier", color=TEXT, fontsize=15,
                          fontfamily=self.font, weight="bold")
-        self.figure.text(.067, .666, "Conservative estimates · Click a point or number to inspect", color=MUTED,
+        self.estimate_text = self.figure.text(.067, .666, "Conservative estimates · Click a point or number to inspect", color=MUTED,
                          fontsize=FONT_SMALL, fontfamily=self.font)
         self.axis = self.figure.add_axes((.085, .258, .45, .355), facecolor=BG)
         self.recommendation_axis = self.figure.add_axes((.59, .202, .37, .515), facecolor=PANEL)
@@ -794,7 +796,7 @@ class LiveParetoPlot:
         if current_thread() is not main_thread():
             raise RuntimeError("LiveParetoPlot.run must be called on the main thread")
         if getattr(selector, "objective_mode", None) != "multi":
-            raise ValueError("Live Pareto plotting requires a multi-objective Gittins selector")
+            raise ValueError("Live Pareto plotting requires a multi-objective selector")
         if self.output is not None:
             self.output = self.output.resolve()
         checkpoint = getattr(selector, "checkpoint_path", None)
@@ -802,6 +804,10 @@ class LiveParetoPlot:
             from ..model_selection.checkpoint import checkpoint_paths, require_distinct_paths
             require_distinct_paths({"plot output": self.output, **checkpoint_paths(checkpoint)})
         from ..model_selection.gittins import GittinsModelSelector, _integer
+        name = getattr(selector, "algorithm_name", "CC-Gittins")
+        self.algorithm_text.set_text(f"{self._title} · Algorithm: {self._algorithm_override or name}")
+        estimate = "Observed means" if name == "CoHV-UCB" else "Conservative estimates"
+        self.estimate_text.set_text(f"{estimate} · Click a point or number to inspect")
         rolling = isinstance(selector, GittinsModelSelector) and hasattr(selector, "warm_size")
         if max_concurrent is None and not rolling:
             max_concurrent = 4
